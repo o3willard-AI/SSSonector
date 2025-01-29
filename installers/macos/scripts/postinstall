@@ -1,0 +1,36 @@
+#!/bin/bash
+set -e
+
+# Create application directories
+mkdir -p /usr/local/bin
+mkdir -p /etc/sssonector/certs
+mkdir -p /var/log/sssonector
+mkdir -p /var/lib/sssonector
+
+# Copy binary and configuration
+cp /tmp/sssonector/bin/sssonector /usr/local/bin/
+cp -r /tmp/sssonector/configs/* /etc/sssonector/
+cp /tmp/sssonector/service/com.o3willard.sssonector.plist /Library/LaunchDaemons/
+
+# Set permissions
+chown -R root:wheel /usr/local/bin/sssonector
+chmod 755 /usr/local/bin/sssonector
+chown -R root:wheel /etc/sssonector
+chmod 750 /etc/sssonector/certs
+chown -R root:wheel /var/log/sssonector
+chmod 750 /var/log/sssonector
+chown -R root:wheel /var/lib/sssonector
+chmod 750 /var/lib/sssonector
+chown root:wheel /Library/LaunchDaemons/com.o3willard.sssonector.plist
+chmod 644 /Library/LaunchDaemons/com.o3willard.sssonector.plist
+
+# Create TUN/TAP device if needed
+if ! /sbin/ifconfig utun0 >/dev/null 2>&1; then
+    # macOS creates utun devices automatically when requested
+    echo "TUN device will be created on first use"
+fi
+
+# Load and start the service
+launchctl load -w /Library/LaunchDaemons/com.o3willard.sssonector.plist
+
+exit 0

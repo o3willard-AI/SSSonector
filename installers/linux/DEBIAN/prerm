@@ -1,0 +1,17 @@
+#!/bin/sh
+set -e
+
+# Stop and disable service
+systemctl stop sssonector.service || true
+systemctl disable sssonector.service || true
+
+# Remove TUN/TAP device
+if ip link show dev tun0 >/dev/null 2>&1; then
+    ip link set tun0 down
+    ip tuntap del dev tun0 mode tun
+fi
+
+# Don't remove user/group or data directories here
+# They might contain user data and should be handled by purge
+
+exit 0
