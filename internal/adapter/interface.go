@@ -1,27 +1,32 @@
 package adapter
 
-import "net"
+import (
+	"io"
+	"net"
+)
 
 // Interface represents a network interface
 type Interface interface {
-	// Read reads data from the interface
-	Read(p []byte) (n int, err error)
+	io.ReadWriteCloser
+	Name() string
+	SetMTU(mtu int) error
+	SetIPAddress(addr net.IP, mask net.IPMask) error
+	GetIPAddress() (net.IP, net.IPMask, error)
+	Up() error
+	Down() error
+}
 
-	// Write writes data to the interface
-	Write(p []byte) (n int, err error)
+// NewLinuxInterface creates a new Linux TUN interface
+func NewLinuxInterface(name string) (Interface, error) {
+	return newLinuxInterface(name)
+}
 
-	// Close closes the interface
-	Close() error
+// NewDarwinInterface creates a new macOS TUN interface
+func NewDarwinInterface(name string) (Interface, error) {
+	return newDarwinInterface(name)
+}
 
-	// GetFD returns the file descriptor for the interface
-	GetFD() int
-
-	// GetName returns the interface name
-	GetName() string
-
-	// GetHardwareAddr returns the interface hardware address
-	GetHardwareAddr() net.HardwareAddr
-
-	// GetFlags returns the interface flags
-	GetFlags() net.Flags
+// NewWindowsInterface creates a new Windows TUN interface
+func NewWindowsInterface(name string) (Interface, error) {
+	return newWindowsInterface(name)
 }

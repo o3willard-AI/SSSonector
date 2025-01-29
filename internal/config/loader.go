@@ -2,86 +2,16 @@ package config
 
 import (
 	"fmt"
+	"net"
+	"os"
+	"path/filepath"
 
 	"github.com/spf13/viper"
 )
 
-// Config holds the complete application configuration
-type Config struct {
-	// Mode specifies whether the application runs in client or server mode
-	Mode string `mapstructure:"mode"`
-
-	// Network contains network interface configuration
-	Network *NetworkConfig `mapstructure:"network"`
-
-	// Tunnel contains SSL tunnel configuration
-	Tunnel *TunnelConfig `mapstructure:"tunnel"`
-
-	// Monitor contains monitoring configuration
-	Monitor *MonitorConfig `mapstructure:"monitor"`
-}
-
-// TunnelConfig holds SSL tunnel configuration
-type TunnelConfig struct {
-	// CertFile is the path to the SSL certificate file
-	CertFile string `mapstructure:"cert_file"`
-
-	// KeyFile is the path to the SSL private key file
-	KeyFile string `mapstructure:"key_file"`
-
-	// CAFile is the path to the CA certificate file for client verification
-	CAFile string `mapstructure:"ca_file"`
-
-	// ListenAddress is the address to listen on (server mode)
-	ListenAddress string `mapstructure:"listen_address"`
-
-	// ListenPort is the port to listen on (server mode)
-	ListenPort int `mapstructure:"listen_port"`
-
-	// ServerAddress is the address to connect to (client mode)
-	ServerAddress string `mapstructure:"server_address"`
-
-	// ServerPort is the port to connect to (client mode)
-	ServerPort int `mapstructure:"server_port"`
-
-	// MaxClients is the maximum number of concurrent clients (server mode)
-	MaxClients int `mapstructure:"max_clients"`
-
-	// RetryAttempts is the number of connection retry attempts (client mode)
-	RetryAttempts int `mapstructure:"retry_attempts"`
-
-	// RetryInterval is the interval between retry attempts in seconds (client mode)
-	RetryInterval int `mapstructure:"retry_interval"`
-
-	// BandwidthLimit is the maximum bandwidth in bytes per second (0 for unlimited)
-	BandwidthLimit int64 `mapstructure:"bandwidth_limit"`
-}
-
-// MonitorConfig holds monitoring configuration
-type MonitorConfig struct {
-	// LogFile is the path to the log file
-	LogFile string `mapstructure:"log_file"`
-
-	// LogLevel is the minimum log level to record
-	LogLevel string `mapstructure:"log_level"`
-
-	// SNMPEnabled enables SNMP monitoring
-	SNMPEnabled bool `mapstructure:"snmp_enabled"`
-
-	// SNMPAddress is the address to listen for SNMP requests
-	SNMPAddress string `mapstructure:"snmp_address"`
-
-	// SNMPPort is the port to listen for SNMP requests
-	SNMPPort int `mapstructure:"snmp_port"`
-
-	// SNMPCommunity is the SNMP community string
-	SNMPCommunity string `mapstructure:"snmp_community"`
-}
-
-// LoadConfig loads the configuration from the specified file
-func LoadConfig(file string) (*Config, error) {
-	viper.SetConfigFile(file)
-	viper.SetConfigType("yaml")
+// LoadConfig loads configuration from the specified file
+func LoadConfig(configFile string) (*Config, error) {
+	viper.SetConfigFile(configFile)
 
 	if err := viper.ReadInConfig(); err != nil {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
@@ -96,38 +26,95 @@ func LoadConfig(file string) (*Config, error) {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
 
+	// Resolve certificate paths
+	config.Tunnel.CertFile = resolvePath(configFile, config.Tunnel.CertFile)
+	config.Tunnel.KeyFile = resolvePath(configFile, config.Tunnel.KeyFile)
+	if config.Tunnel.CAFile != "" {
+		config.Tunnel.CAFile = resolvePath(configFile, config.Tunnel.CAFile)
+	}
+
 	return &config, nil
 }
 
-// validateConfig validates the configuration
-func validateConfig(cfg *Config) error {
-	if cfg.Mode != "client" && cfg.Mode != "server" {
-		return fmt.Errorf("invalid mode: %s (must be 'client' or 'server')", cfg.Mode)
+// validateConfig validates the configuration values
+func validateConfig(config *Config) error {
+	// Validate mode
+	if config.Mode != "server" && config.Mode != "client" {
+		return fmt.Errorf("invalid mode: %s (must be 'server' or 'client')", config.Mode)
 	}
 
-	if cfg.Network == nil {
-		return fmt.Errorf("network configuration is required")
+	// Validate network configuration
+	if config.Network.MTU < 1280 || config.Network.MTU > 9000 {
+		return fmt.Errorf("invalid MTU: %d (must be between 1280 and 9000)", config.Network.MTU)
 	}
 
-	if cfg.Tunnel == nil {
-		return fmt.Errorf("tunnel configuration is required")
-	}
-
-	if cfg.Mode == "server" {
-		if cfg.Tunnel.ListenAddress == "" {
-			return fmt.Errorf("listen_address is required in server mode")
+	if config.Network.Address != "" {
+		if _, _, err := net.ParseCIDR(config.Network.Address); err != nil {
+			return fmt.Errorf("invalid network address: %s", config.Network.Address)
 		}
-		if cfg.Tunnel.ListenPort == 0 {
-			return fmt.Errorf("listen_port is required in server mode")
+	}
+
+	// Validate tunnel configuration
+	if config.Mode == "server" {
+		if config.Tunnel.ListenPort < 1 || config.Tunnel.ListenPort > 65535 {
+			return fmt.Errorf("invalid listen port: %d", config.Tunnel.ListenPort)
 		}
 	} else {
-		if cfg.Tunnel.ServerAddress == "" {
-			return fmt.Errorf("server_address is required in client mode")
+		if config.Tunnel.ServerPort < 1 || config.Tunnel.ServerPort > 65535 {
+			return fmt.Errorf("invalid server port: %d", config.Tunnel.ServerPort)
 		}
-		if cfg.Tunnel.ServerPort == 0 {
-			return fmt.Errorf("server_port is required in client mode")
+		if config.Tunnel.ServerAddress == "" {
+			return fmt.Errorf("server address is required in client mode")
+		}
+	}
+
+	if config.Tunnel.RetryAttempts < 0 {
+		return fmt.Errorf("invalid retry attempts: %d", config.Tunnel.RetryAttempts)
+	}
+
+	if config.Tunnel.RetryInterval < 0 {
+		return fmt.Errorf("invalid retry interval: %d", config.Tunnel.RetryInterval)
+	}
+
+	// Validate certificate files
+	if !fileExists(config.Tunnel.CertFile) {
+		return fmt.Errorf("certificate file not found: %s", config.Tunnel.CertFile)
+	}
+
+	if !fileExists(config.Tunnel.KeyFile) {
+		return fmt.Errorf("private key file not found: %s", config.Tunnel.KeyFile)
+	}
+
+	if config.Tunnel.CAFile != "" && !fileExists(config.Tunnel.CAFile) {
+		return fmt.Errorf("CA certificate file not found: %s", config.Tunnel.CAFile)
+	}
+
+	// Validate monitor configuration
+	if config.Monitor.SNMPEnabled {
+		if config.Monitor.SNMPPort < 1 || config.Monitor.SNMPPort > 65535 {
+			return fmt.Errorf("invalid SNMP port: %d", config.Monitor.SNMPPort)
+		}
+		if config.Monitor.SNMPCommunity == "" {
+			return fmt.Errorf("SNMP community string is required when SNMP is enabled")
 		}
 	}
 
 	return nil
+}
+
+// resolvePath resolves a path relative to the config file location
+func resolvePath(configFile, path string) string {
+	if filepath.IsAbs(path) {
+		return path
+	}
+	return filepath.Join(filepath.Dir(configFile), path)
+}
+
+// fileExists checks if a file exists and is not a directory
+func fileExists(filename string) bool {
+	info, err := os.Stat(filename)
+	if os.IsNotExist(err) {
+		return false
+	}
+	return !info.IsDir()
 }

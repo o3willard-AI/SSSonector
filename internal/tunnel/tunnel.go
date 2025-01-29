@@ -1,213 +1,146 @@
 package tunnel
 
 import (
-	"crypto/tls"
 	"fmt"
-	"io"
 	"net"
-	"sync"
-	"time"
 
 	"github.com/o3willard-AI/SSSonector/internal/adapter"
+	"github.com/o3willard-AI/SSSonector/internal/cert"
 	"github.com/o3willard-AI/SSSonector/internal/config"
-	"github.com/o3willard-AI/SSSonector/internal/monitor"
-	"github.com/o3willard-AI/SSSonector/internal/throttle"
 	"go.uber.org/zap"
 )
 
 // Tunnel represents an SSL tunnel
 type Tunnel struct {
-	logger   *zap.Logger
-	config   *config.TunnelConfig
-	certMgr  *CertManager
-	iface    adapter.Interface
-	monitor  *monitor.Monitor
-	throttle *throttle.Limiter
-
-	listener net.Listener
-	conns    sync.Map
-	done     chan struct{}
+	logger     *zap.Logger
+	config     *config.TunnelConfig
+	iface      adapter.Interface
+	listener   net.Listener
+	transfer   *Transfer
+	tlsManager *TLSManager
 }
 
-// NewTunnel creates a new SSL tunnel
-func NewTunnel(logger *zap.Logger, cfg *config.TunnelConfig, iface adapter.Interface, mon *monitor.Monitor) (*Tunnel, error) {
-	certMgr := NewCertManager(logger, cfg)
-	if err := certMgr.VerifyCertificates(); err != nil {
-		return nil, fmt.Errorf("certificate verification failed: %w", err)
-	}
-
+// NewTunnel creates a new tunnel instance
+func NewTunnel(logger *zap.Logger, cfg *config.TunnelConfig, iface adapter.Interface) *Tunnel {
 	return &Tunnel{
-		logger:   logger,
-		config:   cfg,
-		certMgr:  certMgr,
-		iface:    iface,
-		monitor:  mon,
-		throttle: throttle.NewLimiter(cfg.BandwidthLimit),
-		done:     make(chan struct{}),
-	}, nil
+		logger: logger,
+		config: cfg,
+		iface:  iface,
+	}
 }
 
 // Start starts the tunnel in either server or client mode
-func (t *Tunnel) Start() error {
-	if t.config.ListenAddress != "" {
-		return t.startServer()
+func (t *Tunnel) Start(mode string) error {
+	// Initialize certificate manager
+	certManager, err := cert.NewManager(t.config.CertFile, t.config.KeyFile)
+	if err != nil {
+		return fmt.Errorf("failed to initialize certificate manager: %w", err)
 	}
-	return t.startClient()
+
+	if t.config.CAFile != "" {
+		if err := certManager.LoadCACertificate(t.config.CAFile); err != nil {
+			return fmt.Errorf("failed to load CA certificate: %w", err)
+		}
+	}
+
+	t.tlsManager = NewTLSManager(t.logger, t.config)
+	t.tlsManager.SetCertManager(certManager)
+
+	switch mode {
+	case "server":
+		return t.startServer()
+	case "client":
+		return t.startClient()
+	default:
+		return ErrInvalidMode
+	}
 }
 
 // startServer starts the tunnel in server mode
 func (t *Tunnel) startServer() error {
-	tlsConfig, err := t.certMgr.GetServerTLSConfig()
-	if err != nil {
-		return fmt.Errorf("failed to get server TLS config: %w", err)
+	if t.iface == nil {
+		return ErrInterfaceNotInitialized
 	}
 
+	var err error
 	addr := fmt.Sprintf("%s:%d", t.config.ListenAddress, t.config.ListenPort)
-	listener, err := tls.Listen("tcp", addr, tlsConfig)
-	if err != nil {
-		return fmt.Errorf("failed to start listener: %w", err)
-	}
-	t.listener = listener
 
-	t.logger.Info("Server started",
+	t.listener, err = net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("failed to create listener: %w", err)
+	}
+
+	t.listener, err = t.tlsManager.WrapListener(t.listener)
+	if err != nil {
+		return fmt.Errorf("failed to create TLS listener: %w", err)
+	}
+
+	t.logger.Info("Server listening",
 		zap.String("address", addr),
+		zap.Int("max_clients", t.config.MaxClients),
 	)
 
-	go t.acceptConnections()
-	return nil
+	for {
+		conn, err := t.listener.Accept()
+		if err != nil {
+			t.logger.Error("Failed to accept connection", zap.Error(err))
+			continue
+		}
+
+		t.logger.Info("Client connected",
+			zap.String("remote_addr", conn.RemoteAddr().String()),
+		)
+
+		t.transfer = NewTransfer(t.logger, t.iface, conn, t.config.UploadKbps, t.config.DownloadKbps)
+		go t.transfer.Start()
+	}
 }
 
 // startClient starts the tunnel in client mode
 func (t *Tunnel) startClient() error {
-	tlsConfig, err := t.certMgr.GetClientTLSConfig()
-	if err != nil {
-		return fmt.Errorf("failed to get client TLS config: %w", err)
+	if t.iface == nil {
+		return ErrInterfaceNotInitialized
 	}
 
-	go t.maintainConnection(tlsConfig)
+	addr := fmt.Sprintf("%s:%d", t.config.ServerAddress, t.config.ServerPort)
+
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("failed to connect to server: %w", err)
+	}
+
+	conn, err = t.tlsManager.WrapConn(conn)
+	if err != nil {
+		return fmt.Errorf("failed to create TLS connection: %w", err)
+	}
+
+	t.logger.Info("Connected to server",
+		zap.String("address", addr),
+	)
+
+	t.transfer = NewTransfer(t.logger, t.iface, conn, t.config.UploadKbps, t.config.DownloadKbps)
+	t.transfer.Start()
 	return nil
 }
 
-// acceptConnections accepts incoming connections in server mode
-func (t *Tunnel) acceptConnections() {
-	for {
-		conn, err := t.listener.Accept()
-		if err != nil {
-			select {
-			case <-t.done:
-				return
-			default:
-				t.logger.Error("Failed to accept connection",
-					zap.Error(err),
-				)
-				continue
-			}
-		}
-
-		tlsConn := conn.(*tls.Conn)
-		if err := tlsConn.Handshake(); err != nil {
-			t.logger.Error("TLS handshake failed",
-				zap.Error(err),
-			)
-			conn.Close()
-			continue
-		}
-
-		go t.handleConnection(conn)
+// Stop stops the tunnel
+func (t *Tunnel) Stop() error {
+	if t.transfer != nil {
+		t.transfer.Stop()
 	}
-}
-
-// maintainConnection maintains a persistent connection in client mode
-func (t *Tunnel) maintainConnection(tlsConfig *tls.Config) {
-	var retryCount int
-	for {
-		select {
-		case <-t.done:
-			return
-		default:
-			addr := fmt.Sprintf("%s:%d", t.config.ServerAddress, t.config.ServerPort)
-			conn, err := tls.Dial("tcp", addr, tlsConfig)
-			if err != nil {
-				retryCount++
-				t.monitor.LogConnectionEvent("connect_failed", addr, err)
-				if t.config.RetryAttempts > 0 && retryCount >= t.config.RetryAttempts {
-					t.logger.Error("Max retry attempts reached",
-						zap.Int("attempts", retryCount),
-					)
-					return
-				}
-				time.Sleep(time.Duration(t.config.RetryInterval) * time.Second)
-				continue
-			}
-
-			retryCount = 0
-			t.monitor.LogConnectionEvent("connected", addr, nil)
-			t.handleConnection(conn)
-
-			select {
-			case <-t.done:
-				return
-			default:
-				time.Sleep(time.Second)
-				continue
-			}
-		}
-	}
-}
-
-// handleConnection handles a tunnel connection
-func (t *Tunnel) handleConnection(conn net.Conn) {
-	defer conn.Close()
-
-	// Create throttled reader/writer
-	reader := t.throttle.NewReader(conn)
-	writer := t.throttle.NewWriter(conn)
-
-	// Start bidirectional copy
-	var wg sync.WaitGroup
-	wg.Add(2)
-
-	// Interface -> Connection
-	go func() {
-		defer wg.Done()
-		if _, err := t.throttle.ThrottledCopy(writer, t.iface); err != nil {
-			if err != io.EOF {
-				t.logger.Error("Interface -> Connection copy failed",
-					zap.Error(err),
-				)
-			}
-		}
-	}()
-
-	// Connection -> Interface
-	go func() {
-		defer wg.Done()
-		if _, err := t.throttle.ThrottledCopy(t.iface, reader); err != nil {
-			if err != io.EOF {
-				t.logger.Error("Connection -> Interface copy failed",
-					zap.Error(err),
-				)
-			}
-		}
-	}()
-
-	wg.Wait()
-}
-
-// Close closes the tunnel and all connections
-func (t *Tunnel) Close() error {
-	close(t.done)
 
 	if t.listener != nil {
-		t.listener.Close()
+		return t.listener.Close()
 	}
 
-	t.conns.Range(func(key, value interface{}) bool {
-		if conn, ok := value.(net.Conn); ok {
-			conn.Close()
-		}
-		return true
-	})
+	return nil
+}
 
+// GetStatistics returns current tunnel statistics
+func (t *Tunnel) GetStatistics() *Statistics {
+	if t.transfer != nil {
+		stats := t.transfer.GetStatistics()
+		return &stats
+	}
 	return nil
 }
