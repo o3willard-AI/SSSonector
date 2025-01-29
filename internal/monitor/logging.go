@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"SSSonector/internal/config"
+	"github.com/o3willard-AI/SSSonector/internal/config"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"

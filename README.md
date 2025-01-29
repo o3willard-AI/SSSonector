@@ -1,145 +1,151 @@
-# SSSonector - Secure Scalable SSL Connector
+# SSSonector
 
-SSSonector is a cross-platform SSL tunneling application that creates secure connections between remote networks. It supports both client and server modes, with features like bandwidth throttling, SNMP monitoring, and automatic reconnection.
+A lightweight, cross-platform SSL tunnel application for secure network connectivity between remote locations.
 
 ## Features
 
-- TLS 1.3 with EU-exportable cipher suites
 - Cross-platform support (Windows, Linux, macOS)
-- Bandwidth throttling
-- SNMP monitoring
-- Automatic reconnection
-- Certificate-based authentication
+- TLS 1.3 with EU-exportable cipher suites
 - Virtual network interface creation
 - Persistent SSL tunnels
-- Connection monitoring and logging
+- Automatic reconnection
+- Bandwidth throttling
+- SNMP monitoring support
+- Detailed logging and telemetry
+- Client and server modes
+- Connection statistics and monitoring
+
+## Requirements
+
+- Go 1.21 or later
+- OpenSSL for certificate generation
+- Root/Administrator privileges for virtual interface creation
 
 ## Installation
 
-### Platform-Specific Installation Guides
+### From Source
 
-For detailed installation instructions, please refer to the appropriate guide for your platform:
-
-- [Ubuntu Installation Guide](docs/ubuntu_install.md)
-- [Red Hat/Rocky Linux Installation Guide](docs/linux_install.md)
-- [macOS Installation Guide](docs/macos_install.md)
-- [Windows Installation Guide](docs/windows_install.md)
-
-### Quick Start
-
-#### Linux (Ubuntu/Debian)
+1. Clone the repository:
 ```bash
-# Download the latest release
-wget https://github.com/o3willard-AI/SSSonector/releases/latest/download/sssonector_amd64.deb
-
-# Install the package
-sudo dpkg -i sssonector_amd64.deb
-sudo apt-get install -f  # Install dependencies if needed
-```
-
-#### Linux (RHEL/Rocky)
-```bash
-# Download the latest release
-wget https://github.com/o3willard-AI/SSSonector/releases/latest/download/sssonector.el8.x86_64.rpm
-
-# Install the package
-sudo dnf install sssonector.el8.x86_64.rpm
-```
-
-#### macOS
-```bash
-# Download the latest release
-curl -LO https://github.com/o3willard-AI/SSSonector/releases/latest/download/SSSonector.pkg
-
-# Install the package
-sudo installer -pkg SSSonector.pkg -target /
-```
-
-#### Windows
-1. Download the latest release from [GitHub Releases](https://github.com/o3willard-AI/SSSonector/releases/latest)
-2. Run the installer as administrator
-3. Follow the installation wizard
-
-### Building from Source
-
-Requirements:
-- Go 1.21 or later
-- Make
-- OpenSSL (for certificate generation)
-- Platform-specific build tools (see installation guides)
-
-```bash
-# Clone the repository
 git clone https://github.com/o3willard-AI/SSSonector.git
 cd SSSonector
+```
 
-# Build and install
+2. Build the project:
+```bash
 make
+```
+
+3. Install the application:
+```bash
 sudo make install
 ```
 
-## Basic Configuration
+### Using Pre-built Packages
 
-Configuration files are stored in:
-- Linux: `/etc/sssonector/`
-- macOS: `/etc/sssonector/`
-- Windows: `C:\ProgramData\SSSonector\`
+- Linux (DEB): `sudo dpkg -i sssonector_<version>_amd64.deb`
+- Linux (RPM): `sudo rpm -i sssonector-<version>.x86_64.rpm`
+- macOS: Install the provided .pkg file
+- Windows: Run the provided installer .exe
 
-For detailed configuration examples and use cases, see the platform-specific installation guides.
+## Configuration
 
-## Service Management
+Configuration files are stored in `/etc/sssonector/` (Linux/macOS) or `C:\Program Files\SSSonector\` (Windows).
 
-### Linux (systemd)
+### Server Mode
+
+1. Edit `/etc/sssonector/config.yaml`:
+```yaml
+mode: "server"
+network:
+  interface: "tun0"
+  address: "10.0.0.1/24"
+  mtu: 1500
+tunnel:
+  cert_file: "/etc/sssonector/certs/server.crt"
+  key_file: "/etc/sssonector/certs/server.key"
+  ca_file: "/etc/sssonector/certs/client.crt"
+  listen_address: "0.0.0.0"
+  listen_port: 8443
+```
+
+2. Run the server:
 ```bash
-sudo systemctl start sssonector    # Start service
-sudo systemctl enable sssonector   # Enable at boot
-sudo systemctl status sssonector   # Check status
+sudo sssonector -config /etc/sssonector/config.yaml
 ```
 
-### macOS (launchd)
+### Client Mode
+
+1. Edit `/etc/sssonector/config-client.yaml`:
+```yaml
+mode: "client"
+network:
+  interface: "tun0"
+  address: "10.0.0.2/24"
+  mtu: 1500
+tunnel:
+  cert_file: "/etc/sssonector/certs/client.crt"
+  key_file: "/etc/sssonector/certs/client.key"
+  ca_file: "/etc/sssonector/certs/server.crt"
+  server_address: "server.example.com"
+  server_port: 8443
+```
+
+2. Run the client:
 ```bash
-sudo launchctl load /Library/LaunchDaemons/com.o3willard.sssonector.plist    # Start
-sudo launchctl unload /Library/LaunchDaemons/com.o3willard.sssonector.plist  # Stop
+sudo sssonector -config /etc/sssonector/config-client.yaml
 ```
 
-### Windows
-```powershell
-Start-Service SSSonector    # Start service
-Stop-Service SSSonector     # Stop service
-Get-Service SSSonector     # Check status
-```
+## Certificate Management
 
-## Documentation
-
-- [Ubuntu Installation Guide](docs/ubuntu_install.md) - Ubuntu-specific installation and configuration
-- [Linux Installation Guide](docs/linux_install.md) - Red Hat/Rocky Linux installation and configuration
-- [macOS Installation Guide](docs/macos_install.md) - macOS-specific installation and configuration
-- [Windows Installation Guide](docs/windows_install.md) - Windows-specific installation and configuration
-- [QA Guide](docs/qa_guide.md) - Testing procedures and troubleshooting
-
-## Development
-
-### Building Installers
+Generate certificates for server and client:
 ```bash
-# Install dependencies
-make installer-deps
-
-# Build installers for all platforms
-make installers
+make generate-certs
 ```
 
-### Running Tests
+Certificates will be placed in the `certs` directory:
+- `server.crt` and `server.key`: Server certificate and private key
+- `client.crt` and `client.key`: Client certificate and private key
+
+## Monitoring
+
+### SNMP Monitoring
+
+SNMP monitoring is available on port 161 by default. Configure your SNMP manager to connect using the community string specified in the configuration file.
+
+Available metrics:
+- Bytes sent/received
+- Connection status
+- Tunnel uptime
+- Current bandwidth usage
+- Number of connected clients (server mode)
+
+### Logging
+
+Logs are written to:
+- Linux/macOS: `/var/log/sssonector/`
+- Windows: `C:\Program Files\SSSonector\logs\`
+
+## Security
+
+- TLS 1.3 with EU-exportable cipher suites only
+- Mutual certificate authentication
+- Private IP space for virtual interfaces
+- No inbound connections required at remote sites
+
+## Building from Source
+
+### All Platforms
 ```bash
-make test
+make build-all
 ```
 
-## Contributing
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+### Platform-Specific
+```bash
+make build-linux
+make build-darwin
+make build-windows
+```
 
 ## License
 

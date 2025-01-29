@@ -1,114 +1,77 @@
-.PHONY: all build test clean dist fmt lint vet installers run-server run-client
-
-# Build configuration
 BINARY_NAME=sssonector
-VERSION=1.0.0
-LDFLAGS=-ldflags "-X main.Version=$(VERSION)"
+BUILD_DIR=bin
+CERT_DIR=certs
+CONFIG_DIR=configs
 
-# Go commands
-GOCMD=go
-GOBUILD=$(GOCMD) build
-GOTEST=$(GOCMD) test
-GOFMT=$(GOCMD) fmt
-GOVET=$(GOCMD) vet
-GOLINT=golangci-lint
+.PHONY: all build clean test generate-certs install uninstall
 
-# Directories
-DIST_DIR=dist
-BUILD_DIR=build
-
-all: clean fmt lint vet test build
+all: clean generate-certs build
 
 build:
-	mkdir -p $(BUILD_DIR)
-	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) cmd/tunnel/main.go
-
-test:
-	$(GOTEST) -v ./...
+	@echo "Building..."
+	@mkdir -p $(BUILD_DIR)
+	@go build -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/tunnel
 
 clean:
-	rm -rf $(BUILD_DIR)
-	rm -rf $(DIST_DIR)
+	@echo "Cleaning..."
+	@rm -rf $(BUILD_DIR)
+	@go clean
 
-dist:
-	./scripts/build.sh
+test:
+	@echo "Running tests..."
+	@go test -v ./...
 
+generate-certs:
+	@echo "Generating certificates..."
+	@mkdir -p $(CERT_DIR)
+	@openssl req -x509 -newkey rsa:4096 -keyout $(CERT_DIR)/server.key -out $(CERT_DIR)/server.crt -days 365 -nodes -subj "/CN=sssonector-server"
+	@openssl req -x509 -newkey rsa:4096 -keyout $(CERT_DIR)/client.key -out $(CERT_DIR)/client.crt -days 365 -nodes -subj "/CN=sssonector-client"
+	@chmod 600 $(CERT_DIR)/*.key
+	@chmod 644 $(CERT_DIR)/*.crt
+
+install: build
+	@echo "Installing..."
+	@sudo mkdir -p /etc/sssonector/certs
+	@sudo cp $(CERT_DIR)/* /etc/sssonector/certs/
+	@sudo cp $(CONFIG_DIR)/*.yaml /etc/sssonector/
+	@sudo chmod 600 /etc/sssonector/certs/*.key
+	@sudo chmod 644 /etc/sssonector/certs/*.crt
+	@sudo install -m 755 $(BUILD_DIR)/$(BINARY_NAME) /usr/local/bin/
+
+uninstall:
+	@echo "Uninstalling..."
+	@sudo rm -f /usr/local/bin/$(BINARY_NAME)
+	@sudo rm -rf /etc/sssonector
+
+# Cross-compilation targets
+.PHONY: build-linux build-darwin build-windows
+
+build-linux:
+	@echo "Building for Linux..."
+	@GOOS=linux GOARCH=amd64 go build -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 ./cmd/tunnel
+
+build-darwin:
+	@echo "Building for macOS..."
+	@GOOS=darwin GOARCH=amd64 go build -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-amd64 ./cmd/tunnel
+
+build-windows:
+	@echo "Building for Windows..."
+	@GOOS=windows GOARCH=amd64 go build -o $(BUILD_DIR)/$(BINARY_NAME)-windows-amd64.exe ./cmd/tunnel
+
+# Build all platforms
+.PHONY: build-all
+build-all: build-linux build-darwin build-windows
+
+# Development helpers
+.PHONY: fmt vet lint
 fmt:
-	$(GOFMT) ./...
-
-lint:
-	$(GOLINT) run
+	@echo "Formatting code..."
+	@go fmt ./...
 
 vet:
-	$(GOVET) ./...
+	@echo "Running go vet..."
+	@go vet ./...
 
-# Installer targets
-installers: dist
-	./scripts/build-installers.sh
-
-installer-deps:
-	@echo "Installing installer build dependencies..."
-	sudo apt-get update
-	sudo apt-get install -y nsis dpkg-dev
-
-# Development commands
-run-server: build
-	sudo ./$(BUILD_DIR)/$(BINARY_NAME) --config configs/server.yaml
-
-run-client: build
-	sudo ./$(BUILD_DIR)/$(BINARY_NAME) --config configs/client.yaml
-
-# Docker commands for monitoring
-monitoring-up:
-	cd monitoring && docker-compose up -d
-
-monitoring-down:
-	cd monitoring && docker-compose down
-
-# Testing commands
-test-certs:
-	./scripts/test-certs.sh
-
-test-snmp:
-	./scripts/test-snmp.sh
-
-# Installation commands
-install-linux: build
-	sudo cp $(BUILD_DIR)/$(BINARY_NAME) /usr/local/bin/
-	sudo mkdir -p /etc/sssonector
-	sudo cp -r configs /etc/sssonector/
-	sudo cp scripts/service/systemd/sssonector.service /etc/systemd/system/
-	sudo systemctl daemon-reload
-
-install-darwin: build
-	sudo cp $(BUILD_DIR)/$(BINARY_NAME) /usr/local/bin/
-	sudo mkdir -p /etc/sssonector
-	sudo cp -r configs /etc/sssonector/
-	sudo cp scripts/service/launchd/com.o3willard.sssonector.plist /Library/LaunchDaemons/
-	sudo launchctl load /Library/LaunchDaemons/com.o3willard.sssonector.plist
-
-install-windows: build
-	powershell -ExecutionPolicy Bypass -File scripts/service/windows/install-service.ps1
-
-# Help target
-help:
-	@echo "Available targets:"
-	@echo "  all          - Run clean, fmt, lint, vet, test, and build"
-	@echo "  build        - Build the binary"
-	@echo "  test         - Run tests"
-	@echo "  clean        - Remove build artifacts"
-	@echo "  dist         - Create distribution packages"
-	@echo "  fmt          - Format code"
-	@echo "  lint         - Run linter"
-	@echo "  vet          - Run go vet"
-	@echo "  installers   - Build platform-specific installers"
-	@echo "  installer-deps - Install installer build dependencies"
-	@echo "  run-server   - Build and run server"
-	@echo "  run-client   - Build and run client"
-	@echo "  monitoring-up   - Start monitoring stack"
-	@echo "  monitoring-down - Stop monitoring stack"
-	@echo "  test-certs   - Test certificate generation"
-	@echo "  test-snmp    - Test SNMP functionality"
-	@echo "  install-linux   - Install on Linux"
-	@echo "  install-darwin  - Install on macOS"
-	@echo "  install-windows - Install on Windows"
+lint:
+	@echo "Running linter..."
+	@golangci-lint run

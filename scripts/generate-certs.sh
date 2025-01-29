@@ -1,81 +1,67 @@
 #!/bin/bash
+
+# Exit on any error
 set -e
 
-# Configuration
-CERT_DIR="certs"
-DAYS=3650  # 10 years
+CERT_DIR="../certs"
+DAYS=365
 KEY_SIZE=4096
 COUNTRY="US"
 STATE="California"
 LOCALITY="San Francisco"
 ORGANIZATION="SSSonector"
-ORG_UNIT="Development"
-CA_CN="SSSonector Root CA"
-SERVER_CN="SSSonector Server"
-CLIENT_CN="SSSonector Client"
+SERVER_CN="sssonector-server"
+CLIENT_CN="sssonector-client"
 
-# Create certificates directory
+# Create certificates directory if it doesn't exist
 mkdir -p "$CERT_DIR"
-cd "$CERT_DIR"
 
-# Generate CA private key and certificate
-echo "Generating CA certificate..."
-openssl genrsa -out ca.key "$KEY_SIZE"
-openssl req -new -x509 -days "$DAYS" -key ca.key -out ca.crt -subj "/C=$COUNTRY/ST=$STATE/L=$LOCALITY/O=$ORGANIZATION/OU=$ORG_UNIT/CN=$CA_CN"
+# Function to generate a certificate
+generate_cert() {
+    local name=$1
+    local cn=$2
+    local key_file="$CERT_DIR/$name.key"
+    local csr_file="$CERT_DIR/$name.csr"
+    local crt_file="$CERT_DIR/$name.crt"
 
-# Generate server private key and CSR
-echo "Generating server certificate..."
-openssl genrsa -out server.key "$KEY_SIZE"
-openssl req -new -key server.key -out server.csr -subj "/C=$COUNTRY/ST=$STATE/L=$LOCALITY/O=$ORGANIZATION/OU=$ORG_UNIT/CN=$SERVER_CN"
+    echo "Generating $name certificate..."
 
-# Create server certificate extensions file
-cat > server.ext << EOF
-authorityKeyIdentifier=keyid,issuer
-basicConstraints=CA:FALSE
-keyUsage = digitalSignature, nonRepudiation, keyEncipherment, dataEncipherment
-subjectAltName = @alt_names
+    # Generate private key
+    openssl genrsa -out "$key_file" $KEY_SIZE
 
-[alt_names]
-DNS.1 = localhost
-DNS.2 = tunnel.example.com
-IP.1 = 127.0.0.1
-EOF
+    # Generate CSR
+    openssl req -new -key "$key_file" -out "$csr_file" -subj "/C=$COUNTRY/ST=$STATE/L=$LOCALITY/O=$ORGANIZATION/CN=$cn"
 
-# Sign server certificate
-openssl x509 -req -days "$DAYS" -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
-    -out server.crt -extfile server.ext
+    # Generate self-signed certificate
+    openssl x509 -req -days $DAYS -in "$csr_file" -signkey "$key_file" -out "$crt_file"
 
-# Generate client private key and CSR
-echo "Generating client certificate..."
-openssl genrsa -out client.key "$KEY_SIZE"
-openssl req -new -key client.key -out client.csr -subj "/C=$COUNTRY/ST=$STATE/L=$LOCALITY/O=$ORGANIZATION/OU=$ORG_UNIT/CN=$CLIENT_CN"
+    # Remove CSR file
+    rm "$csr_file"
 
-# Create client certificate extensions file
-cat > client.ext << EOF
-authorityKeyIdentifier=keyid,issuer
-basicConstraints=CA:FALSE
-keyUsage = digitalSignature, nonRepudiation, keyEncipherment, dataEncipherment
-extendedKeyUsage = clientAuth
-EOF
+    # Set permissions
+    chmod 600 "$key_file"
+    chmod 644 "$crt_file"
 
-# Sign client certificate
-openssl x509 -req -days "$DAYS" -in client.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
-    -out client.crt -extfile client.ext
+    echo "Generated $name certificate files:"
+    echo "  Private key: $key_file"
+    echo "  Certificate: $crt_file"
+    echo
+}
 
-# Clean up CSR files
-rm -f server.csr client.csr server.ext client.ext
+echo "Generating SSL certificates for SSSonector..."
+echo "Certificates will be valid for $DAYS days"
+echo
 
-# Set permissions
-chmod 600 *.key
-chmod 644 *.crt
+# Generate server certificate
+generate_cert "server" "$SERVER_CN"
+
+# Generate client certificate
+generate_cert "client" "$CLIENT_CN"
 
 echo "Certificate generation complete!"
-echo "Files generated in $CERT_DIR/:"
-ls -l
-
-# Instructions
+echo "Certificate files are in: $CERT_DIR"
 echo
-echo "To use these certificates:"
-echo "1. Copy ca.crt, server.crt, and server.key to the server's /etc/sssonector/certs/ directory"
-echo "2. Copy ca.crt, client.crt, and client.key to the client's /etc/sssonector/certs/ directory"
-echo "3. Ensure correct permissions: chmod 600 for .key files, chmod 644 for .crt files"
+echo "Remember to:"
+echo "1. Copy the certificates to /etc/sssonector/certs/"
+echo "2. Set proper permissions (600 for .key files, 644 for .crt files)"
+echo "3. Update the configuration files with the correct certificate paths"

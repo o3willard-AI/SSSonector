@@ -1,21 +1,36 @@
 package adapter
 
-import "fmt"
+import (
+	"io"
+	"net"
+)
 
-// NetworkConfig holds network interface configuration
-type NetworkConfig struct {
-	Interface string
-	Address   string
-	MTU       int
+// Interface represents a network interface
+type Interface interface {
+	io.ReadWriteCloser
+	Name() string
+	SetMTU(mtu int) error
+	SetIPAddress(addr net.IP, mask net.IPMask) error
+	GetIPAddress() (net.IP, net.IPMask, error)
+	Up() error
+	Down() error
 }
 
-// validateInterfaceConfig validates the interface configuration
-func validateInterfaceConfig(cfg *NetworkConfig) error {
-	if cfg.Address == "" {
-		return fmt.Errorf("interface address is required")
-	}
-	if cfg.Interface == "" {
-		return fmt.Errorf("interface name is required")
-	}
-	return nil
+// InterfaceType represents the type of network interface
+type InterfaceType int
+
+const (
+	// TUN interface type
+	TUN InterfaceType = iota
+	// TAP interface type
+	TAP
+)
+
+// InterfaceConfig holds configuration for network interfaces
+type InterfaceConfig struct {
+	Type      InterfaceType
+	Name      string
+	MTU       int
+	IPAddress net.IP
+	Netmask   net.IPMask
 }

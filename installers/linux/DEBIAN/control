@@ -3,15 +3,10 @@ Version: 1.0.0
 Section: net
 Priority: optional
 Architecture: amd64
-Essential: no
-Depends: libc6 (>= 2.17), systemd
-Maintainer: o3willard-AI <o3willard@yahoo.com>
-Description: Secure Scalable SSL Connector
- A multipurpose utility for connecting services over the internet
- or through insecure network links without having to utilize a VPN.
- Features include:
-  * TLS 1.3 with EU-exportable cipher suites
-  * Automatic certificate management
-  * Bandwidth throttling
-  * SNMP monitoring support
-  * Cross-platform compatibility
+Depends: openssl
+Maintainer: O3Willard AI <support@o3willard.ai>
+Description: SSL Tunnel Application for Secure Network Connectivity
+ SSSonector is a lightweight, cross-platform SSL tunnel application
+ that creates secure network connections between remote locations.
+ Features include TLS 1.3 support, bandwidth throttling, SNMP
+ monitoring, and automatic reconnection capabilities.
