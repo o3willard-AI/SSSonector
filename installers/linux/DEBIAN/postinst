@@ -1,0 +1,36 @@
+#!/bin/sh
+set -e
+
+# Create system user and group
+if ! getent group sssonector >/dev/null; then
+    addgroup --system sssonector
+fi
+if ! getent passwd sssonector >/dev/null; then
+    adduser --system --ingroup sssonector --no-create-home --home /var/lib/sssonector sssonector
+fi
+
+# Create necessary directories
+mkdir -p /etc/sssonector/certs
+mkdir -p /var/log/sssonector
+mkdir -p /var/lib/sssonector
+
+# Set permissions
+chown -R sssonector:sssonector /etc/sssonector
+chown -R sssonector:sssonector /var/log/sssonector
+chown -R sssonector:sssonector /var/lib/sssonector
+chmod 750 /etc/sssonector/certs
+chmod 750 /var/log/sssonector
+chmod 750 /var/lib/sssonector
+
+# Install and enable systemd service
+systemctl daemon-reload
+systemctl enable sssonector.service
+systemctl start sssonector.service
+
+# Create TUN/TAP device if it doesn't exist
+if ! ip link show dev tun0 >/dev/null 2>&1; then
+    ip tuntap add dev tun0 mode tun user sssonector
+    ip link set tun0 up
+fi
+
+exit 0
