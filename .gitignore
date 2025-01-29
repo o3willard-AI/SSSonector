@@ -1,0 +1,62 @@
+# Binaries and build artifacts
+/build/
+/dist/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+*.cov
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Certificate files
+/certs/*.crt
+/certs/*.key
+/certs/*.pem
+/certs/*.csr
+
+# Configuration files with sensitive data
+/configs/*.local.yaml
+
+# Log files
+*.log
+/logs/
+
+# Monitoring data
+/monitoring/grafana/data/
+/monitoring/prometheus/data/
+
+# Dependencies
+/vendor/
+
+# Environment files
+.env
+.env.local
+
+# Temporary files
+*.tmp
+*.bak
+
+# Generated documentation
+/docs/generated/
+
+# Service files with sensitive data
+/scripts/service/**/*.local.*
+
+# SNMP MIB cache
+/mibs/cache/

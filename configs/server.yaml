@@ -1,0 +1,39 @@
+mode: "server"
+
+network:
+  interface: "tun0"
+  address: "10.0.0.1"
+  mtu: 1500
+  qos_enabled: true
+  qos_tag: 46  # EF (Expedited Forwarding)
+  listen_address: "0.0.0.0"
+  listen_port: 5000
+  max_clients: 5
+
+tls:
+  cert_file: "certs/server.crt"
+  key_file: "certs/server.key"
+  auto_generate: true
+  validity_days: 90
+  key_size: 2048
+
+logging:
+  file_path: "/var/log/SSSonector/server.log"
+  level: "info"
+  max_size: 50
+  rotate: true
+
+monitor:
+  snmp_enabled: true
+  snmp_port: 161
+  community: "public"
+
+service:
+  auto_start: true
+  user: "SSSonector"
+  group: "SSSonector"
+
+throttle:
+  enabled: false
+  upload_kbps: 1024
+  down_kbps: 1024
