@@ -1,0 +1,111 @@
+# Global config
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+# Alertmanager configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          # - alertmanager:9093
+
+# Load rules once and periodically evaluate them
+rule_files:
+  # - "first_rules.yml"
+  # - "second_rules.yml"
+
+# Scrape configurations
+scrape_configs:
+  # SNMP exporter for SSSonector metrics
+  - job_name: 'SSSonector'
+    static_configs:
+      - targets:
+        - 'localhost:161'  # SNMP target
+    metrics_path: /snmp
+    params:
+      module: [sssonector]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: 'localhost:9116'  # SNMP exporter address
+
+# SNMP exporter configuration
+snmp:
+  modules:
+    sssonector:
+      walk:
+        - 1.3.6.1.4.1.2021.10.1.3  # SSSonector metrics OID
+      metrics:
+        - name: sssonector_bytes_received
+          oid: 1.3.6.1.4.1.2021.10.1.3.1
+          type: counter
+          help: Total number of bytes received through the tunnel
+        - name: sssonector_bytes_sent
+          oid: 1.3.6.1.4.1.2021.10.1.3.2
+          type: counter
+          help: Total number of bytes sent through the tunnel
+        - name: sssonector_packets_lost
+          oid: 1.3.6.1.4.1.2021.10.1.3.3
+          type: counter
+          help: Total number of packets lost during transmission
+        - name: sssonector_latency
+          oid: 1.3.6.1.4.1.2021.10.1.3.4
+          type: gauge
+          help: Current tunnel latency in microseconds
+        - name: sssonector_uptime
+          oid: 1.3.6.1.4.1.2021.10.1.3.5
+          type: gauge
+          help: Time in seconds since the tunnel was started
+        - name: sssonector_cpu_usage
+          oid: 1.3.6.1.4.1.2021.10.1.3.6
+          type: gauge
+          help: Current CPU usage percentage
+        - name: sssonector_memory_usage
+          oid: 1.3.6.1.4.1.2021.10.1.3.7
+          type: gauge
+          help: Current memory usage percentage
+
+# Example alert rules for SSSonector metrics
+rules:
+  groups:
+    - name: sssonector_alerts
+      rules:
+        - alert: HighLatency
+          expr: sssonector_latency > 500000  # 500ms
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: High tunnel latency
+            description: Tunnel latency is above 500ms for more than 5 minutes
+
+        - alert: PacketLossSpike
+          expr: rate(sssonector_packets_lost[5m]) > 100
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: High packet loss rate
+            description: Packet loss rate is above 100 packets/s for more than 5 minutes
+
+        - alert: HighCPUUsage
+          expr: sssonector_cpu_usage > 90
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: High CPU usage
+            description: CPU usage is above 90% for more than 5 minutes
+
+        - alert: HighMemoryUsage
+          expr: sssonector_memory_usage > 90
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: High memory usage
+            description: Memory usage is above 90% for more than 5 minutes

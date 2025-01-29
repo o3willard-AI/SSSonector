@@ -1,0 +1,28 @@
+[Unit]
+Description=SSSonector Service
+After=network.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=SSSonector
+Group=SSSonector
+ExecStart=/usr/local/bin/SSSonector --config /etc/SSSonector/config.yaml
+Restart=always
+RestartSec=1
+StandardOutput=append:/var/log/SSSonector/service.log
+StandardError=append:/var/log/SSSonector/service.log
+
+# Security settings
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=false
+DevicePolicy=closed
+DeviceAllow=/dev/net/tun rw
+
+[Install]
+WantedBy=multi-user.target
