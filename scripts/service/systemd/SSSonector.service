@@ -1,0 +1,30 @@
+[Unit]
+Description=Secure Scalable SSL Connector Service
+After=network.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=sssonector
+Group=sssonector
+ExecStart=/usr/local/bin/sssonector --config /etc/sssonector/config.yaml
+Restart=always
+RestartSec=1
+
+# Security settings
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictNamespaces=yes
+
+# Logging
+StandardOutput=append:/var/log/sssonector/service.log
+StandardError=append:/var/log/sssonector/service.log
+
+[Install]
+WantedBy=multi-user.target
