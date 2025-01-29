@@ -1,218 +1,169 @@
-//go:build darwin
-// +build darwin
-
 package adapter
 
 import (
 	"fmt"
 	"net"
+	"os"
 	"os/exec"
-	"strings"
-	"syscall"
 
 	"github.com/songgao/water"
-	"SSSonector/internal/config"
 	"go.uber.org/zap"
-	"golang.org/x/sys/unix"
 )
 
-// darwinInterface implements the Interface for macOS systems
 type darwinInterface struct {
-	interfaceBase
-	iface      *water.Interface
-	logger     *zap.Logger
-	persistent bool
-}
-
-// darwinManager implements the Manager interface for macOS systems
-type darwinManager struct {
 	logger *zap.Logger
+	iface  *water.Interface
+	config *NetworkConfig
 }
 
-func newManager(logger *zap.Logger) (Manager, error) {
-	return &darwinManager{logger: logger}, nil
+// NetworkConfig holds network interface configuration
+type NetworkConfig struct {
+	Interface string
+	Address   string
+	MTU       int
 }
 
-// Create implements Manager.Create for macOS
-func (m *darwinManager) Create(cfg *config.InterfaceConfig) (Interface, error) {
+// validateInterfaceConfig validates the interface configuration
+func validateInterfaceConfig(cfg *NetworkConfig) error {
+	if cfg.Address == "" {
+		return fmt.Errorf("interface address is required")
+	}
+	if cfg.Interface == "" {
+		return fmt.Errorf("interface name is required")
+	}
+	return nil
+}
+
+// NewDarwinInterface creates a new macOS network interface
+func NewDarwinInterface(logger *zap.Logger, cfg *NetworkConfig) (Interface, error) {
 	if err := validateInterfaceConfig(cfg); err != nil {
-		return nil, fmt.Errorf("invalid interface configuration: %w", err)
+		return nil, fmt.Errorf("invalid interface config: %w", err)
 	}
 
-	// Create TUN/TAP device
-	ifConfig := water.Config{
-		DeviceType: water.TUN,
-	}
-	if cfg.Type == string(TAP) {
-		return nil, fmt.Errorf("TAP interfaces are not supported on macOS")
-	}
-	if cfg.Name != "" {
-		ifConfig.Name = cfg.Name
+	iface := &darwinInterface{
+		logger: logger,
+		config: cfg,
 	}
 
-	iface, err := water.New(ifConfig)
-	if err != nil {
+	if err := iface.create(); err != nil {
 		return nil, fmt.Errorf("failed to create interface: %w", err)
 	}
 
-	// Parse IP address
-	ip := net.ParseIP(cfg.IP)
-	if ip == nil {
-		iface.Close()
-		return nil, fmt.Errorf("invalid IP address: %s", cfg.IP)
-	}
-
-	// Create interface instance
-	di := &darwinInterface{
-		interfaceBase: interfaceBase{
-			name: iface.Name(),
-			typ:  InterfaceType(cfg.Type),
-			ip:   ip,
-		},
-		iface:      iface,
-		logger:     m.logger,
-		persistent: cfg.Persistent,
-	}
-
-	// Configure the interface
-	if err := di.configure(); err != nil {
-		iface.Close()
-		return nil, fmt.Errorf("failed to configure interface: %w", err)
-	}
-
-	m.logger.Info("Created network interface",
-		zap.String("name", di.name),
-		zap.String("type", string(di.typ)),
-		zap.String("ip", ip.String()),
-	)
-
-	return di, nil
+	return iface, nil
 }
 
-// Remove implements Manager.Remove for macOS
-func (m *darwinManager) Remove(name string) error {
-	if name == "" {
-		return fmt.Errorf("interface name is required")
+// create creates a new TUN interface
+func (i *darwinInterface) create() error {
+	config := water.Config{
+		DeviceType: water.TUN,
 	}
 
-	// On macOS, we use ifconfig to remove the interface
-	cmd := exec.Command("ifconfig", name, "destroy")
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to remove interface: %s (%w)", string(output), err)
+	iface, err := water.New(config)
+	if err != nil {
+		return fmt.Errorf("failed to create TUN interface: %w", err)
+	}
+	i.iface = iface
+
+	// Configure interface
+	if err := i.configure(); err != nil {
+		i.iface.Close()
+		return fmt.Errorf("failed to configure interface: %w", err)
 	}
 
-	m.logger.Info("Removed network interface", zap.String("name", name))
 	return nil
 }
 
-// Get implements Manager.Get for macOS
-func (m *darwinManager) Get(name string) (Interface, error) {
-	if name == "" {
-		return nil, fmt.Errorf("interface name is required")
+// configure configures the network interface
+func (i *darwinInterface) configure() error {
+	// Set interface up
+	cmd := exec.Command("ifconfig", i.iface.Name(), "up")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to set interface up: %s: %w", string(out), err)
 	}
 
-	// Check if interface exists
-	cmd := exec.Command("ifconfig", name)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("interface not found: %s", name)
+	// Set IP address
+	cmd = exec.Command("ifconfig", i.iface.Name(), "inet", i.config.Address, i.config.Address)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to set interface address: %s: %w", string(out), err)
 	}
 
-	// Parse interface type and IP from ifconfig output
-	var ip net.IP
-	lines := strings.Split(string(output), "\n")
-	for _, line := range lines {
-		if strings.Contains(line, "inet ") {
-			fields := strings.Fields(line)
-			if len(fields) >= 2 {
-				ip = net.ParseIP(fields[1])
-				break
-			}
+	// Set MTU if specified
+	if i.config.MTU > 0 {
+		cmd = exec.Command("ifconfig", i.iface.Name(), "mtu", fmt.Sprintf("%d", i.config.MTU))
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("failed to set interface MTU: %s: %w", string(out), err)
 		}
 	}
 
-	if ip == nil {
-		return nil, fmt.Errorf("interface has no IP address: %s", name)
-	}
-
-	// Open the existing interface
-	ifConfig := water.Config{
-		DeviceType: water.TUN,
-		Name:       name,
-	}
-
-	iface, err := water.New(ifConfig)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open interface: %w", err)
-	}
-
-	return &darwinInterface{
-		interfaceBase: interfaceBase{
-			name: name,
-			typ:  TUN, // macOS only supports TUN
-			ip:   ip,
-		},
-		iface:  iface,
-		logger: m.logger,
-	}, nil
+	return nil
 }
 
-// Read implements Interface.Read
-func (i *darwinInterface) Read(packet []byte) (int, error) {
-	return i.iface.Read(packet)
+// Read reads data from the interface
+func (i *darwinInterface) Read(p []byte) (n int, err error) {
+	return i.iface.Read(p)
 }
 
-// Write implements Interface.Write
-func (i *darwinInterface) Write(packet []byte) (int, error) {
-	return i.iface.Write(packet)
+// Write writes data to the interface
+func (i *darwinInterface) Write(p []byte) (n int, err error) {
+	return i.iface.Write(p)
 }
 
-// Close implements Interface.Close
+// Close closes the interface
 func (i *darwinInterface) Close() error {
-	if !i.persistent {
-		if err := i.Remove(i.name); err != nil {
-			i.logger.Error("Failed to remove interface during close",
-				zap.String("name", i.name),
+	if i.iface != nil {
+		// Remove interface configuration
+		cmd := exec.Command("ifconfig", i.iface.Name(), "down")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			i.logger.Error("Failed to bring interface down",
+				zap.String("interface", i.iface.Name()),
+				zap.String("output", string(out)),
 				zap.Error(err),
 			)
 		}
-	}
-	return i.iface.Close()
-}
 
-// SetMTU implements Interface.SetMTU
-func (i *darwinInterface) SetMTU(mtu int) error {
-	cmd := exec.Command("ifconfig", i.name, "mtu", fmt.Sprintf("%d", mtu))
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to set MTU: %s (%w)", string(output), err)
+		return i.iface.Close()
 	}
 	return nil
 }
 
-// SetFlags implements Interface.SetFlags
-func (i *darwinInterface) SetFlags(flags int) error {
-	fd := i.iface.FD()
-	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd),
-		uintptr(syscall.SIOCSIFFLAGS), uintptr(flags))
-	if errno != 0 {
-		return fmt.Errorf("failed to set interface flags: %w", errno)
+// GetFD returns the file descriptor for the interface
+func (i *darwinInterface) GetFD() int {
+	if i.iface == nil {
+		return -1
 	}
-	return nil
+	return int(i.iface.ReadWriteCloser.(*os.File).Fd())
 }
 
-// configure sets up the interface IP address and brings it up
-func (i *darwinInterface) configure() error {
-	// Set IP address
-	cmd := exec.Command("ifconfig", i.name, "inet", i.ip.String(),
-		i.ip.String(), "netmask", "255.255.255.0", "up")
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to configure interface: %s (%w)", string(output), err)
+// GetName returns the interface name
+func (i *darwinInterface) GetName() string {
+	if i.iface == nil {
+		return ""
+	}
+	return i.iface.Name()
+}
+
+// GetHardwareAddr returns the interface hardware address
+func (i *darwinInterface) GetHardwareAddr() net.HardwareAddr {
+	if i.iface == nil {
+		return nil
 	}
 
-	// Set interface flags
-	if err := i.SetFlags(unix.IFF_UP | unix.IFF_RUNNING); err != nil {
-		return fmt.Errorf("failed to set interface flags: %w", err)
+	iface, err := net.InterfaceByName(i.iface.Name())
+	if err != nil {
+		return nil
+	}
+	return iface.HardwareAddr
+}
+
+// GetFlags returns the interface flags
+func (i *darwinInterface) GetFlags() net.Flags {
+	if i.iface == nil {
+		return 0
 	}
 
-	return nil
+	iface, err := net.InterfaceByName(i.iface.Name())
+	if err != nil {
+		return 0
+	}
+	return iface.Flags
 }

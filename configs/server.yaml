@@ -1,39 +1,36 @@
+# Server configuration for SSSonector
+
+# Mode can be "server" or "client"
 mode: "server"
 
+# Network interface configuration
 network:
   interface: "tun0"
   address: "10.0.0.1"
   mtu: 1500
-  qos_enabled: true
-  qos_tag: 46  # EF (Expedited Forwarding)
+
+# Tunnel configuration
+tunnel:
+  # Certificate configuration
+  cert_file: "/etc/sssonector/certs/server.crt"
+  key_file: "/etc/sssonector/certs/server.key"
+  ca_file: "/etc/sssonector/certs/ca.crt"
+
+  # Server settings
   listen_address: "0.0.0.0"
-  listen_port: 5000
-  max_clients: 5
+  listen_port: 8443
+  max_clients: 100
 
-tls:
-  cert_file: "certs/server.crt"
-  key_file: "certs/server.key"
-  auto_generate: true
-  validity_days: 90
-  key_size: 2048
+  # Bandwidth throttling (bytes per second, 0 for unlimited)
+  bandwidth_limit: 0
 
-logging:
-  file_path: "/var/log/SSSonector/server.log"
-  level: "info"
-  max_size: 50
-  rotate: true
-
+# Monitoring configuration
 monitor:
+  log_file: "/var/log/sssonector/server.log"
+  log_level: "info"
+
+  # SNMP monitoring
   snmp_enabled: true
+  snmp_address: "0.0.0.0"
   snmp_port: 161
-  community: "public"
-
-service:
-  auto_start: true
-  user: "SSSonector"
-  group: "SSSonector"
-
-throttle:
-  enabled: false
-  upload_kbps: 1024
-  down_kbps: 1024
+  snmp_community: "public"

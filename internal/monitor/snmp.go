@@ -1,206 +1,147 @@
 package monitor
 
 import (
-	"encoding/asn1"
 	"fmt"
 	"net"
-	"strconv"
-	"sync"
-	"time"
+	"sync/atomic"
 
+	"github.com/o3willard-AI/SSSonector/internal/config"
+	"github.com/shirou/gopsutil/v3/cpu"
+	"github.com/shirou/gopsutil/v3/mem"
 	"go.uber.org/zap"
 )
 
 // SNMPAgent handles SNMP monitoring
 type SNMPAgent struct {
-	logger    *zap.Logger
-	port      int
-	community string
-	conn      *net.UDPConn
-	metrics   *MetricsCollector
-	done      chan struct{}
-	wg        sync.WaitGroup
+	logger *zap.Logger
+	conn   *net.UDPConn
+
+	// Statistics
+	bytesIn            atomic.Int64
+	bytesOut           atomic.Int64
+	activeConnections  atomic.Int32
+	totalConnections   atomic.Int64
+	connectionFailures atomic.Int64
+	lastError          string
 }
 
 // NewSNMPAgent creates a new SNMP agent
-func NewSNMPAgent(logger *zap.Logger, port int, community string) *SNMPAgent {
-	return &SNMPAgent{
-		logger:    logger,
-		port:      port,
-		community: community,
-		metrics:   NewMetricsCollector(),
-		done:      make(chan struct{}),
-	}
-}
-
-// Start starts the SNMP agent
-func (a *SNMPAgent) Start() error {
-	addr := &net.UDPAddr{
-		IP:   net.ParseIP("0.0.0.0"),
-		Port: a.port,
-	}
-
-	var err error
-	a.conn, err = net.ListenUDP("udp", addr)
+func NewSNMPAgent(logger *zap.Logger, cfg *config.MonitorConfig) (*SNMPAgent, error) {
+	addr := fmt.Sprintf("%s:%d", cfg.SNMPAddress, cfg.SNMPPort)
+	udpAddr, err := net.ResolveUDPAddr("udp", addr)
 	if err != nil {
-		return fmt.Errorf("failed to start SNMP server: %w", err)
+		return nil, fmt.Errorf("failed to resolve UDP address: %w", err)
 	}
 
-	a.wg.Add(1)
-	go a.serve()
+	conn, err := net.ListenUDP("udp", udpAddr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to listen on UDP: %w", err)
+	}
 
-	a.logger.Info("SNMP agent started",
-		zap.Int("port", a.port),
-		zap.String("community", a.community),
-	)
+	agent := &SNMPAgent{
+		logger: logger,
+		conn:   conn,
+	}
 
-	return nil
+	// Start SNMP request handler
+	go agent.handleRequests()
+
+	return agent, nil
 }
 
-// Stop stops the SNMP agent
-func (a *SNMPAgent) Stop() error {
-	close(a.done)
+// Close closes the SNMP agent
+func (a *SNMPAgent) Close() error {
 	if a.conn != nil {
-		a.conn.Close()
+		return a.conn.Close()
 	}
-	a.wg.Wait()
 	return nil
 }
 
-// UpdateStats updates the agent's metrics
-func (a *SNMPAgent) UpdateStats(bytesReceived, bytesSent, packetsLost uint64, latency int64) {
-	a.metrics.UpdateNetworkMetrics(bytesReceived, bytesSent, packetsLost, latency)
+// UpdateStats updates the SNMP statistics
+func (a *SNMPAgent) UpdateStats(bytesIn, bytesOut int64, activeConnections int) {
+	a.bytesIn.Store(bytesIn)
+	a.bytesOut.Store(bytesOut)
+	a.activeConnections.Store(int32(activeConnections))
 }
 
-// serve handles incoming SNMP requests
-func (a *SNMPAgent) serve() {
-	defer a.wg.Done()
-
-	buffer := make([]byte, 4096)
+// handleRequests handles incoming SNMP requests
+func (a *SNMPAgent) handleRequests() {
+	buffer := make([]byte, 1024)
 	for {
-		select {
-		case <-a.done:
-			return
-		default:
-			a.conn.SetReadDeadline(time.Now().Add(1 * time.Second))
-			n, remoteAddr, err := a.conn.ReadFromUDP(buffer)
-			if err != nil {
-				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-					continue
-				}
-				a.logger.Error("Failed to read UDP packet", zap.Error(err))
-				continue
-			}
-
-			response, err := a.handleRequest(buffer[:n])
-			if err != nil {
-				a.logger.Error("Failed to handle SNMP request",
+		n, remoteAddr, err := a.conn.ReadFromUDP(buffer)
+		if err != nil {
+			if !isClosedError(err) {
+				a.logger.Error("Failed to read SNMP request",
 					zap.Error(err),
-					zap.String("remote_addr", remoteAddr.String()),
 				)
-				continue
 			}
+			return
+		}
 
-			if response != nil {
-				_, err = a.conn.WriteToUDP(response, remoteAddr)
-				if err != nil {
-					a.logger.Error("Failed to send SNMP response",
-						zap.Error(err),
-						zap.String("remote_addr", remoteAddr.String()),
-					)
-				}
-			}
+		// Process SNMP request
+		response, err := a.processRequest(buffer[:n])
+		if err != nil {
+			a.logger.Error("Failed to process SNMP request",
+				zap.Error(err),
+			)
+			continue
+		}
+
+		// Send response
+		_, err = a.conn.WriteToUDP(response, remoteAddr)
+		if err != nil {
+			a.logger.Error("Failed to send SNMP response",
+				zap.Error(err),
+			)
 		}
 	}
 }
 
-// handleRequest processes an SNMP request and returns a response
-func (a *SNMPAgent) handleRequest(request []byte) ([]byte, error) {
-	// Parse SNMP request
-	var snmpPdu struct {
-		Version   int
-		Community string
-		Data      asn1.RawValue
-	}
-
-	_, err := asn1.Unmarshal(request, &snmpPdu)
+// processRequest processes an SNMP request and returns a response
+func (a *SNMPAgent) processRequest(request []byte) ([]byte, error) {
+	// Get system stats
+	v, err := mem.VirtualMemory()
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse SNMP request: %w", err)
+		return nil, fmt.Errorf("failed to get memory stats: %w", err)
 	}
 
-	// Verify community string
-	if snmpPdu.Community != a.community {
-		return nil, fmt.Errorf("invalid community string")
-	}
-
-	// Get current metrics
-	metrics := a.metrics.GetSnapshot()
-
-	// Build response based on request type
-	var response []byte
-	switch snmpPdu.Data.Tag {
-	case 0xa0: // GetRequest
-		response, err = a.handleGetRequest(request, metrics)
-	case 0xa1: // GetNextRequest
-		response, err = a.handleGetNextRequest(request, metrics)
-	default:
-		return nil, fmt.Errorf("unsupported SNMP request type: %d", snmpPdu.Data.Tag)
-	}
-
+	c, err := cpu.Percent(0, false)
 	if err != nil {
-		return nil, fmt.Errorf("failed to handle SNMP request: %w", err)
+		return nil, fmt.Errorf("failed to get CPU stats: %w", err)
 	}
 
+	// Build response with current stats
+	stats := map[string]interface{}{
+		"bytes_in":            a.bytesIn.Load(),
+		"bytes_out":           a.bytesOut.Load(),
+		"active_connections":  a.activeConnections.Load(),
+		"total_connections":   a.totalConnections.Load(),
+		"connection_failures": a.connectionFailures.Load(),
+		"last_error":          a.lastError,
+		"system_memory_total": v.Total,
+		"system_memory_used":  v.Used,
+		"system_cpu_percent":  c[0],
+	}
+
+	// Encode response as SNMP PDU
+	// This is a simplified implementation - in a real system,
+	// you would properly encode according to SNMP protocol specs
+	response := encodeStats(stats)
 	return response, nil
 }
 
-// handleGetRequest processes an SNMP GET request
-func (a *SNMPAgent) handleGetRequest(request []byte, metrics *Metrics) ([]byte, error) {
-	// Create response with same structure but updated values
-	response := make([]byte, len(request))
-	copy(response, request)
-
-	// Update response type to GetResponse
-	response[len(response)-len(request)+16] = 0xa2
-
-	// Update values based on OIDs
-	// Note: This is a simplified implementation
-	// In a real implementation, we would parse the OIDs and update values accordingly
-
-	return response, nil
+// isClosedError checks if an error indicates the connection is closed
+func isClosedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return err.Error() == "use of closed network connection"
 }
 
-// handleGetNextRequest processes an SNMP GETNEXT request
-func (a *SNMPAgent) handleGetNextRequest(request []byte, metrics *Metrics) ([]byte, error) {
-	// Similar to handleGetRequest but returns next OID in sequence
-	response := make([]byte, len(request))
-	copy(response, request)
-
-	// Update response type to GetResponse
-	response[len(response)-len(request)+16] = 0xa2
-
-	return response, nil
-}
-
-// getLastOIDNumber extracts the last number from an OID
-func getLastOIDNumber(oid string) (int, error) {
-	// Find the last dot in the OID
-	lastDot := -1
-	for i := len(oid) - 1; i >= 0; i-- {
-		if oid[i] == '.' {
-			lastDot = i
-			break
-		}
-	}
-	if lastDot == -1 {
-		return 0, fmt.Errorf("invalid OID format")
-	}
-
-	// Parse the number after the last dot
-	num, err := strconv.Atoi(oid[lastDot+1:])
-	if err != nil {
-		return 0, fmt.Errorf("invalid OID number: %w", err)
-	}
-
-	return num, nil
+// encodeStats encodes stats as a simple byte slice
+// In a real implementation, this would properly encode as SNMP PDUs
+func encodeStats(stats map[string]interface{}) []byte {
+	// Simplified implementation - in reality, you would properly
+	// encode according to SNMP protocol specifications
+	return []byte(fmt.Sprintf("%v", stats))
 }

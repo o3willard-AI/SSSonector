@@ -4,142 +4,150 @@ import (
 	"context"
 	"io"
 	"sync"
-	"time"
+
+	"golang.org/x/time/rate"
 )
 
-// TokenBucket implements a token bucket rate limiter
-type TokenBucket struct {
-	rate       float64    // tokens per second
-	burstSize  float64    // maximum bucket size
-	tokens     float64    // current number of tokens
-	lastUpdate time.Time  // last time tokens were added
-	mu         sync.Mutex // protects tokens and lastUpdate
+// Limiter implements bandwidth throttling
+type Limiter struct {
+	limiter *rate.Limiter
+	mu      sync.RWMutex
 }
 
-// NewTokenBucket creates a new token bucket rate limiter
-func NewTokenBucket(rateKbps float64, burstKb float64) *TokenBucket {
-	return &TokenBucket{
-		rate:       rateKbps * 1024, // convert to bytes per second
-		burstSize:  burstKb * 1024,  // convert to bytes
-		tokens:     burstKb * 1024,  // start with full bucket
-		lastUpdate: time.Now(),
+// NewLimiter creates a new bandwidth limiter
+func NewLimiter(bytesPerSecond int64) *Limiter {
+	var limiter *rate.Limiter
+	if bytesPerSecond > 0 {
+		limiter = rate.NewLimiter(rate.Limit(bytesPerSecond), int(bytesPerSecond))
+	}
+	return &Limiter{
+		limiter: limiter,
 	}
 }
 
-// updateTokens adds tokens based on elapsed time
-func (tb *TokenBucket) updateTokens() {
-	now := time.Now()
-	elapsed := now.Sub(tb.lastUpdate).Seconds()
-	tb.tokens = min(tb.burstSize, tb.tokens+elapsed*tb.rate)
-	tb.lastUpdate = now
-}
+// SetLimit updates the bandwidth limit
+func (l *Limiter) SetLimit(bytesPerSecond int64) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 
-// Take attempts to take n tokens from the bucket
-func (tb *TokenBucket) Take(n float64) time.Duration {
-	tb.mu.Lock()
-	defer tb.mu.Unlock()
-
-	tb.updateTokens()
-
-	// If we have enough tokens, take them immediately
-	if tb.tokens >= n {
-		tb.tokens -= n
-		return 0
-	}
-
-	// Calculate how long to wait for enough tokens
-	needed := n - tb.tokens
-	wait := time.Duration(needed / tb.rate * float64(time.Second))
-	tb.tokens = 0
-	return wait
-}
-
-// RateLimitedReader wraps an io.Reader with rate limiting
-type RateLimitedReader struct {
-	reader io.Reader
-	bucket *TokenBucket
-	ctx    context.Context
-}
-
-// NewRateLimitedReader creates a new rate-limited reader
-func NewRateLimitedReader(ctx context.Context, reader io.Reader, rateKbps float64) *RateLimitedReader {
-	// Use burst size of 1 second worth of data
-	return &RateLimitedReader{
-		reader: reader,
-		bucket: NewTokenBucket(rateKbps, rateKbps),
-		ctx:    ctx,
+	if bytesPerSecond > 0 {
+		if l.limiter == nil {
+			l.limiter = rate.NewLimiter(rate.Limit(bytesPerSecond), int(bytesPerSecond))
+		} else {
+			l.limiter.SetLimit(rate.Limit(bytesPerSecond))
+			l.limiter.SetBurst(int(bytesPerSecond))
+		}
+	} else {
+		l.limiter = nil
 	}
 }
 
-// Read implements io.Reader with rate limiting
-func (r *RateLimitedReader) Read(p []byte) (int, error) {
-	// Check if context is cancelled
-	select {
-	case <-r.ctx.Done():
-		return 0, r.ctx.Err()
-	default:
+// Reader wraps an io.Reader with bandwidth throttling
+type Reader struct {
+	reader  io.Reader
+	limiter *Limiter
+}
+
+// NewReader creates a new throttled reader
+func (l *Limiter) NewReader(r io.Reader) *Reader {
+	return &Reader{
+		reader:  r,
+		limiter: l,
+	}
+}
+
+// Read implements io.Reader with bandwidth throttling
+func (r *Reader) Read(p []byte) (n int, err error) {
+	r.limiter.mu.RLock()
+	limiter := r.limiter.limiter
+	r.limiter.mu.RUnlock()
+
+	if limiter == nil {
+		return r.reader.Read(p)
 	}
 
-	// Calculate wait time for the requested number of bytes
-	wait := r.bucket.Take(float64(len(p)))
-	if wait > 0 {
-		timer := time.NewTimer(wait)
-		select {
-		case <-r.ctx.Done():
-			timer.Stop()
-			return 0, r.ctx.Err()
-		case <-timer.C:
+	n, err = r.reader.Read(p)
+	if n > 0 {
+		if err := limiter.WaitN(context.Background(), n); err != nil {
+			return n, err
 		}
 	}
-
-	return r.reader.Read(p)
+	return n, err
 }
 
-// RateLimitedWriter wraps an io.Writer with rate limiting
-type RateLimitedWriter struct {
-	writer io.Writer
-	bucket *TokenBucket
-	ctx    context.Context
+// Writer wraps an io.Writer with bandwidth throttling
+type Writer struct {
+	writer  io.Writer
+	limiter *Limiter
 }
 
-// NewRateLimitedWriter creates a new rate-limited writer
-func NewRateLimitedWriter(ctx context.Context, writer io.Writer, rateKbps float64) *RateLimitedWriter {
-	// Use burst size of 1 second worth of data
-	return &RateLimitedWriter{
-		writer: writer,
-		bucket: NewTokenBucket(rateKbps, rateKbps),
-		ctx:    ctx,
+// NewWriter creates a new throttled writer
+func (l *Limiter) NewWriter(w io.Writer) *Writer {
+	return &Writer{
+		writer:  w,
+		limiter: l,
 	}
 }
 
-// Write implements io.Writer with rate limiting
-func (w *RateLimitedWriter) Write(p []byte) (int, error) {
-	// Check if context is cancelled
-	select {
-	case <-w.ctx.Done():
-		return 0, w.ctx.Err()
-	default:
+// Write implements io.Writer with bandwidth throttling
+func (w *Writer) Write(p []byte) (n int, err error) {
+	w.limiter.mu.RLock()
+	limiter := w.limiter.limiter
+	w.limiter.mu.RUnlock()
+
+	if limiter == nil {
+		return w.writer.Write(p)
 	}
 
-	// Calculate wait time for the requested number of bytes
-	wait := w.bucket.Take(float64(len(p)))
-	if wait > 0 {
-		timer := time.NewTimer(wait)
-		select {
-		case <-w.ctx.Done():
-			timer.Stop()
-			return 0, w.ctx.Err()
-		case <-timer.C:
+	n, err = w.writer.Write(p)
+	if n > 0 {
+		if err := limiter.WaitN(context.Background(), n); err != nil {
+			return n, err
 		}
 	}
-
-	return w.writer.Write(p)
+	return n, err
 }
 
-// min returns the minimum of two float64 values
-func min(a, b float64) float64 {
-	if a < b {
-		return a
+// ThrottledCopy copies from src to dst with bandwidth throttling
+func (l *Limiter) ThrottledCopy(dst io.Writer, src io.Reader) (written int64, err error) {
+	l.mu.RLock()
+	limiter := l.limiter
+	l.mu.RUnlock()
+
+	if limiter == nil {
+		return io.Copy(dst, src)
 	}
-	return b
+
+	buf := make([]byte, 32*1024)
+	for {
+		nr, er := src.Read(buf)
+		if nr > 0 {
+			nw, ew := dst.Write(buf[0:nr])
+			if nw < 0 || nr < nw {
+				nw = 0
+				if ew == nil {
+					ew = io.ErrShortWrite
+				}
+			}
+			written += int64(nw)
+			if ew != nil {
+				err = ew
+				break
+			}
+			if nr != nw {
+				err = io.ErrShortWrite
+				break
+			}
+			if err := limiter.WaitN(context.Background(), nr); err != nil {
+				break
+			}
+		}
+		if er != nil {
+			if er != io.EOF {
+				err = er
+			}
+			break
+		}
+	}
+	return written, err
 }
