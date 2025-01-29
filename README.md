@@ -1,208 +1,137 @@
-# SSSonector
+# SSSonector - Secure Scalable SSL Connector
 
-A secure, cross-platform SSL tunneling solution with comprehensive monitoring capabilities. This application creates persistent TLS 1.3 tunnels between remote locations, supporting both client and server modes with configurable bandwidth throttling and SNMP monitoring.
+SSSonector is a cross-platform SSL tunneling application that creates secure connections between remote networks. It supports both client and server modes, with features like bandwidth throttling, SNMP monitoring, and automatic reconnection.
 
 ## Features
 
-- **Cross-Platform Support**
-  - Linux, macOS, and Windows compatibility
-  - Platform-specific virtual network interfaces
-  - Native service integration (systemd, launchd, Windows Services)
+- TLS 1.3 with EU-exportable cipher suites
+- Cross-platform support (Windows, Linux, macOS)
+- Bandwidth throttling
+- SNMP monitoring
+- Automatic reconnection
+- Certificate-based authentication
+- Virtual network interface creation
+- Persistent SSL tunnels
+- Connection monitoring and logging
 
-- **Security**
-  - TLS 1.3 with EU-exportable cipher suites
-  - Automatic certificate management
-  - Certificate auto-renewal
-  - Secure private key handling
+## Installation
 
-- **Network Features**
-  - Virtual network interface creation (TUN/TAP)
-  - Configurable bandwidth throttling
-  - QoS support
-  - Connection persistence with auto-reconnect
+### Platform-Specific Installation Guides
 
-- **Monitoring & Telemetry**
-  - SNMP v2c support
-  - Prometheus metrics
-  - Grafana dashboards
-  - Detailed logging
-  - Connection statistics
+For detailed installation instructions, please refer to the appropriate guide for your platform:
 
-## Quick Start
+- [Ubuntu Installation Guide](docs/ubuntu_install.md)
+- [Red Hat/Rocky Linux Installation Guide](docs/linux_install.md)
+- [macOS Installation Guide](docs/macos_install.md)
+- [Windows Installation Guide](docs/windows_install.md)
 
-### Prerequisites
+### Quick Start
 
-- Go 1.21 or later
-- Root/Administrator privileges
-- Docker and Docker Compose (for monitoring)
-
-### Installation
-
-1. Download the latest release for your platform:
-   ```bash
-   # Linux/macOS
-   curl -LO https://github.com/yourusername/SSSonector/releases/latest/download/SSSonector-$(uname -s | tr '[:upper:]' '[:lower:]')-amd64.tar.gz
-   tar xzf SSSonector-*.tar.gz
-   cd SSSonector
-
-   # Windows (PowerShell)
-   Invoke-WebRequest -Uri "https://github.com/yourusername/SSSonector/releases/latest/download/SSSonector-windows-amd64.zip" -OutFile "SSSonector.zip"
-   Expand-Archive SSSonector.zip
-   cd SSSonector
-   ```
-
-2. Configure the application:
-   ```bash
-   # Server mode
-   cp configs/server.yaml /etc/SSSonector/config.yaml
-   vim /etc/SSSonector/config.yaml
-
-   # Client mode
-   cp configs/client.yaml /etc/SSSonector/config.yaml
-   vim /etc/SSSonector/config.yaml
-   ```
-
-3. Install as a service:
-   ```bash
-   # Linux
-   make install-linux
-
-   # macOS
-   make install-darwin
-
-   # Windows (PowerShell as Administrator)
-   make install-windows
-   ```
-
-### Running
-
+#### Linux (Ubuntu/Debian)
 ```bash
-# Server mode
-sudo SSSonector --config /etc/SSSonector/config.yaml --mode server
+# Download the latest release
+wget https://github.com/o3willard-AI/SSSonector/releases/latest/download/sssonector_amd64.deb
 
-# Client mode
-sudo SSSonector --config /etc/SSSonector/config.yaml --mode client
+# Install the package
+sudo dpkg -i sssonector_amd64.deb
+sudo apt-get install -f  # Install dependencies if needed
 ```
 
-### Monitoring Setup
+#### Linux (RHEL/Rocky)
+```bash
+# Download the latest release
+wget https://github.com/o3willard-AI/SSSonector/releases/latest/download/sssonector.el8.x86_64.rpm
 
-1. Start the monitoring stack:
-   ```bash
-   cd monitoring
-   docker-compose up -d
-   ```
+# Install the package
+sudo dnf install sssonector.el8.x86_64.rpm
+```
 
-2. Access monitoring interfaces:
-   - Grafana: http://localhost:3000 (admin/admin)
-   - Prometheus: http://localhost:9090
+#### macOS
+```bash
+# Download the latest release
+curl -LO https://github.com/o3willard-AI/SSSonector/releases/latest/download/SSSonector.pkg
 
-## Development
+# Install the package
+sudo installer -pkg SSSonector.pkg -target /
+```
+
+#### Windows
+1. Download the latest release from [GitHub Releases](https://github.com/o3willard-AI/SSSonector/releases/latest)
+2. Run the installer as administrator
+3. Follow the installation wizard
 
 ### Building from Source
 
+Requirements:
+- Go 1.21 or later
+- Make
+- OpenSSL (for certificate generation)
+- Platform-specific build tools (see installation guides)
+
 ```bash
-# Clone repository
-git clone https://github.com/yourusername/SSSonector.git
+# Clone the repository
+git clone https://github.com/o3willard-AI/SSSonector.git
 cd SSSonector
 
-# Build
-make build
+# Build and install
+make
+sudo make install
+```
 
-# Run tests
+## Basic Configuration
+
+Configuration files are stored in:
+- Linux: `/etc/sssonector/`
+- macOS: `/etc/sssonector/`
+- Windows: `C:\ProgramData\SSSonector\`
+
+For detailed configuration examples and use cases, see the platform-specific installation guides.
+
+## Service Management
+
+### Linux (systemd)
+```bash
+sudo systemctl start sssonector    # Start service
+sudo systemctl enable sssonector   # Enable at boot
+sudo systemctl status sssonector   # Check status
+```
+
+### macOS (launchd)
+```bash
+sudo launchctl load /Library/LaunchDaemons/com.o3willard.sssonector.plist    # Start
+sudo launchctl unload /Library/LaunchDaemons/com.o3willard.sssonector.plist  # Stop
+```
+
+### Windows
+```powershell
+Start-Service SSSonector    # Start service
+Stop-Service SSSonector     # Stop service
+Get-Service SSSonector     # Check status
+```
+
+## Documentation
+
+- [Ubuntu Installation Guide](docs/ubuntu_install.md) - Ubuntu-specific installation and configuration
+- [Linux Installation Guide](docs/linux_install.md) - Red Hat/Rocky Linux installation and configuration
+- [macOS Installation Guide](docs/macos_install.md) - macOS-specific installation and configuration
+- [Windows Installation Guide](docs/windows_install.md) - Windows-specific installation and configuration
+- [QA Guide](docs/qa_guide.md) - Testing procedures and troubleshooting
+
+## Development
+
+### Building Installers
+```bash
+# Install dependencies
+make installer-deps
+
+# Build installers for all platforms
+make installers
+```
+
+### Running Tests
+```bash
 make test
-
-# Create distribution packages
-make dist
 ```
-
-### Available Make Commands
-
-- `make build` - Build the binary
-- `make test` - Run tests
-- `make dist` - Create distribution packages
-- `make run-server` - Run in server mode
-- `make run-client` - Run in client mode
-- `make monitoring-up` - Start monitoring stack
-- `make test-certs` - Test certificate generation
-- `make test-snmp` - Test SNMP functionality
-
-## Configuration
-
-### Server Configuration
-
-```yaml
-mode: "server"
-network:
-  interface: "tun0"
-  address: "10.0.0.1"
-  listen_address: "0.0.0.0"
-  listen_port: 5000
-  max_clients: 5
-
-tls:
-  cert_file: "certs/server.crt"
-  key_file: "certs/server.key"
-  auto_generate: true
-  validity_days: 90
-
-throttle:
-  enabled: true
-  upload_kbps: 1024
-  down_kbps: 1024
-
-monitor:
-  snmp_enabled: true
-  snmp_port: 161
-  community: "public"
-```
-
-### Client Configuration
-
-```yaml
-mode: "client"
-network:
-  interface: "tun0"
-  address: "10.0.0.2"
-  server_address: "tunnel.example.com"
-  server_port: 5000
-  retry_attempts: 10
-  retry_interval: 30
-
-tls:
-  cert_file: "certs/client.crt"
-  key_file: "certs/client.key"
-  auto_generate: true
-  validity_days: 90
-
-throttle:
-  enabled: true
-  upload_kbps: 1024
-  down_kbps: 1024
-```
-
-## Monitoring
-
-### SNMP Metrics
-
-- Bytes Received/Sent (Counter64)
-- Packets Lost (Counter64)
-- Latency (Integer32, microseconds)
-- Connection Status
-- CPU/Memory Usage
-- Uptime
-
-### Grafana Dashboard
-
-The included Grafana dashboard provides:
-- Real-time bandwidth graphs
-- Latency monitoring
-- Packet loss tracking
-- System resource utilization
-- Connection status
-
-## Troubleshooting
-
-See [QA Guide](docs/qa_guide.md) for detailed troubleshooting steps and common issues.
 
 ## Contributing
 
@@ -214,9 +143,4 @@ See [QA Guide](docs/qa_guide.md) for detailed troubleshooting steps and common i
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Support
-
-For issues and support, please visit:
-https://github.com/yourusername/SSSonector/issues
+MIT License - see LICENSE file for details
