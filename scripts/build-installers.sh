@@ -5,10 +5,12 @@ VERSION="1.0.0"
 BUILD_DIR="build"
 DIST_DIR="dist"
 INSTALLER_DIR="installers"
+RPM_BUILD_DIR="$BUILD_DIR/rpm"
 
 # Ensure required tools are installed
 command -v makensis >/dev/null 2>&1 || { echo "NSIS is required for Windows installer. Install with: apt-get install nsis"; exit 1; }
 command -v dpkg-deb >/dev/null 2>&1 || { echo "dpkg-deb is required for Debian package. Install with: apt-get install dpkg"; exit 1; }
+command -v rpmbuild >/dev/null 2>&1 || { echo "rpmbuild is required for RPM package. Install with: apt-get install rpm"; exit 1; }
 
 # Create output directories
 mkdir -p "$DIST_DIR"
@@ -27,26 +29,46 @@ makensis "$INSTALLER_DIR/windows/install.nsi"
 mv "$INSTALLER_DIR/windows/SSSonector-Setup.exe" "$DIST_DIR/SSSonector-${VERSION}-windows-amd64.exe"
 
 # Linux Package (DEB)
-echo "Building Linux package..."
+echo "Building Debian package..."
 DEBIAN_PKG="$BUILD_DIR/linux/sssonector_${VERSION}_amd64"
 mkdir -p "$DEBIAN_PKG/DEBIAN"
 mkdir -p "$DEBIAN_PKG/usr/local/bin"
 mkdir -p "$DEBIAN_PKG/etc/sssonector"
 mkdir -p "$DEBIAN_PKG/lib/systemd/system"
 
-# Copy files
+# Copy files for DEB
 cp "$BUILD_DIR/linux-amd64/sssonector" "$DEBIAN_PKG/usr/local/bin/"
 cp -r configs/* "$DEBIAN_PKG/etc/sssonector/"
 cp scripts/service/systemd/sssonector.service "$DEBIAN_PKG/lib/systemd/system/"
 cp "$INSTALLER_DIR/linux/DEBIAN/"* "$DEBIAN_PKG/DEBIAN/"
 
-# Set permissions
+# Set permissions for DEB
 chmod 755 "$DEBIAN_PKG/DEBIAN/postinst"
 chmod 755 "$DEBIAN_PKG/DEBIAN/prerm"
 chmod 755 "$DEBIAN_PKG/usr/local/bin/sssonector"
 
-# Build package
+# Build DEB package
 dpkg-deb --build "$DEBIAN_PKG" "$DIST_DIR/sssonector_${VERSION}_amd64.deb"
+
+# Linux Package (RPM)
+echo "Building RPM package..."
+mkdir -p "$RPM_BUILD_DIR"/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
+
+# Create source tarball
+tar czf "$RPM_BUILD_DIR/SOURCES/sssonector-${VERSION}.tar.gz" \
+    --transform "s,^,sssonector-${VERSION}/," \
+    build/linux-amd64/sssonector configs scripts LICENSE README.md
+
+# Copy spec file
+cp "$INSTALLER_DIR/linux/rpm/sssonector.spec" "$RPM_BUILD_DIR/SPECS/"
+
+# Build RPM package
+rpmbuild --define "_topdir $PWD/$RPM_BUILD_DIR" \
+         --define "version $VERSION" \
+         -bb "$RPM_BUILD_DIR/SPECS/sssonector.spec"
+
+# Copy RPM packages to dist
+cp "$RPM_BUILD_DIR"/RPMS/*/*.rpm "$DIST_DIR/"
 
 # macOS Package
 echo "Building macOS package..."
