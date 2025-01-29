@@ -2,121 +2,131 @@ package config
 
 import (
 	"fmt"
-	"path/filepath"
-	"strings"
 
 	"github.com/spf13/viper"
 )
 
-const (
-	envPrefix = "SSL_TUNNEL"
-)
+// Config holds the complete application configuration
+type Config struct {
+	// Mode specifies whether the application runs in client or server mode
+	Mode string `mapstructure:"mode"`
 
-// Load reads and parses the configuration from the specified file
-func Load(configFile string) (*Config, error) {
-	v := viper.New()
+	// Network contains network interface configuration
+	Network *NetworkConfig `mapstructure:"network"`
 
-	// Set up Viper for file reading
-	v.SetConfigFile(configFile)
-	ext := filepath.Ext(configFile)
-	v.SetConfigType(strings.TrimPrefix(ext, "."))
+	// Tunnel contains SSL tunnel configuration
+	Tunnel *TunnelConfig `mapstructure:"tunnel"`
 
-	// Set up environment variables
-	v.SetEnvPrefix(envPrefix)
-	v.AutomaticEnv()
-	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	// Monitor contains monitoring configuration
+	Monitor *MonitorConfig `mapstructure:"monitor"`
+}
 
-	// Read configuration file
-	if err := v.ReadInConfig(); err != nil {
+// TunnelConfig holds SSL tunnel configuration
+type TunnelConfig struct {
+	// CertFile is the path to the SSL certificate file
+	CertFile string `mapstructure:"cert_file"`
+
+	// KeyFile is the path to the SSL private key file
+	KeyFile string `mapstructure:"key_file"`
+
+	// CAFile is the path to the CA certificate file for client verification
+	CAFile string `mapstructure:"ca_file"`
+
+	// ListenAddress is the address to listen on (server mode)
+	ListenAddress string `mapstructure:"listen_address"`
+
+	// ListenPort is the port to listen on (server mode)
+	ListenPort int `mapstructure:"listen_port"`
+
+	// ServerAddress is the address to connect to (client mode)
+	ServerAddress string `mapstructure:"server_address"`
+
+	// ServerPort is the port to connect to (client mode)
+	ServerPort int `mapstructure:"server_port"`
+
+	// MaxClients is the maximum number of concurrent clients (server mode)
+	MaxClients int `mapstructure:"max_clients"`
+
+	// RetryAttempts is the number of connection retry attempts (client mode)
+	RetryAttempts int `mapstructure:"retry_attempts"`
+
+	// RetryInterval is the interval between retry attempts in seconds (client mode)
+	RetryInterval int `mapstructure:"retry_interval"`
+
+	// BandwidthLimit is the maximum bandwidth in bytes per second (0 for unlimited)
+	BandwidthLimit int64 `mapstructure:"bandwidth_limit"`
+}
+
+// MonitorConfig holds monitoring configuration
+type MonitorConfig struct {
+	// LogFile is the path to the log file
+	LogFile string `mapstructure:"log_file"`
+
+	// LogLevel is the minimum log level to record
+	LogLevel string `mapstructure:"log_level"`
+
+	// SNMPEnabled enables SNMP monitoring
+	SNMPEnabled bool `mapstructure:"snmp_enabled"`
+
+	// SNMPAddress is the address to listen for SNMP requests
+	SNMPAddress string `mapstructure:"snmp_address"`
+
+	// SNMPPort is the port to listen for SNMP requests
+	SNMPPort int `mapstructure:"snmp_port"`
+
+	// SNMPCommunity is the SNMP community string
+	SNMPCommunity string `mapstructure:"snmp_community"`
+}
+
+// LoadConfig loads the configuration from the specified file
+func LoadConfig(file string) (*Config, error) {
+	viper.SetConfigFile(file)
+	viper.SetConfigType("yaml")
+
+	if err := viper.ReadInConfig(); err != nil {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
 
-	var cfg Config
-	if err := v.Unmarshal(&cfg); err != nil {
+	var config Config
+	if err := viper.Unmarshal(&config); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
 
-	if err := validateConfig(&cfg); err != nil {
+	if err := validateConfig(&config); err != nil {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
 
-	return &cfg, nil
+	return &config, nil
 }
 
-// validateConfig performs validation on the configuration
+// validateConfig validates the configuration
 func validateConfig(cfg *Config) error {
-	if cfg.Mode != "server" && cfg.Mode != "client" {
-		return fmt.Errorf("invalid mode: %s (must be 'server' or 'client')", cfg.Mode)
+	if cfg.Mode != "client" && cfg.Mode != "server" {
+		return fmt.Errorf("invalid mode: %s (must be 'client' or 'server')", cfg.Mode)
 	}
 
-	if err := validateNetworkConfig(&cfg.Network, cfg.Mode); err != nil {
-		return fmt.Errorf("network configuration error: %w", err)
+	if cfg.Network == nil {
+		return fmt.Errorf("network configuration is required")
 	}
 
-	if err := validateTLSConfig(&cfg.TLS); err != nil {
-		return fmt.Errorf("TLS configuration error: %w", err)
+	if cfg.Tunnel == nil {
+		return fmt.Errorf("tunnel configuration is required")
 	}
 
-	return nil
-}
-
-// validateNetworkConfig validates network-related configuration
-func validateNetworkConfig(cfg *NetworkConfig, mode string) error {
-	if cfg.Interface == "" {
-		return fmt.Errorf("interface name is required")
-	}
-
-	if cfg.Address == "" {
-		return fmt.Errorf("interface address is required")
-	}
-
-	if cfg.MTU < 576 || cfg.MTU > 9000 {
-		return fmt.Errorf("invalid MTU: %d (must be between 576 and 9000)", cfg.MTU)
-	}
-
-	switch mode {
-	case "server":
-		if cfg.ListenPort < 1 || cfg.ListenPort > 65535 {
-			return fmt.Errorf("invalid listen port: %d (must be between 1 and 65535)", cfg.ListenPort)
+	if cfg.Mode == "server" {
+		if cfg.Tunnel.ListenAddress == "" {
+			return fmt.Errorf("listen_address is required in server mode")
 		}
-		if cfg.MaxClients < 1 {
-			return fmt.Errorf("max clients must be at least 1")
+		if cfg.Tunnel.ListenPort == 0 {
+			return fmt.Errorf("listen_port is required in server mode")
 		}
-	case "client":
-		if cfg.ServerPort < 1 || cfg.ServerPort > 65535 {
-			return fmt.Errorf("invalid server port: %d (must be between 1 and 65535)", cfg.ServerPort)
+	} else {
+		if cfg.Tunnel.ServerAddress == "" {
+			return fmt.Errorf("server_address is required in client mode")
 		}
-		if cfg.ServerAddress == "" {
-			return fmt.Errorf("server address is required")
+		if cfg.Tunnel.ServerPort == 0 {
+			return fmt.Errorf("server_port is required in client mode")
 		}
-		if cfg.RetryAttempts < 0 {
-			return fmt.Errorf("retry attempts cannot be negative")
-		}
-		if cfg.RetryInterval < 1 {
-			return fmt.Errorf("retry interval must be at least 1 second")
-		}
-	}
-
-	return nil
-}
-
-// validateTLSConfig validates TLS-related configuration
-func validateTLSConfig(cfg *TLSConfig) error {
-	if !cfg.AutoGenerate {
-		if cfg.CertFile == "" {
-			return fmt.Errorf("TLS certificate file is required when auto-generate is disabled")
-		}
-		if cfg.KeyFile == "" {
-			return fmt.Errorf("TLS key file is required when auto-generate is disabled")
-		}
-	}
-
-	if cfg.KeySize < 2048 {
-		return fmt.Errorf("key size must be at least 2048 bits")
-	}
-
-	if cfg.ValidityDays < 1 {
-		return fmt.Errorf("validity days must be at least 1")
 	}
 
 	return nil
