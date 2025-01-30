@@ -1,2 +1,7 @@
-c2c9b404723a6bc47b1ead2929d207591134f0782c82bf0fa54f594b03b24e24  sssonector_1.0.0_amd64.deb
-e71e1950bfc08229b84b9487a8c2a61c68381e2e305be2bf776cdde216b3377c  sssonector-1.0.0-setup.exe
+# SHA256 Checksums for SSSonector v1.0.0 Release Files
+
+abea79684158cb0137796d107797c9933aa0a87027549fbb1f2886a1e74a1761  sssonector-1.0.0-1.x86_64.rpm
+97e626b192d08b95cc4585119c44d2cd0243d36a6c775faedecd9bd700970adf  sssonector_1.0.0_amd64.deb
+d0b64b4dad59f54a6b17e24fedad8744671c3d552a113d67cfa5d72326687008  sssonector-1.0.0-setup.exe
+
+Note: macOS package (.pkg) must be built on a macOS system. See docs/macos_build.md for instructions.
