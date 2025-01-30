@@ -1,52 +1,56 @@
-# Requires -RunAsAdministrator
+# SSSonector Windows Service Installation Script
+$ErrorActionPreference = "Stop"
 
+# Service parameters
 $ServiceName = "SSSonector"
-$Description = "Secure Scalable SSL Connector Service"
-$BinaryPath = "`"C:\Program Files\SSSonector\sssonector.exe`" --config `"C:\ProgramData\SSSonector\config.yaml`""
+$DisplayName = "SSSonector SSL Tunnel Service"
+$Description = "Secure SSL tunnel service for remote office connectivity"
+$BinaryPath = "`"$PSScriptRoot\sssonector.exe`" -config `"$env:ProgramData\SSSonector\config.yaml`""
 
-# Create necessary directories
-New-Item -Path "C:\Program Files\SSSonector" -ItemType Directory -Force
-New-Item -Path "C:\ProgramData\SSSonector" -ItemType Directory -Force
-New-Item -Path "C:\ProgramData\SSSonector\certs" -ItemType Directory -Force
-New-Item -Path "C:\ProgramData\SSSonector\logs" -ItemType Directory -Force
-
-# Copy files
-Copy-Item -Path ".\sssonector.exe" -Destination "C:\Program Files\SSSonector\" -Force
-Copy-Item -Path ".\configs\*.yaml" -Destination "C:\ProgramData\SSSonector\" -Force
-
-# Set permissions
-$Acl = Get-Acl "C:\ProgramData\SSSonector"
-$Ar = New-Object System.Security.AccessControl.FileSystemAccessRule("NT AUTHORITY\NETWORK SERVICE", "Modify", "ContainerInherit,ObjectInherit", "None", "Allow")
-$Acl.SetAccessRule($Ar)
-Set-Acl "C:\ProgramData\SSSonector" $Acl
-
-# Remove existing service if it exists
-if (Get-Service $ServiceName -ErrorAction SilentlyContinue) {
+# Stop and remove existing service if it exists
+if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) {
+    Write-Host "Stopping existing service..."
+    Stop-Service -Name $ServiceName -Force
     Write-Host "Removing existing service..."
-    Stop-Service $ServiceName
     sc.exe delete $ServiceName
     Start-Sleep -Seconds 2
 }
 
-# Create new service
+# Create service
 Write-Host "Creating service..."
-sc.exe create $ServiceName binPath= $BinaryPath start= auto
-sc.exe description $ServiceName $Description
-sc.exe failure $ServiceName reset= 86400 actions= restart/30000/restart/30000/restart/30000
+$service = New-Service -Name $ServiceName `
+    -DisplayName $DisplayName `
+    -Description $Description `
+    -BinaryPathName $BinaryPath `
+    -StartupType Automatic
 
-# Configure service account and dependencies
-sc.exe config $ServiceName obj= "NT AUTHORITY\NETWORK SERVICE" password= ""
-sc.exe config $ServiceName depend= Tcpip/Afd/NetBT
+# Set recovery options (restart on failure)
+Write-Host "Configuring service recovery options..."
+sc.exe failure $ServiceName reset= 86400 actions= restart/60000/restart/60000/restart/60000
 
-# Create scheduled task for certificate renewal checks
-$Action = New-ScheduledTaskAction -Execute "C:\Program Files\SSSonector\sssonector.exe" -Argument "--check-certs"
-$Trigger = New-ScheduledTaskTrigger -Daily -At 12am
-$Principal = New-ScheduledTaskPrincipal -UserID "NT AUTHORITY\NETWORK SERVICE" -LogonType ServiceAccount -RunLevel Highest
-Register-ScheduledTask -TaskName "SSSonector-CertRenewal" -Action $Action -Trigger $Trigger -Principal $Principal -Description "Check and renew SSL certificates" -Force
+# Configure service dependencies
+Write-Host "Configuring service dependencies..."
+sc.exe config $ServiceName depend= Tcpip
 
+# Set service account
+Write-Host "Configuring service account..."
+sc.exe config $ServiceName obj= "NT AUTHORITY\SYSTEM"
+
+# Configure extended service properties
+Write-Host "Configuring extended service properties..."
+sc.exe privs $ServiceName SeCreateGlobalPrivilege/SeImpersonatePrivilege
+
+# Start service
 Write-Host "Starting service..."
-Start-Service $ServiceName
+Start-Service -Name $ServiceName
 
-Write-Host "Service installation complete!"
-Write-Host "Service Name: $ServiceName"
-Write-Host "Status: $((Get-Service $ServiceName).Status)"
+# Verify service status
+$service = Get-Service -Name $ServiceName
+Write-Host "Service status: $($service.Status)"
+
+if ($service.Status -ne "Running") {
+    Write-Error "Service failed to start"
+    exit 1
+}
+
+Write-Host "Service installation completed successfully"

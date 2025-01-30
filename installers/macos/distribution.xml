@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <installer-gui-script minSpecVersion="1">
     <title>SSSonector</title>
-    <organization>o3willard-AI</organization>
+    <organization>com.o3willard</organization>
     <domains enable_localSystem="true"/>
     <options customize="never" require-scripts="true" rootVolumeOnly="true"/>
     
     <!-- Define background -->
-    <background file="background.png" alignment="bottomleft" scaling="none"/>
+    <background alignment="left" file="background.png" scaling="none"/>
     
     <!-- Define documents displayed -->
     <welcome file="welcome.html" mime-type="text/html"/>
@@ -27,8 +27,33 @@
     <choice id="com.o3willard.sssonector"
             visible="false"
             title="SSSonector"
-            description="Secure Scalable SSL Connector"
+            description="Secure SSL Tunnel Service"
             start_selected="true">
         <pkg-ref id="com.o3willard.sssonector"/>
     </choice>
+    
+    <!-- Requirements check -->
+    <installation-check script="installation_check()"/>
+    <script>
+function installation_check() {
+    if(!(system.compareVersions(system.version.ProductVersion, '10.15.0') >= 0)) {
+        my.result.title = 'Unable to install';
+        my.result.message = 'SSSonector requires macOS 10.15 or later.';
+        my.result.type = 'Fatal';
+        return false;
+    }
+    return true;
+}
+    </script>
+    
+    <!-- Volume check -->
+    <volume-check script="volume_check()"/>
+    <script>
+function volume_check() {
+    if(system.files.fileExistsAtPath('/Library/LaunchDaemons/com.o3willard.sssonector.plist')) {
+        system.run('/bin/launchctl', 'unload', '/Library/LaunchDaemons/com.o3willard.sssonector.plist');
+    }
+    return true;
+}
+    </script>
 </installer-gui-script>

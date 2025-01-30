@@ -1,69 +1,198 @@
 #!/bin/bash
 set -e
 
-# Configuration
+# Get version from Makefile
+VERSION=$(grep "VERSION :=" Makefile | cut -d' ' -f3)
 DOCS_DIR="docs"
-MAIN_BRANCH="main"
+REPO_ROOT=$(cd "$(dirname "$0")/.." && pwd)
 
-# Ensure we're in the git repository
-if [ ! -d ".git" ]; then
-    echo "Error: Not in git repository root directory"
-    exit 1
-fi
+echo "Updating documentation for v${VERSION}..."
 
-# Check if there are uncommitted changes
-if ! git diff-index --quiet HEAD --; then
-    echo "Warning: You have uncommitted changes"
-    read -p "Do you want to continue? (y/N) " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        exit 1
-    fi
-fi
+# Function to update version in markdown files
+update_version() {
+    local file="$1"
+    sed -i "s/\(version \)[0-9]\+\.[0-9]\+\.[0-9]\+/\1${VERSION}/g" "$file"
+    sed -i "s/\(v\)[0-9]\+\.[0-9]\+\.[0-9]\+/\1${VERSION}/g" "$file"
+}
 
-# Update documentation files
-echo "Updating documentation files..."
+# Update version numbers in all markdown files
+find "$DOCS_DIR" -name "*.md" -type f -exec bash -c 'update_version "$0"' {} \;
+update_version "README.md"
 
-# Create docs directory if it doesn't exist
-mkdir -p "$DOCS_DIR"
+# Generate platform-specific installation guides
+cat > "$DOCS_DIR/linux_install.md" << EOF
+# Linux Installation Guide
 
-# List of documentation files to update
-FILES=(
-    "README.md"
-    "docs/ubuntu_install.md"
-    "docs/linux_install.md"
-    "docs/macos_install.md"
-    "docs/windows_install.md"
-    "docs/qa_guide.md"
-)
+## Requirements
+- Linux (Debian/Ubuntu/RHEL/CentOS)
+- Root privileges
+- systemd
 
-# Check if all files exist
-for file in "${FILES[@]}"; do
-    if [ ! -f "$file" ]; then
-        echo "Error: $file not found"
-        exit 1
-    fi
-done
+## Installation
 
-# Create git commit
-echo "Creating git commit..."
-git add "${FILES[@]}"
-git commit -m "docs: Update installation guides and documentation
+### Debian/Ubuntu
+\`\`\`bash
+# Download the package
+wget https://github.com/o3willard-AI/SSSonector/releases/download/v${VERSION}/sssonector_${VERSION}_amd64.deb
 
-- Update README.md with correct download links
-- Add Ubuntu installation guide
-- Add Red Hat/Rocky Linux installation guide
-- Add macOS installation guide
-- Add Windows installation guide
-- Update QA guide with platform-specific tests"
+# Install dependencies
+sudo apt-get update
+sudo apt-get install -y openssl
 
-# Push changes
-echo "Pushing changes to remote repository..."
-git push origin "$MAIN_BRANCH"
+# Install package
+sudo dpkg -i sssonector_${VERSION}_amd64.deb
+sudo apt-get install -f
+\`\`\`
 
-echo "Documentation update complete!"
-echo
-echo "Next steps:"
-echo "1. Verify the changes on GitHub"
-echo "2. Update release notes if needed"
-echo "3. Update documentation links in the repository settings"
+### RHEL/CentOS
+\`\`\`bash
+# Download the package
+wget https://github.com/o3willard-AI/SSSonector/releases/download/v${VERSION}/sssonector-${VERSION}-1.x86_64.rpm
+
+# Install package
+sudo yum install sssonector-${VERSION}-1.x86_64.rpm
+\`\`\`
+
+## Configuration
+
+1. Generate certificates (if not using existing ones):
+\`\`\`bash
+sudo sssonector-cli generate-certs
+\`\`\`
+
+2. Edit configuration:
+\`\`\`bash
+sudo nano /etc/sssonector/config.yaml
+\`\`\`
+
+3. Start service:
+\`\`\`bash
+sudo systemctl start sssonector
+sudo systemctl enable sssonector
+\`\`\`
+
+## Verification
+
+1. Check service status:
+\`\`\`bash
+sudo systemctl status sssonector
+\`\`\`
+
+2. View logs:
+\`\`\`bash
+sudo journalctl -u sssonector -f
+\`\`\`
+
+3. Check network interface:
+\`\`\`bash
+ip addr show tun0
+\`\`\`
+EOF
+
+cat > "$DOCS_DIR/macos_install.md" << EOF
+# macOS Installation Guide
+
+## Requirements
+- macOS 10.15 or later
+- Administrator privileges
+
+## Installation
+
+1. Download the installer:
+\`\`\`bash
+curl -LO https://github.com/o3willard-AI/SSSonector/releases/download/v${VERSION}/sssonector-${VERSION}.pkg
+\`\`\`
+
+2. Install the package:
+\`\`\`bash
+sudo installer -pkg sssonector-${VERSION}.pkg -target /
+\`\`\`
+
+## Configuration
+
+1. Generate certificates (if not using existing ones):
+\`\`\`bash
+sudo sssonector-cli generate-certs
+\`\`\`
+
+2. Edit configuration:
+\`\`\`bash
+sudo nano /etc/sssonector/config.yaml
+\`\`\`
+
+3. Start service:
+\`\`\`bash
+sudo launchctl load /Library/LaunchDaemons/com.o3willard.sssonector.plist
+\`\`\`
+
+## Verification
+
+1. Check service status:
+\`\`\`bash
+sudo launchctl list | grep sssonector
+\`\`\`
+
+2. View logs:
+\`\`\`bash
+tail -f /var/log/sssonector/sssonector.log
+\`\`\`
+
+3. Check network interface:
+\`\`\`bash
+ifconfig tun0
+\`\`\`
+EOF
+
+cat > "$DOCS_DIR/windows_install.md" << EOF
+# Windows Installation Guide
+
+## Requirements
+- Windows 10 or later (64-bit)
+- Administrator privileges
+- PowerShell 5.1 or later
+
+## Installation
+
+1. Download the installer from:
+   https://github.com/o3willard-AI/SSSonector/releases/download/v${VERSION}/sssonector-${VERSION}-setup.exe
+
+2. Run the installer with administrator privileges
+
+## Configuration
+
+1. Generate certificates (if not using existing ones):
+\`\`\`powershell
+# Run PowerShell as Administrator
+sssonector-cli generate-certs
+\`\`\`
+
+2. Edit configuration:
+\`\`\`powershell
+notepad C:\ProgramData\SSSonector\config.yaml
+\`\`\`
+
+3. Start service:
+\`\`\`powershell
+Start-Service SSSonector
+Set-Service SSSonector -StartupType Automatic
+\`\`\`
+
+## Verification
+
+1. Check service status:
+\`\`\`powershell
+Get-Service SSSonector
+\`\`\`
+
+2. View logs:
+\`\`\`powershell
+Get-Content -Path "C:\ProgramData\SSSonector\logs\sssonector.log" -Wait
+\`\`\`
+
+3. Check network interface:
+\`\`\`powershell
+Get-NetAdapter | Where-Object {$_.InterfaceDescription -like "*SSSonector*"}
+\`\`\`
+EOF
+
+echo "Documentation updated successfully!"

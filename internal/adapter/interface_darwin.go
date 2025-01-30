@@ -1,3 +1,5 @@
+//go:build darwin
+
 package adapter
 
 import (
@@ -5,102 +7,60 @@ import (
 	"net"
 	"os/exec"
 	"strings"
-
-	"github.com/songgao/water"
-	"go.uber.org/zap"
 )
 
 type darwinInterface struct {
-	name   string
-	iface  *water.Interface
-	logger *zap.Logger
+	name    string
+	ip      net.IP
+	netmask net.IPMask
+	mtu     int
 }
 
-func newDarwinInterface(name string) (Interface, error) {
-	config := water.Config{
-		DeviceType: water.TUN,
-	}
-	if name != "" {
-		config.Name = name
-	}
-
-	iface, err := water.New(config)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create TUN interface: %w", err)
-	}
-
+func newPlatformInterface(name string) (Interface, error) {
 	return &darwinInterface{
-		name:  iface.Name(),
-		iface: iface,
+		name: name,
+		mtu:  1500,
 	}, nil
 }
 
-func (i *darwinInterface) Name() string {
-	return i.name
-}
-
-func (i *darwinInterface) Read(p []byte) (n int, err error) {
-	return i.iface.Read(p)
-}
-
-func (i *darwinInterface) Write(p []byte) (n int, err error) {
-	return i.iface.Write(p)
-}
-
-func (i *darwinInterface) Close() error {
-	return i.iface.Close()
-}
-
-func (i *darwinInterface) SetMTU(mtu int) error {
-	cmd := exec.Command("ifconfig", i.name, "mtu", fmt.Sprintf("%d", mtu))
+func (i *darwinInterface) Create() error {
+	// Create TUN interface using macOS built-in tools
+	cmd := exec.Command("networksetup", "-createnetworkservice", i.name, "Ethernet")
 	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to set MTU: %w (output: %s)", err, output)
+		return fmt.Errorf("failed to create TUN interface: %s: %w", strings.TrimSpace(string(output)), err)
 	}
 	return nil
 }
 
-func (i *darwinInterface) SetIPAddress(addr net.IP, mask net.IPMask) error {
-	ones, _ := mask.Size()
-	cidr := fmt.Sprintf("%s/%d", addr.String(), ones)
-	cmd := exec.Command("ifconfig", i.name, "inet", addr.String(), addr.String(), "netmask", net.IP(mask).String())
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to set IP address: %w (output: %s)", err, output)
-	}
-	return nil
-}
-
-func (i *darwinInterface) GetIPAddress() (net.IP, net.IPMask, error) {
-	cmd := exec.Command("ifconfig", i.name)
-	output, err := cmd.CombinedOutput()
+func (i *darwinInterface) Configure(cfg *Config) error {
+	// Parse IP address and netmask
+	ip, mask, err := ParseCIDR(cfg.Address)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to get IP address: %w", err)
+		return err
+	}
+	i.ip = ip
+	i.netmask = mask
+	i.mtu = cfg.MTU
+
+	// Set IP address
+	cmd := exec.Command("networksetup", "-setmanual", i.name, ip.String(), net.IP(mask).String())
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to set IP address: %s: %w", strings.TrimSpace(string(output)), err)
 	}
 
-	lines := strings.Split(string(output), "\n")
-	for _, line := range lines {
-		if strings.Contains(line, "inet ") {
-			fields := strings.Fields(line)
-			if len(fields) < 4 {
-				continue
-			}
-			ip := net.ParseIP(fields[1])
-			if ip == nil {
-				continue
-			}
-			mask := parseNetmask(fields[3])
-			if mask == nil {
-				continue
-			}
-			return ip, mask, nil
-		}
+	// Set MTU
+	cmd = exec.Command("ifconfig", i.name, "mtu", fmt.Sprint(i.mtu))
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to set MTU: %s: %w", strings.TrimSpace(string(output)), err)
 	}
-	return nil, nil, fmt.Errorf("no IP address found")
+
+	return nil
 }
 
 func (i *darwinInterface) Up() error {
 	cmd := exec.Command("ifconfig", i.name, "up")
 	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to bring interface up: %w (output: %s)", err, output)
+		return fmt.Errorf("failed to bring interface up: %s: %w", strings.TrimSpace(string(output)), err)
 	}
 	return nil
 }
@@ -108,30 +68,31 @@ func (i *darwinInterface) Up() error {
 func (i *darwinInterface) Down() error {
 	cmd := exec.Command("ifconfig", i.name, "down")
 	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to bring interface down: %w (output: %s)", err, output)
+		return fmt.Errorf("failed to bring interface down: %s: %w", strings.TrimSpace(string(output)), err)
 	}
 	return nil
 }
 
-func parseNetmask(s string) net.IPMask {
-	// Convert hex string (e.g., 0xffffff00) to IP mask
-	s = strings.TrimPrefix(s, "0x")
-	if len(s) != 8 {
-		return nil
+func (i *darwinInterface) Delete() error {
+	cmd := exec.Command("networksetup", "-removenetworkservice", i.name)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to delete interface: %s: %w", strings.TrimSpace(string(output)), err)
 	}
-	var mask [4]byte
-	for i := 0; i < 4; i++ {
-		b, err := parseHexByte(s[i*2 : i*2+2])
-		if err != nil {
-			return nil
-		}
-		mask[i] = b
-	}
-	return net.IPv4Mask(mask[0], mask[1], mask[2], mask[3])
+	return nil
 }
 
-func parseHexByte(s string) (byte, error) {
-	var b byte
-	_, err := fmt.Sscanf(s, "%02x", &b)
-	return b, err
+func (i *darwinInterface) Name() string {
+	return i.name
+}
+
+func (i *darwinInterface) MTU() int {
+	return i.mtu
+}
+
+func (i *darwinInterface) Address() net.IP {
+	return i.ip
+}
+
+func (i *darwinInterface) Netmask() net.IPMask {
+	return i.netmask
 }

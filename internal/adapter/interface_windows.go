@@ -1,3 +1,5 @@
+//go:build windows
+
 package adapter
 
 import (
@@ -5,110 +7,60 @@ import (
 	"net"
 	"os/exec"
 	"strings"
-
-	"github.com/songgao/water"
-	"go.uber.org/zap"
 )
 
 type windowsInterface struct {
-	name   string
-	iface  *water.Interface
-	logger *zap.Logger
+	name    string
+	ip      net.IP
+	netmask net.IPMask
+	mtu     int
 }
 
-func newWindowsInterface(name string) (Interface, error) {
-	config := water.Config{
-		DeviceType: water.TUN,
-	}
-	if name != "" {
-		config.Name = name
-	}
-
-	iface, err := water.New(config)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create TUN interface: %w", err)
-	}
-
+func newPlatformInterface(name string) (Interface, error) {
 	return &windowsInterface{
-		name:  iface.Name(),
-		iface: iface,
+		name: name,
+		mtu:  1500,
 	}, nil
 }
 
-func (i *windowsInterface) Name() string {
-	return i.name
-}
-
-func (i *windowsInterface) Read(p []byte) (n int, err error) {
-	return i.iface.Read(p)
-}
-
-func (i *windowsInterface) Write(p []byte) (n int, err error) {
-	return i.iface.Write(p)
-}
-
-func (i *windowsInterface) Close() error {
-	return i.iface.Close()
-}
-
-func (i *windowsInterface) SetMTU(mtu int) error {
-	cmd := exec.Command("netsh", "interface", "ipv4", "set", "subinterface", i.name, fmt.Sprintf("mtu=%d", mtu))
+func (i *windowsInterface) Create() error {
+	// Create TAP adapter using Windows built-in tools
+	cmd := exec.Command("netsh", "interface", "ip", "add", "interface", i.name, "type=tap")
 	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to set MTU: %w (output: %s)", err, output)
+		return fmt.Errorf("failed to create TAP interface: %s: %w", strings.TrimSpace(string(output)), err)
 	}
 	return nil
 }
 
-func (i *windowsInterface) SetIPAddress(addr net.IP, mask net.IPMask) error {
-	cmd := exec.Command("netsh", "interface", "ipv4", "set", "address", "name="+i.name, "static", addr.String(), net.IP(mask).String())
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to set IP address: %w (output: %s)", err, output)
-	}
-	return nil
-}
-
-func (i *windowsInterface) GetIPAddress() (net.IP, net.IPMask, error) {
-	cmd := exec.Command("netsh", "interface", "ipv4", "show", "addresses", i.name)
-	output, err := cmd.CombinedOutput()
+func (i *windowsInterface) Configure(cfg *Config) error {
+	// Parse IP address and netmask
+	ip, mask, err := ParseCIDR(cfg.Address)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to get IP address: %w", err)
+		return err
+	}
+	i.ip = ip
+	i.netmask = mask
+	i.mtu = cfg.MTU
+
+	// Set IP address
+	cmd := exec.Command("netsh", "interface", "ip", "set", "address", i.name, "static", ip.String(), net.IP(mask).String())
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to set IP address: %s: %w", strings.TrimSpace(string(output)), err)
 	}
 
-	lines := strings.Split(string(output), "\n")
-	var ip net.IP
-	var mask net.IPMask
-
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "IP Address:") {
-			fields := strings.Fields(line)
-			if len(fields) >= 3 {
-				ip = net.ParseIP(fields[2])
-			}
-		} else if strings.HasPrefix(line, "Subnet Prefix:") {
-			fields := strings.Fields(line)
-			if len(fields) >= 3 {
-				parts := strings.Split(fields[2], "/")
-				if len(parts) == 2 {
-					prefixLen := 0
-					fmt.Sscanf(parts[1], "%d", &prefixLen)
-					mask = net.CIDRMask(prefixLen, 32)
-				}
-			}
-		}
+	// Set MTU
+	cmd = exec.Command("netsh", "interface", "ipv4", "set", "subinterface", i.name, fmt.Sprintf("mtu=%d", i.mtu))
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to set MTU: %s: %w", strings.TrimSpace(string(output)), err)
 	}
 
-	if ip == nil || mask == nil {
-		return nil, nil, fmt.Errorf("no IP address found")
-	}
-
-	return ip, mask, nil
+	return nil
 }
 
 func (i *windowsInterface) Up() error {
 	cmd := exec.Command("netsh", "interface", "set", "interface", i.name, "admin=enabled")
 	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to bring interface up: %w (output: %s)", err, output)
+		return fmt.Errorf("failed to bring interface up: %s: %w", strings.TrimSpace(string(output)), err)
 	}
 	return nil
 }
@@ -116,7 +68,31 @@ func (i *windowsInterface) Up() error {
 func (i *windowsInterface) Down() error {
 	cmd := exec.Command("netsh", "interface", "set", "interface", i.name, "admin=disabled")
 	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to bring interface down: %w (output: %s)", err, output)
+		return fmt.Errorf("failed to bring interface down: %s: %w", strings.TrimSpace(string(output)), err)
 	}
 	return nil
+}
+
+func (i *windowsInterface) Delete() error {
+	cmd := exec.Command("netsh", "interface", "delete", "interface", i.name)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to delete interface: %s: %w", strings.TrimSpace(string(output)), err)
+	}
+	return nil
+}
+
+func (i *windowsInterface) Name() string {
+	return i.name
+}
+
+func (i *windowsInterface) MTU() int {
+	return i.mtu
+}
+
+func (i *windowsInterface) Address() net.IP {
+	return i.ip
+}
+
+func (i *windowsInterface) Netmask() net.IPMask {
+	return i.netmask
 }

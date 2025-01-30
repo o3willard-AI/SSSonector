@@ -1,86 +1,95 @@
 ; SSSonector Windows Installer Script
-; NSIS (Nullsoft Scriptable Install System) script
 
 !include "MUI2.nsh"
-!include "FileFunc.nsh"
+!include "LogicLib.nsh"
 
-; General
+; Installer attributes
 Name "SSSonector"
-OutFile "SSSonector-Setup.exe"
-InstallDir "$PROGRAMFILES\SSSonector"
+OutFile "${BUILD_DIR}/installers/sssonector-${VERSION}-setup.exe"
+InstallDir "$PROGRAMFILES64\SSSonector"
 RequestExecutionLevel admin
 
-; Interface Settings
+; Interface settings
 !define MUI_ABORTWARNING
 !define MUI_ICON "${NSISDIR}\Contrib\Graphics\Icons\modern-install.ico"
+!define MUI_UNICON "${NSISDIR}\Contrib\Graphics\Icons\modern-uninstall.ico"
 
 ; Pages
 !insertmacro MUI_PAGE_WELCOME
-!insertmacro MUI_PAGE_LICENSE "..\LICENSE"
+!insertmacro MUI_PAGE_LICENSE "${SOURCE_DIR}/LICENSE"
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_PAGE_FINISH
 
-; Language
+!insertmacro MUI_UNPAGE_CONFIRM
+!insertmacro MUI_UNPAGE_INSTFILES
+
+; Languages
 !insertmacro MUI_LANGUAGE "English"
 
-Section "MainSection" SEC01
+Section "SSSonector" SecSSSonector
     SetOutPath "$INSTDIR"
     
-    ; Main executable and configs
-    File "..\build\windows-amd64\SSSonector.exe"
-    File /r "..\configs\*"
+    ; Install files
+    File "${SOURCE_DIR}/sssonector.exe"
+    File "${SOURCE_DIR}/*.yaml"
+    File "${SOURCE_DIR}/install-service.ps1"
     
-    ; Create data directory
+    ; Create directories
     CreateDirectory "$INSTDIR\certs"
-    CreateDirectory "$INSTDIR\logs"
+    CreateDirectory "$APPDATA\SSSonector\logs"
     
-    ; Install TAP driver
-    ExecWait '"$INSTDIR\tap-windows.exe" /S'
+    ; Create config directory and copy config files
+    CreateDirectory "$APPDATA\SSSonector"
+    CopyFiles "$INSTDIR\*.yaml" "$APPDATA\SSSonector"
     
-    ; Create service
-    ExecWait 'sc create "SSSonector" binPath= "$INSTDIR\SSSonector.exe --config $INSTDIR\config.yaml" start= auto'
-    ExecWait 'sc description "SSSonector" "Secure Scalable SSL Connector Service"'
+    ; Set permissions
+    nsExec::ExecToLog 'icacls "$APPDATA\SSSonector" /inheritance:r /grant:r "NT AUTHORITY\SYSTEM":(OI)(CI)F /grant:r "BUILTIN\Administrators":(OI)(CI)F'
+    nsExec::ExecToLog 'icacls "$APPDATA\SSSonector\logs" /inheritance:r /grant:r "NT AUTHORITY\SYSTEM":(OI)(CI)F /grant:r "BUILTIN\Administrators":(OI)(CI)F'
     
-    ; Start service
-    ExecWait 'net start "SSSonector"'
+    ; Install service
+    nsExec::ExecToLog 'powershell -ExecutionPolicy Bypass -File "$INSTDIR\install-service.ps1"'
     
     ; Create uninstaller
     WriteUninstaller "$INSTDIR\uninstall.exe"
     
-    ; Create Start Menu shortcuts
+    ; Create start menu shortcuts
     CreateDirectory "$SMPROGRAMS\SSSonector"
-    CreateShortCut "$SMPROGRAMS\SSSonector\SSSonector.lnk" "$INSTDIR\SSSonector.exe"
     CreateShortCut "$SMPROGRAMS\SSSonector\Uninstall.lnk" "$INSTDIR\uninstall.exe"
     
-    ; Registry entries
+    ; Add uninstall information to Add/Remove Programs
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SSSonector" \
                      "DisplayName" "SSSonector"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SSSonector" \
-                     "UninstallString" "$INSTDIR\uninstall.exe"
+                     "UninstallString" "$\"$INSTDIR\uninstall.exe$\""
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SSSonector" \
+                     "DisplayIcon" "$INSTDIR\sssonector.exe"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SSSonector" \
+                     "DisplayVersion" "${VERSION}"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SSSonector" \
+                     "Publisher" "O3Willard"
 SectionEnd
 
 Section "Uninstall"
     ; Stop and remove service
-    ExecWait 'net stop "SSSonector"'
-    ExecWait 'sc delete "SSSonector"'
-    
-    ; Remove TAP driver
-    ExecWait '"$INSTDIR\tap-windows.exe" /S /U'
+    nsExec::ExecToLog 'net stop SSSonector'
+    nsExec::ExecToLog 'sc delete SSSonector'
     
     ; Remove files
-    Delete "$INSTDIR\SSSonector.exe"
+    Delete "$INSTDIR\sssonector.exe"
+    Delete "$INSTDIR\*.yaml"
+    Delete "$INSTDIR\install-service.ps1"
     Delete "$INSTDIR\uninstall.exe"
-    RMDir /r "$INSTDIR\configs"
+    
+    ; Remove directories
     RMDir /r "$INSTDIR\certs"
-    RMDir /r "$INSTDIR\logs"
+    RMDir /r "$APPDATA\SSSonector"
     RMDir "$INSTDIR"
     
-    ; Remove shortcuts
-    Delete "$SMPROGRAMS\SSSonector\SSSonector.lnk"
+    ; Remove start menu shortcuts
     Delete "$SMPROGRAMS\SSSonector\Uninstall.lnk"
     RMDir "$SMPROGRAMS\SSSonector"
     
-    ; Remove registry entries
+    ; Remove uninstall information
     DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SSSonector"
 SectionEnd

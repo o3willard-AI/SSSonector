@@ -1,0 +1,35 @@
+[Unit]
+Description=SSSonector SSL Tunnel Service
+After=network.target
+Documentation=https://github.com/o3willard-AI/SSSonector/docs
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/bin/sssonector -config /etc/sssonector/config.yaml
+Restart=always
+RestartSec=5
+TimeoutStartSec=30
+TimeoutStopSec=30
+
+# Security settings
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=no
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+
+# Resource limits
+LimitNOFILE=65535
+LimitNPROC=65535
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=sssonector
+
+[Install]
+WantedBy=multi-user.target

@@ -1,269 +1,263 @@
-# SSSonector QA Testing Guide
+# QA Testing Guide for SSSonector
 
-This guide outlines the steps to test the SSSonector SSL tunnel application in both server and client modes.
-
-## Prerequisites
-
-1. Two machines (physical or virtual) for testing:
-   - Server machine
-   - Client machine
-2. Root/Administrator access on both machines
-3. Network connectivity between machines
-4. OpenSSL installed for certificate generation
+This guide outlines the testing procedures for verifying SSSonector functionality.
 
 ## Test Environment Setup
 
-### Server Setup
+### Requirements
 
-1. Install SSSonector on the server machine:
-```bash
-sudo make install
-```
+1. Two Ubuntu VMs (follow ubuntu_install.md)
+   - Server VM: 2GB RAM, 20GB storage
+   - Client VM: 2GB RAM, 20GB storage
+2. VirtualBox with Host-only Network configured
+3. Latest SSSonector release installed on both VMs
 
-2. Generate certificates:
-```bash
-make generate-certs
-```
+### Network Configuration
 
-3. Copy server configuration:
-```bash
-sudo mkdir -p /etc/sssonector/certs
-sudo cp certs/* /etc/sssonector/certs/
-sudo cp configs/server.yaml /etc/sssonector/config.yaml
-sudo chmod 600 /etc/sssonector/certs/*.key
-sudo chmod 644 /etc/sssonector/certs/*.crt
-```
+1. Verify Host-only Network:
+   ```bash
+   # On both VMs
+   ip addr show
+   # Should see two interfaces:
+   # - NAT (usually enp0s3)
+   # - Host-only (usually enp0s8)
+   ```
 
-### Client Setup
-
-1. Install SSSonector on the client machine:
-```bash
-sudo make install
-```
-
-2. Copy certificates from server:
-```bash
-sudo mkdir -p /etc/sssonector/certs
-sudo scp server:/etc/sssonector/certs/* /etc/sssonector/certs/
-sudo chmod 600 /etc/sssonector/certs/*.key
-sudo chmod 644 /etc/sssonector/certs/*.crt
-```
-
-3. Copy and modify client configuration:
-```bash
-sudo cp configs/client.yaml /etc/sssonector/config.yaml
-```
-
-Edit `/etc/sssonector/config.yaml` to set the correct server address.
+2. Test VM Connectivity:
+   ```bash
+   # From Client VM to Server VM
+   ping <server-host-only-ip>
+   ```
 
 ## Test Cases
 
-### 1. Basic Connectivity
+### 1. Basic Installation
 
-1. Start server:
+#### Server VM
 ```bash
-sudo sssonector -config /etc/sssonector/config.yaml
+# Check package installation
+dpkg -l | grep sssonector
+
+# Verify file permissions
+ls -l /etc/sssonector/certs/
+# Should show:
+# -rw------- server.key
+# -rw-r--r-- server.crt
+# -rw------- client.key
+# -rw-r--r-- client.crt
+
+# Check config file
+cat /etc/sssonector/config.yaml
+# Verify mode: "server" and correct IP/port
 ```
 
-2. Start client:
+#### Client VM
 ```bash
-sudo sssonector -config /etc/sssonector/config.yaml
+# Check package installation
+dpkg -l | grep sssonector
+
+# Verify certificate copy
+ls -l /etc/sssonector/certs/
+# Should show same permissions as server
+
+# Check config file
+cat /etc/sssonector/config.yaml
+# Verify mode: "client" and correct server IP/port
 ```
 
-Expected Results:
-- Server logs show successful startup and listening
-- Client logs show successful connection
-- Virtual interfaces are created on both machines
-- ICMP ping works between virtual interfaces
+### 2. Service Management
 
-### 2. Certificate Authentication
-
-1. Test with invalid certificates:
-   - Replace client certificate with incorrect one
-   - Verify connection is rejected
-   - Restore correct certificate
-
-2. Test with expired certificates:
-   - Generate short-lived test certificates
-   - Wait for expiration
-   - Verify connection is rejected
-
-### 3. Network Interface
-
-1. Verify interface creation:
+#### Server VM
 ```bash
+# Start service
+sudo systemctl start sssonector
+sudo systemctl status sssonector
+# Should show: active (running)
+
+# Check logs
+sudo journalctl -u sssonector -n 50
+# Verify: No errors, listening on configured port
+```
+
+#### Client VM
+```bash
+# Start service
+sudo systemctl start sssonector
+sudo systemctl status sssonector
+# Should show: active (running)
+
+# Check logs
+sudo journalctl -u sssonector -n 50
+# Verify: Connected to server successfully
+```
+
+### 3. Network Interface Tests
+
+#### Server VM
+```bash
+# Check TUN interface
 ip addr show tun0
-```
+# Should show:
+# - UP flag
+# - Configured IP (10.0.0.1)
+# - Correct MTU
 
-2. Test MTU settings:
-```bash
-ip link show tun0
-```
-
-3. Verify routing:
-```bash
+# Verify routing
 ip route show
+# Should include route for 10.0.0.0/24 via tun0
 ```
 
-### 4. Bandwidth Throttling
-
-1. Test upload throttling:
+#### Client VM
 ```bash
-iperf3 -c <remote_ip> -p 5201
+# Check TUN interface
+ip addr show tun0
+# Should show:
+# - UP flag
+# - Configured IP (10.0.0.2)
+# - Correct MTU
+
+# Verify routing
+ip route show
+# Should include route for 10.0.0.0/24 via tun0
 ```
 
-2. Test download throttling:
+### 4. Connectivity Tests
+
 ```bash
-iperf3 -c <remote_ip> -p 5201 -R
+# From Client VM
+ping -c 4 10.0.0.1
+# Should succeed
+
+# From Server VM
+ping -c 4 10.0.0.2
+# Should succeed
+
+# Test bandwidth (optional)
+# On Server VM:
+iperf3 -s
+# On Client VM:
+iperf3 -c 10.0.0.1
 ```
 
-Expected Results:
-- Bandwidth should not exceed configured limits
-- Both directions should be independently throttled
+### 5. SSL/TLS Tests
 
-### 5. SNMP Monitoring
-
-1. Test SNMP connectivity:
 ```bash
-snmpwalk -v2c -c public localhost
+# On Server VM
+sudo openssl s_client -connect localhost:8443 -tls1_3
+# Verify:
+# - TLS 1.3 connection successful
+# - Correct certificate chain
+# - EU-exportable cipher suite
+
+# Check SNMP metrics
+snmpwalk -v2c -c public localhost:161 .1.3.6.1.4.1.XXXXX
+# Verify SSL/TLS metrics present
 ```
 
-2. Verify metrics:
-- Connection status
-- Bytes sent/received
-- Uptime
-- Current bandwidth usage
+### 6. Performance Tests
 
-### 6. Reconnection Logic
-
-1. Test network interruption:
 ```bash
-sudo iptables -A INPUT -p tcp --dport 8443 -j DROP
-# Wait 30 seconds
-sudo iptables -D INPUT -p tcp --dport 8443 -j DROP
-```
-
-Expected Results:
-- Client should attempt reconnection
-- Connection should be re-established
-- No data loss after reconnection
-
-### 7. Performance Testing
-
-1. Latency test:
-```bash
-ping -c 100 <remote_virtual_ip>
-```
-
-2. Throughput test:
-```bash
-iperf3 -c <remote_virtual_ip> -t 60
-```
-
-3. Concurrent connections (server mode):
-```bash
-# Start multiple clients
-for i in {1..5}; do
-    sudo sssonector -config client$i.yaml &
+# On Client VM
+# Test with different payload sizes
+for size in 64 256 1024 4096; do
+  ping -s $size -c 100 10.0.0.1 | tee ping_${size}.log
 done
+
+# Check bandwidth throttling
+# Set throttle in config:
+# throttle:
+#   upload_kbps: 1024
+#   download_kbps: 1024
+
+iperf3 -c 10.0.0.1 -t 30
+# Verify bandwidth doesn't exceed limits
 ```
 
-### 8. Resource Usage
+### 7. Reconnection Tests
 
-Monitor resource usage during operation:
 ```bash
-top -p $(pgrep sssonector)
+# On Server VM
+sudo systemctl stop sssonector
+sleep 10
+sudo systemctl start sssonector
+
+# On Client VM
+# Check logs
+sudo journalctl -u sssonector -f
+# Verify automatic reconnection
 ```
 
-Expected Results:
-- CPU usage should be reasonable (<20% per tunnel)
-- Memory usage should be stable
-- No memory leaks over time
+### 8. Stress Tests
 
-### 9. Log Verification
-
-Check logs for proper operation:
 ```bash
-tail -f /var/log/sssonector/server.log
-tail -f /var/log/sssonector/client.log
+# On Client VM
+# Run continuous ping while doing file transfer
+ping 10.0.0.1 > ping.log &
+dd if=/dev/zero bs=1M count=100 | nc 10.0.0.1 5000
+
+# Check for packet loss
+grep -i "packet loss" ping.log
 ```
 
-Verify:
-- Connection events
-- Error handling
-- Performance metrics
-- Security events
+### 9. Cleanup Tests
 
-## Troubleshooting
+```bash
+# On both VMs
+sudo systemctl stop sssonector
+sudo apt remove sssonector
+sudo rm -rf /etc/sssonector /var/log/sssonector
 
-### Common Issues
+# Verify
+ls -la /etc/sssonector
+# Should not exist
+ip addr show tun0
+# Should not exist
+```
+
+## Test Results Documentation
+
+For each test run, document:
+
+1. Test environment details:
+   - VM configurations
+   - Network setup
+   - SSSonector version
+
+2. Test results:
+   - Pass/Fail status
+   - Any errors or warnings
+   - Performance metrics
+   - Log snippets for issues
+
+3. Issues found:
+   - Description
+   - Steps to reproduce
+   - Severity level
+   - Screenshots/logs
+
+## Common Issues
 
 1. Connection Failures
    - Check firewall rules
    - Verify certificate permissions
-   - Confirm network connectivity
-   - Check system logs
+   - Ensure correct IP addresses in configs
 
 2. Performance Issues
-   - Monitor system resources
-   - Check network conditions
-   - Verify throttling settings
-   - Review MTU configuration
+   - Check host system resources
+   - Verify MTU settings
+   - Check for competing network traffic
 
-3. Certificate Problems
-   - Verify file permissions
-   - Check certificate dates
-   - Confirm proper CA chain
-   - Validate certificate formats
+3. SSL/TLS Issues
+   - Verify certificate dates
+   - Check cipher suite compatibility
+   - Ensure key permissions are correct
 
-## Test Report Template
+## Reporting Bugs
 
-```markdown
-# SSSonector Test Report
+When reporting issues:
 
-Date: YYYY-MM-DD
-Version: X.Y.Z
-Tester: Name
-
-## Environment
-- Server OS:
-- Client OS:
-- Network Configuration:
-- Test Duration:
-
-## Test Results
-
-### Basic Connectivity
-- [ ] Server startup
-- [ ] Client connection
-- [ ] Interface creation
-- [ ] ICMP connectivity
-
-### Security
-- [ ] Certificate validation
-- [ ] Authentication
-- [ ] Encryption
-
-### Performance
-- [ ] Throughput
-- [ ] Latency
-- [ ] Resource usage
-- [ ] Stability
-
-### Monitoring
-- [ ] SNMP metrics
-- [ ] Logging
-- [ ] Statistics
-
-## Issues Found
-1. 
-2. 
-3. 
-
-## Recommendations
-1. 
-2. 
-3. 
-
-## Conclusion
-Pass/Fail and summary
+1. Include environment details
+2. Attach relevant logs
+3. Provide exact steps to reproduce
+4. Include config files (sanitized)
+5. Add packet captures if relevant

@@ -1,77 +1,97 @@
-BINARY_NAME=sssonector
-BUILD_DIR=bin
-CERT_DIR=certs
-CONFIG_DIR=configs
+.PHONY: all clean build test install package
 
-.PHONY: all build clean test generate-certs install uninstall
+VERSION := 1.0.0
+COMMIT := $(shell git rev-parse --short HEAD)
+BUILD_TIME := $(shell date -u '+%Y-%m-%d_%H:%M:%S')
 
-all: clean generate-certs build
+GO_FLAGS := -ldflags "-X main.Version=$(VERSION) -X main.Commit=$(COMMIT) -X main.BuildTime=$(BUILD_TIME)"
 
-build:
-	@echo "Building..."
-	@mkdir -p $(BUILD_DIR)
-	@go build -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/tunnel
+all: clean build test package
 
 clean:
-	@echo "Cleaning..."
-	@rm -rf $(BUILD_DIR)
-	@go clean
+	rm -rf build/
+	rm -rf dist/
+	go clean
+
+build:
+	@echo "Building SSSonector..."
+	mkdir -p build/bin
+	GOOS=linux GOARCH=amd64 go build $(GO_FLAGS) -o build/bin/sssonector-linux-amd64 ./cmd/tunnel
+	GOOS=darwin GOARCH=amd64 go build $(GO_FLAGS) -o build/bin/sssonector-darwin-amd64 ./cmd/tunnel
+	GOOS=windows GOARCH=amd64 go build $(GO_FLAGS) -o build/bin/sssonector-windows-amd64.exe ./cmd/tunnel
 
 test:
 	@echo "Running tests..."
-	@go test -v ./...
+	go test -v ./...
+
+install-deps:
+	@echo "Installing build dependencies..."
+	go mod download
+	go mod tidy
+
+installer-deps:
+	@echo "Installing installer build dependencies..."
+	which dpkg-deb || (echo "Installing dpkg..." && sudo apt-get install -y dpkg)
+	which rpmbuild || (echo "Installing rpm..." && sudo apt-get install -y rpm)
+	which makensis || (echo "Installing NSIS..." && sudo apt-get install -y nsis)
+	which pkgbuild || (echo "macOS pkgbuild not available on this platform")
+
+package: package-deb package-rpm package-macos package-windows
+
+package-deb:
+	@echo "Building Debian package..."
+	./scripts/build-installers.sh deb
+
+package-rpm:
+	@echo "Building RPM package..."
+	./scripts/build-installers.sh rpm
+
+package-macos:
+	@echo "Building macOS package..."
+	./scripts/build-installers.sh macos
+
+package-windows:
+	@echo "Building Windows installer..."
+	./scripts/build-installers.sh windows
+
+install: build
+	@echo "Installing SSSonector..."
+	sudo install -D -m 755 build/bin/sssonector-linux-amd64 /usr/bin/sssonector
+	sudo mkdir -p /etc/sssonector/certs
+	sudo mkdir -p /var/log/sssonector
+	sudo install -D -m 644 configs/server.yaml /etc/sssonector/config.yaml
+	sudo install -D -m 644 configs/client.yaml /etc/sssonector/client.yaml
+	sudo install -D -m 644 scripts/service/systemd/sssonector.service /etc/systemd/system/
+	sudo systemctl daemon-reload
+	@echo "Installation complete. Edit /etc/sssonector/config.yaml and run: sudo systemctl start sssonector"
+
+uninstall:
+	@echo "Uninstalling SSSonector..."
+	sudo systemctl stop sssonector || true
+	sudo systemctl disable sssonector || true
+	sudo rm -f /usr/bin/sssonector
+	sudo rm -f /etc/systemd/system/sssonector.service
+	sudo rm -rf /etc/sssonector
+	sudo rm -rf /var/log/sssonector
+	sudo systemctl daemon-reload
+	@echo "Uninstallation complete"
 
 generate-certs:
 	@echo "Generating certificates..."
-	@mkdir -p $(CERT_DIR)
-	@openssl req -x509 -newkey rsa:4096 -keyout $(CERT_DIR)/server.key -out $(CERT_DIR)/server.crt -days 365 -nodes -subj "/CN=sssonector-server"
-	@openssl req -x509 -newkey rsa:4096 -keyout $(CERT_DIR)/client.key -out $(CERT_DIR)/client.crt -days 365 -nodes -subj "/CN=sssonector-client"
-	@chmod 600 $(CERT_DIR)/*.key
-	@chmod 644 $(CERT_DIR)/*.crt
+	./scripts/generate-certs.sh
 
-install: build
-	@echo "Installing..."
-	@sudo mkdir -p /etc/sssonector/certs
-	@sudo cp $(CERT_DIR)/* /etc/sssonector/certs/
-	@sudo cp $(CONFIG_DIR)/*.yaml /etc/sssonector/
-	@sudo chmod 600 /etc/sssonector/certs/*.key
-	@sudo chmod 644 /etc/sssonector/certs/*.crt
-	@sudo install -m 755 $(BUILD_DIR)/$(BINARY_NAME) /usr/local/bin/
-
-uninstall:
-	@echo "Uninstalling..."
-	@sudo rm -f /usr/local/bin/$(BINARY_NAME)
-	@sudo rm -rf /etc/sssonector
-
-# Cross-compilation targets
-.PHONY: build-linux build-darwin build-windows
-
-build-linux:
-	@echo "Building for Linux..."
-	@GOOS=linux GOARCH=amd64 go build -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 ./cmd/tunnel
-
-build-darwin:
-	@echo "Building for macOS..."
-	@GOOS=darwin GOARCH=amd64 go build -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-amd64 ./cmd/tunnel
-
-build-windows:
-	@echo "Building for Windows..."
-	@GOOS=windows GOARCH=amd64 go build -o $(BUILD_DIR)/$(BINARY_NAME)-windows-amd64.exe ./cmd/tunnel
-
-# Build all platforms
-.PHONY: build-all
-build-all: build-linux build-darwin build-windows
+release:
+	@echo "Creating release..."
+	./scripts/release.sh $(VERSION)
 
 # Development helpers
-.PHONY: fmt vet lint
 fmt:
-	@echo "Formatting code..."
-	@go fmt ./...
-
-vet:
-	@echo "Running go vet..."
-	@go vet ./...
+	go fmt ./...
 
 lint:
-	@echo "Running linter..."
-	@golangci-lint run
+	golangci-lint run
+
+dev: build
+	./build/bin/sssonector-linux-amd64 -config configs/server.yaml
+
+.DEFAULT_GOAL := all

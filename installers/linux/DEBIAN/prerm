@@ -1,17 +1,38 @@
 #!/bin/sh
 set -e
 
-# Stop and disable service
-systemctl stop sssonector.service || true
-systemctl disable sssonector.service || true
-
-# Remove TUN/TAP device
-if ip link show dev tun0 >/dev/null 2>&1; then
-    ip link set tun0 down
-    ip tuntap del dev tun0 mode tun
+# Stop service if running
+if [ -x "/bin/systemctl" ]; then
+    if systemctl is-active sssonector.service >/dev/null 2>&1; then
+        systemctl stop sssonector.service || true
+    fi
+    systemctl disable sssonector.service || true
 fi
 
-# Don't remove user/group or data directories here
-# They might contain user data and should be handled by purge
+# Remove logrotate configuration
+if [ -f /etc/logrotate.d/sssonector ]; then
+    rm -f /etc/logrotate.d/sssonector
+fi
+
+# Only remove logs and certs on complete removal (not upgrade)
+if [ "$1" = "remove" ]; then
+    # Backup configuration and certificates
+    if [ -d /etc/sssonector ]; then
+        BACKUP_DIR="/var/backups/sssonector-$(date +%Y%m%d-%H%M%S)"
+        mkdir -p "$BACKUP_DIR"
+        if [ -d /etc/sssonector/certs ]; then
+            cp -r /etc/sssonector/certs "$BACKUP_DIR/"
+        fi
+        if [ -f /etc/sssonector/config.yaml ]; then
+            cp /etc/sssonector/config.yaml "$BACKUP_DIR/"
+        fi
+        echo "Configuration backed up to $BACKUP_DIR"
+    fi
+    
+    # Clean up logs
+    if [ -d /var/log/sssonector ]; then
+        rm -rf /var/log/sssonector
+    fi
+fi
 
 exit 0

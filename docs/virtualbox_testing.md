@@ -1,203 +1,355 @@
 # VirtualBox Testing Guide for SSSonector
 
-This guide explains how to set up and test SSSonector using two Ubuntu VMs in VirtualBox.
+This guide provides step-by-step instructions for setting up a test environment using VirtualBox to validate SSSonector functionality.
 
 ## Prerequisites
 
-1. VirtualBox installed on your host machine
-2. Ubuntu Server 22.04 LTS ISO downloaded
-3. At least 2GB RAM and 20GB storage available for each VM
+- VirtualBox 6.1 or later
+- Ubuntu Server 22.04 LTS ISO
+- At least 8GB RAM available for VMs
+- 50GB free disk space
 
-## Setting Up VirtualBox VMs
+## Network Setup
 
-### Create Server VM
+1. Create Host-Only Network:
+   - VirtualBox Manager → File → Host Network Manager
+   - Create new network:
+     ```
+     Name: vboxnet0
+     IPv4: 192.168.56.1
+     Mask: 255.255.255.0
+     DHCP: Disabled
+     ```
 
-1. Open VirtualBox and click "New"
-2. Configure the VM:
-   - Name: sssonector-server
-   - Type: Linux
-   - Version: Ubuntu (64-bit)
-   - Memory: 2048 MB
-   - Create a virtual hard disk (20 GB)
+## VM Configuration
 
-3. Configure Network:
-   - Adapter 1: NAT
-   - Adapter 2: Host-only Adapter
+### Server VM
 
-4. Install Ubuntu Server:
-   - Start the VM
-   - Select Ubuntu Server ISO
-   - Follow installation prompts
-   - Install OpenSSH server when prompted
+1. Create new VM:
+   ```
+   Name: sssonector-server
+   Type: Linux
+   Version: Ubuntu (64-bit)
+   Memory: 2048 MB
+   CPU: 2 cores
+   Disk: 20 GB (dynamically allocated)
+   ```
 
-### Create Client VM
+2. Network Configuration:
+   - Adapter 1: NAT (for internet access)
+   - Adapter 2: Host-only (vboxnet0)
 
-1. Repeat the same steps but name it "sssonector-client"
-2. Use the same network configuration
+3. Install Ubuntu Server:
+   - Language: English
+   - Network: Use default settings
+   - Storage: Use entire disk
+   - Profile:
+     ```
+     Name: sssonector
+     Server name: sssonector-server
+     Username: sssonector
+     Password: [secure-password]
+     ```
 
-## Building the Package
+4. Post-Installation:
+   ```bash
+   # Update system
+   sudo apt update && sudo apt upgrade -y
 
-1. Clone the repository and build the Debian package:
-```bash
-git clone https://github.com/o3willard-AI/SSSonector.git
-cd SSSonector
-./scripts/build-deb.sh
-```
+   # Set static IP for host-only adapter
+   sudo nano /etc/netplan/00-installer-config.yaml
+   ```
+   Add:
+   ```yaml
+   network:
+     ethernets:
+       enp0s3:
+         dhcp4: true
+       enp0s8:
+         dhcp4: false
+         addresses: [192.168.56.10/24]
+     version: 2
+   ```
+   Apply:
+   ```bash
+   sudo netplan apply
+   ```
 
-The package will be created in `build/deb/sssonector_1.0.0_amd64.deb`
+### Client VM
 
-## Testing Setup
+1. Create new VM:
+   ```
+   Name: sssonector-client
+   Type: Linux
+   Version: Ubuntu (64-bit)
+   Memory: 2048 MB
+   CPU: 2 cores
+   Disk: 20 GB (dynamically allocated)
+   ```
 
-### Server VM Setup
+2. Network Configuration:
+   - Adapter 1: NAT (for internet access)
+   - Adapter 2: Host-only (vboxnet0)
 
-1. Copy the Debian package to the server VM:
-```bash
-scp build/deb/sssonector_1.0.0_amd64.deb ubuntu@sssonector-server:~/
-```
+3. Install Ubuntu Server (same as server VM but with different hostname)
+   ```
+   Server name: sssonector-client
+   ```
 
-2. SSH into the server VM:
-```bash
-ssh ubuntu@sssonector-server
-```
+4. Post-Installation:
+   ```bash
+   # Update system
+   sudo apt update && sudo apt upgrade -y
 
-3. Install the package:
-```bash
-sudo apt update
-sudo apt install -y ./sssonector_1.0.0_amd64.deb
-```
+   # Set static IP for host-only adapter
+   sudo nano /etc/netplan/00-installer-config.yaml
+   ```
+   Add:
+   ```yaml
+   network:
+     ethernets:
+       enp0s3:
+         dhcp4: true
+       enp0s8:
+         dhcp4: false
+         addresses: [192.168.56.11/24]
+     version: 2
+   ```
+   Apply:
+   ```bash
+   sudo netplan apply
+   ```
 
-4. Generate certificates:
-```bash
-sudo mkdir -p /etc/sssonector/certs
-cd /etc/sssonector/certs
-sudo openssl req -x509 -newkey rsa:4096 -keyout server.key -out server.crt -days 365 -nodes -subj "/CN=sssonector-server"
-sudo openssl req -x509 -newkey rsa:4096 -keyout client.key -out client.crt -days 365 -nodes -subj "/CN=sssonector-client"
-sudo chmod 600 *.key
-sudo chmod 644 *.crt
-```
+## Software Installation
 
-5. Configure server:
-```bash
-sudo nano /etc/sssonector/config.yaml
-```
+### Server VM
 
-Update the configuration:
-```yaml
-mode: "server"
-network:
-  interface: "tun0"
-  address: "10.0.0.1/24"
-  mtu: 1500
-tunnel:
-  cert_file: "/etc/sssonector/certs/server.crt"
-  key_file: "/etc/sssonector/certs/server.key"
-  ca_file: "/etc/sssonector/certs/client.crt"
-  listen_address: "0.0.0.0"
-  listen_port: 8443
-```
+1. Install SSSonector:
+   ```bash
+   # Download package
+   wget https://github.com/o3willard-AI/SSSonector/releases/latest/download/sssonector_1.0.0_amd64.deb
 
-### Client VM Setup
+   # Install
+   sudo dpkg -i sssonector_1.0.0_amd64.deb
+   sudo apt-get install -f
+   ```
 
-1. Copy the Debian package and certificates from server:
-```bash
-scp ubuntu@sssonector-server:~/sssonector_1.0.0_amd64.deb ./
-scp -r ubuntu@sssonector-server:/etc/sssonector/certs ./certs
-```
+2. Generate certificates:
+   ```bash
+   sudo sssonector-cli generate-certs
+   ```
 
-2. Install the package:
-```bash
-sudo apt update
-sudo apt install -y ./sssonector_1.0.0_amd64.deb
-```
+3. Configure server:
+   ```bash
+   sudo nano /etc/sssonector/config.yaml
+   ```
+   Update:
+   ```yaml
+   mode: "server"
+   network:
+     interface: "tun0"
+     address: "10.0.0.1/24"
+   tunnel:
+     listen_address: "192.168.56.10"
+     listen_port: 8443
+   ```
 
-3. Copy certificates:
-```bash
-sudo cp -r certs/* /etc/sssonector/certs/
-sudo chmod 600 /etc/sssonector/certs/*.key
-sudo chmod 644 /etc/sssonector/certs/*.crt
-```
+4. Start service:
+   ```bash
+   sudo systemctl start sssonector
+   sudo systemctl enable sssonector
+   ```
 
-4. Configure client:
-```bash
-sudo nano /etc/sssonector/config.yaml
-```
+### Client VM
 
-Update the configuration:
-```yaml
-mode: "client"
-network:
-  interface: "tun0"
-  address: "10.0.0.2/24"
-  mtu: 1500
-tunnel:
-  cert_file: "/etc/sssonector/certs/client.crt"
-  key_file: "/etc/sssonector/certs/client.key"
-  ca_file: "/etc/sssonector/certs/server.crt"
-  server_address: "sssonector-server"  # Use the server VM's IP address
-  server_port: 8443
-```
+1. Install SSSonector:
+   ```bash
+   # Download package
+   wget https://github.com/o3willard-AI/SSSonector/releases/latest/download/sssonector_1.0.0_amd64.deb
 
-## Running the Tests
+   # Install
+   sudo dpkg -i sssonector_1.0.0_amd64.deb
+   sudo apt-get install -f
+   ```
 
-1. Start the server:
-```bash
-# On server VM
-sudo systemctl start sssonector
-sudo systemctl status sssonector
-```
+2. Copy certificates from server:
+   ```bash
+   # On server
+   sudo tar czf /tmp/certs.tar.gz -C /etc/sssonector/certs .
+   scp /tmp/certs.tar.gz sssonector@192.168.56.11:/tmp/
 
-2. Start the client:
-```bash
-# On client VM
-sudo systemctl start sssonector
-sudo systemctl status sssonector
-```
+   # On client
+   sudo tar xzf /tmp/certs.tar.gz -C /etc/sssonector/certs/
+   sudo chown -R root:root /etc/sssonector/certs
+   sudo chmod 600 /etc/sssonector/certs/*.key
+   sudo chmod 644 /etc/sssonector/certs/*.crt
+   ```
 
-3. Test connectivity:
-```bash
-# On client VM
-ping 10.0.0.1
-```
+3. Configure client:
+   ```bash
+   sudo nano /etc/sssonector/config.yaml
+   ```
+   Update:
+   ```yaml
+   mode: "client"
+   network:
+     interface: "tun0"
+     address: "10.0.0.2/24"
+   tunnel:
+     server_address: "192.168.56.10"
+     server_port: 8443
+   ```
 
-4. Monitor logs:
-```bash
-# On both VMs
-sudo journalctl -u sssonector -f
-```
+4. Start service:
+   ```bash
+   sudo systemctl start sssonector
+   sudo systemctl enable sssonector
+   ```
 
-## Troubleshooting
+## Testing
 
-1. Network Issues:
-   - Verify both VMs can ping each other
-   - Check firewall rules: `sudo ufw status`
-   - Ensure port 8443 is accessible
+### Basic Connectivity
 
-2. Certificate Issues:
-   - Verify certificate permissions
-   - Check certificate paths in config
-   - Validate certificate dates: `openssl x509 -in cert.crt -text`
+1. From client VM:
+   ```bash
+   # Ping server's tunnel IP
+   ping 10.0.0.1
 
-3. Service Issues:
-   - Check service status: `systemctl status sssonector`
-   - View logs: `journalctl -u sssonector`
-   - Verify config file permissions
+   # Check connection details
+   sssonector-cli status
+   ```
+
+### Performance Testing
+
+1. Install iperf3:
+   ```bash
+   # On both VMs
+   sudo apt install iperf3
+   ```
+
+2. Run tests:
+   ```bash
+   # On server
+   iperf3 -s
+
+   # On client
+   iperf3 -c 10.0.0.1 -t 30
+   ```
+
+### Bandwidth Throttling
+
+1. Configure throttling:
+   ```bash
+   # On both VMs
+   sudo nano /etc/sssonector/config.yaml
+   ```
+   Add:
+   ```yaml
+   throttle:
+     upload_kbps: 1024   # 1 Mbps
+     download_kbps: 1024 # 1 Mbps
+   ```
+
+2. Restart services:
+   ```bash
+   sudo systemctl restart sssonector
+   ```
+
+3. Verify throttling:
+   ```bash
+   # On client
+   iperf3 -c 10.0.0.1 -t 30
+   ```
+
+### Connection Resilience
+
+1. Test automatic reconnection:
+   ```bash
+   # On server
+   sudo systemctl restart sssonector
+
+   # On client
+   # Watch logs
+   sudo journalctl -u sssonector -f
+   ```
+
+2. Test network interruption:
+   ```bash
+   # On server
+   sudo ip link set enp0s8 down
+   sleep 30
+   sudo ip link set enp0s8 up
+   ```
+
+## Monitoring
+
+### SNMP Monitoring
+
+1. Install SNMP tools:
+   ```bash
+   sudo apt install snmp snmpd
+   ```
+
+2. Query metrics:
+   ```bash
+   # On either VM
+   snmpwalk -v2c -c public localhost .1.3.6.1.4.1.XXXXX
+   ```
+
+### Log Analysis
+
+1. View service logs:
+   ```bash
+   sudo journalctl -u sssonector -f
+   ```
+
+2. Check system logs:
+   ```bash
+   sudo tail -f /var/log/syslog | grep sssonector
+   ```
 
 ## Cleanup
 
-To remove the test environment:
-
 1. Stop services:
+   ```bash
+   # On both VMs
+   sudo systemctl stop sssonector
+   sudo systemctl disable sssonector
+   ```
+
+2. Remove packages:
+   ```bash
+   sudo apt remove sssonector
+   sudo apt autoremove
+   ```
+
+3. Clean up files:
+   ```bash
+   sudo rm -rf /etc/sssonector
+   sudo rm -rf /var/log/sssonector
+   ```
+
+## Troubleshooting
+
+### Common Issues
+
+1. Connection Failures
+   - Check firewall status: `sudo ufw status`
+   - Verify certificate permissions
+   - Check network interfaces: `ip addr show`
+
+2. Performance Issues
+   - Check CPU usage: `top`
+   - Monitor memory: `free -m`
+   - Check disk I/O: `iostat`
+
+3. Certificate Problems
+   - Verify dates: `openssl x509 -in /etc/sssonector/certs/server.crt -text`
+   - Check permissions: `ls -l /etc/sssonector/certs/`
+
+### Debug Mode
+
+Run service with debug logging:
 ```bash
-# On both VMs
 sudo systemctl stop sssonector
-```
-
-2. Uninstall package:
-```bash
-sudo apt remove sssonector
-```
-
-3. Remove configuration:
-```bash
-sudo rm -rf /etc/sssonector
-sudo rm -rf /var/log/sssonector
+sudo sssonector -config /etc/sssonector/config.yaml -debug

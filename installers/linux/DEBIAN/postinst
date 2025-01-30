@@ -1,45 +1,69 @@
 #!/bin/sh
 set -e
 
-# Create necessary directories
+# Create sssonector group if it doesn't exist
+if ! getent group sssonector >/dev/null; then
+    addgroup --system sssonector
+fi
+
+# Create sssonector user if it doesn't exist
+if ! getent passwd sssonector >/dev/null; then
+    adduser --system \
+            --ingroup sssonector \
+            --home /etc/sssonector \
+            --no-create-home \
+            --shell /sbin/nologin \
+            --gecos "SSSonector Service User" \
+            sssonector
+fi
+
+# Create required directories
 mkdir -p /etc/sssonector/certs
 mkdir -p /var/log/sssonector
 
-# Set up systemd service
-if [ -d /lib/systemd/system ]; then
-    cat > /lib/systemd/system/sssonector.service << EOF
-[Unit]
-Description=SSSonector SSL Tunnel Service
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=/usr/bin/sssonector -config /etc/sssonector/config.yaml
-Restart=always
-RestartSec=10
-User=root
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-    # Reload systemd
-    systemctl daemon-reload
-
-    # Enable service but don't start it (user needs to configure first)
-    systemctl enable sssonector.service
-fi
-
 # Set permissions
+chown -R sssonector:sssonector /etc/sssonector
+chown -R sssonector:sssonector /var/log/sssonector
 chmod 755 /etc/sssonector
 chmod 700 /etc/sssonector/certs
 chmod 755 /var/log/sssonector
+chmod 755 /usr/bin/sssonector
 
-# Create default config if it doesn't exist
-if [ ! -f /etc/sssonector/config.yaml ]; then
-    cp /usr/share/sssonector/config/server.yaml /etc/sssonector/config.yaml
+# Reload systemd
+systemctl daemon-reload
+
+# Enable and start service
+if [ "$1" = "configure" ]; then
+    # Only enable and start on fresh install
+    if [ -z "$2" ]; then
+        systemctl enable sssonector.service
+        systemctl start sssonector.service || true
+    else
+        # This is an upgrade, restart if already running
+        if systemctl is-active sssonector.service >/dev/null 2>&1; then
+            systemctl restart sssonector.service || true
+        fi
+    fi
 fi
 
-echo "SSSonector installation completed."
-echo "Please configure your certificates in /etc/sssonector/certs/"
-echo "and update /etc/sssonector/config.yaml before starting the service."
+# Create log rotation configuration
+cat > /etc/logrotate.d/sssonector << EOF
+/var/log/sssonector/*.log {
+    daily
+    rotate 7
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 sssonector sssonector
+    sharedscripts
+    postrotate
+        systemctl reload sssonector.service >/dev/null 2>&1 || true
+    endscript
+}
+EOF
+
+# Set logrotate permissions
+chmod 644 /etc/logrotate.d/sssonector
+
+exit 0
