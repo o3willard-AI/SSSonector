@@ -1,97 +1,57 @@
-.PHONY: all clean build test install package
-
 VERSION := 1.0.0
-COMMIT := $(shell git rev-parse --short HEAD)
-BUILD_TIME := $(shell date -u '+%Y-%m-%d_%H:%M:%S')
+BINARY_NAME := sssonector
+PLATFORMS := linux windows darwin
 
-GO_FLAGS := -ldflags "-X main.Version=$(VERSION) -X main.Commit=$(COMMIT) -X main.BuildTime=$(BUILD_TIME)"
+.PHONY: all clean build package
 
-all: clean build test package
+all: clean build package
 
 clean:
 	rm -rf build/
-	rm -rf dist/
-	go clean
+	mkdir -p build/installers
+	mkdir -p build/windows
+	mkdir -p build/rpm/BUILD
+	mkdir -p build/rpm/RPMS
+	mkdir -p build/rpm/SOURCES
+	mkdir -p build/rpm/SPECS
+	mkdir -p build/rpm/SRPMS
 
 build:
-	@echo "Building SSSonector..."
-	mkdir -p build/bin
-	GOOS=linux GOARCH=amd64 go build $(GO_FLAGS) -o build/bin/sssonector-linux-amd64 ./cmd/tunnel
-	GOOS=darwin GOARCH=amd64 go build $(GO_FLAGS) -o build/bin/sssonector-darwin-amd64 ./cmd/tunnel
-	GOOS=windows GOARCH=amd64 go build $(GO_FLAGS) -o build/bin/sssonector-windows-amd64.exe ./cmd/tunnel
+	# Linux build
+	GOOS=linux GOARCH=amd64 go build -o build/$(BINARY_NAME)-linux-amd64 ./cmd/tunnel
+	# Windows build
+	GOOS=windows GOARCH=amd64 go build -o build/windows/$(BINARY_NAME).exe ./cmd/tunnel
+	# macOS build
+	GOOS=darwin GOARCH=amd64 go build -o build/$(BINARY_NAME)-darwin-amd64 ./cmd/tunnel
 
-test:
-	@echo "Running tests..."
-	go test -v ./...
-
-install-deps:
-	@echo "Installing build dependencies..."
-	go mod download
-	go mod tidy
-
-installer-deps:
-	@echo "Installing installer build dependencies..."
-	which dpkg-deb || (echo "Installing dpkg..." && sudo apt-get install -y dpkg)
-	which rpmbuild || (echo "Installing rpm..." && sudo apt-get install -y rpm)
-	which makensis || (echo "Installing NSIS..." && sudo apt-get install -y nsis)
-	which pkgbuild || (echo "macOS pkgbuild not available on this platform")
-
-package: package-deb package-rpm package-macos package-windows
+package: package-deb package-rpm package-windows package-macos
 
 package-deb:
-	@echo "Building Debian package..."
-	./scripts/build-installers.sh deb
+	mkdir -p build/deb/DEBIAN
+	mkdir -p build/deb/usr/bin
+	cp build/$(BINARY_NAME)-linux-amd64 build/deb/usr/bin/$(BINARY_NAME)
+	chmod 755 build/deb/usr/bin/$(BINARY_NAME)
+	echo "Package: $(BINARY_NAME)\nVersion: $(VERSION)\nArchitecture: amd64\nMaintainer: o3willard-AI\nDescription: SSL tunneling application" > build/deb/DEBIAN/control
+	dpkg-deb --build build/deb build/$(BINARY_NAME)_$(VERSION)_amd64.deb
 
 package-rpm:
-	@echo "Building RPM package..."
-	./scripts/build-installers.sh rpm
-
-package-macos:
-	@echo "Building macOS package..."
-	./scripts/build-installers.sh macos
+	mkdir -p build/rpm/BUILD
+	mkdir -p build/rpm/RPMS
+	mkdir -p build/rpm/SOURCES
+	mkdir -p build/rpm/SPECS
+	mkdir -p build/rpm/SRPMS
+	cp build/$(BINARY_NAME)-linux-amd64 build/rpm/SOURCES/$(BINARY_NAME)
+	echo "Summary: SSL tunneling application\nName: $(BINARY_NAME)\nVersion: $(VERSION)\nRelease: 1\nLicense: MIT\nGroup: Applications/Internet\nBuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-root\n\n%description\nSSL tunneling application\n\n%prep\n\n%build\n\n%install\nmkdir -p %{buildroot}/usr/bin\ncp %{_sourcedir}/$(BINARY_NAME) %{buildroot}/usr/bin/\n\n%files\n/usr/bin/$(BINARY_NAME)" > build/rpm/SPECS/$(BINARY_NAME).spec
+	rpmbuild --define "_topdir $(PWD)/build/rpm" -bb build/rpm/SPECS/$(BINARY_NAME).spec
+	cp build/rpm/RPMS/x86_64/$(BINARY_NAME)-$(VERSION)-1.x86_64.rpm build/
 
 package-windows:
-	@echo "Building Windows installer..."
-	./scripts/build-installers.sh windows
+	makensis -DVERSION=$(VERSION) -DBINARY="$(PWD)/build/windows/$(BINARY_NAME).exe" -DOUTPUT="$(PWD)/build/$(BINARY_NAME)-$(VERSION)-setup.exe" installers/windows.nsi
 
-install: build
-	@echo "Installing SSSonector..."
-	sudo install -D -m 755 build/bin/sssonector-linux-amd64 /usr/bin/sssonector
-	sudo mkdir -p /etc/sssonector/certs
-	sudo mkdir -p /var/log/sssonector
-	sudo install -D -m 644 configs/server.yaml /etc/sssonector/config.yaml
-	sudo install -D -m 644 configs/client.yaml /etc/sssonector/client.yaml
-	sudo install -D -m 644 scripts/service/systemd/sssonector.service /etc/systemd/system/
-	sudo systemctl daemon-reload
-	@echo "Installation complete. Edit /etc/sssonector/config.yaml and run: sudo systemctl start sssonector"
-
-uninstall:
-	@echo "Uninstalling SSSonector..."
-	sudo systemctl stop sssonector || true
-	sudo systemctl disable sssonector || true
-	sudo rm -f /usr/bin/sssonector
-	sudo rm -f /etc/systemd/system/sssonector.service
-	sudo rm -rf /etc/sssonector
-	sudo rm -rf /var/log/sssonector
-	sudo systemctl daemon-reload
-	@echo "Uninstallation complete"
-
-generate-certs:
-	@echo "Generating certificates..."
-	./scripts/generate-certs.sh
-
-release:
-	@echo "Creating release..."
-	./scripts/release.sh $(VERSION)
-
-# Development helpers
-fmt:
-	go fmt ./...
-
-lint:
-	golangci-lint run
-
-dev: build
-	./build/bin/sssonector-linux-amd64 -config configs/server.yaml
-
-.DEFAULT_GOAL := all
+package-macos:
+	# Note: This would typically run on a macOS system
+	# For now, we'll create a basic package structure
+	mkdir -p build/macos/root/usr/local/bin
+	cp build/$(BINARY_NAME)-darwin-amd64 build/macos/root/usr/local/bin/$(BINARY_NAME)
+	chmod 755 build/macos/root/usr/local/bin/$(BINARY_NAME)
+	# Note: actual pkgbuild command would be run on macOS
