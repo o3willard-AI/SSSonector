@@ -1,7 +1,6 @@
-# Binaries and build artifacts
-/build/
-/dist/
+# Binaries for programs and plugins
 *.exe
+*.exe~
 *.dll
 *.so
 *.dylib
@@ -9,54 +8,26 @@
 # Test binary, built with `go test -c`
 *.test
 
-# Output of the go coverage tool
+# Output of the go coverage tool, specifically when used with LiteIDE
 *.out
-*.cov
 
-# IDE and editor files
+# Build directory
+build/
+
+# Dependency directories
+vendor/
+
+# IDE specific files
 .idea/
 .vscode/
 *.swp
 *.swo
-*~
 
-# OS-specific files
+# OS specific files
 .DS_Store
 Thumbs.db
 
-# Certificate files
-/certs/*.crt
-/certs/*.key
-/certs/*.pem
-/certs/*.csr
-
-# Configuration files with sensitive data
-/configs/*.local.yaml
-
-# Log files
-*.log
-/logs/
-
-# Monitoring data
-/monitoring/grafana/data/
-/monitoring/prometheus/data/
-
-# Dependencies
-/vendor/
-
-# Environment files
-.env
-.env.local
-
-# Temporary files
-*.tmp
-*.bak
-
-# Generated documentation
-/docs/generated/
-
-# Service files with sensitive data
-/scripts/service/**/*.local.*
-
-# SNMP MIB cache
-/mibs/cache/
+# Allow dist/v1.0.0 directory
+!dist/
+!dist/v1.0.0/
+!dist/v1.0.0/*
