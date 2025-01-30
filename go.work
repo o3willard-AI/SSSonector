@@ -1,6 +1,7 @@
 go 1.21
 
 use (
+    .
     ./cmd/tunnel
     ./internal/adapter
     ./internal/cert

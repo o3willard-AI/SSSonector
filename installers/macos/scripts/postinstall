@@ -1,36 +1,60 @@
 #!/bin/bash
 set -e
 
-# Create application directories
-mkdir -p /usr/local/bin
-mkdir -p /etc/sssonector/certs
-mkdir -p /var/log/sssonector
-mkdir -p /var/lib/sssonector
-
-# Copy binary and configuration
-cp /tmp/sssonector/bin/sssonector /usr/local/bin/
-cp -r /tmp/sssonector/configs/* /etc/sssonector/
-cp /tmp/sssonector/service/com.o3willard.sssonector.plist /Library/LaunchDaemons/
-
-# Set permissions
-chown -R root:wheel /usr/local/bin/sssonector
-chmod 755 /usr/local/bin/sssonector
-chown -R root:wheel /etc/sssonector
-chmod 750 /etc/sssonector/certs
-chown -R root:wheel /var/log/sssonector
-chmod 750 /var/log/sssonector
-chown -R root:wheel /var/lib/sssonector
-chmod 750 /var/lib/sssonector
-chown root:wheel /Library/LaunchDaemons/com.o3willard.sssonector.plist
-chmod 644 /Library/LaunchDaemons/com.o3willard.sssonector.plist
-
-# Create TUN/TAP device if needed
-if ! /sbin/ifconfig utun0 >/dev/null 2>&1; then
-    # macOS creates utun devices automatically when requested
-    echo "TUN device will be created on first use"
+# Create sssonector group if it doesn't exist
+if ! dscl . -read /Groups/sssonector >/dev/null 2>&1; then
+    NEXT_GID=$(dscl . -list /Groups gid | awk '{print $2}' | sort -n | tail -1 | xargs -I{} expr {} + 1)
+    dscl . -create /Groups/sssonector
+    dscl . -create /Groups/sssonector PrimaryGroupID $NEXT_GID
+    dscl . -create /Groups/sssonector RealName "SSSonector Service Group"
+    dscl . -create /Groups/sssonector Password "*"
 fi
 
-# Load and start the service
+# Create sssonector user if it doesn't exist
+if ! dscl . -read /Users/sssonector >/dev/null 2>&1; then
+    NEXT_UID=$(dscl . -list /Users UniqueID | awk '{print $2}' | sort -n | tail -1 | xargs -I{} expr {} + 1)
+    dscl . -create /Users/sssonector
+    dscl . -create /Users/sssonector UserShell /usr/bin/false
+    dscl . -create /Users/sssonector RealName "SSSonector Service"
+    dscl . -create /Users/sssonector UniqueID $NEXT_UID
+    dscl . -create /Users/sssonector PrimaryGroupID $(dscl . -read /Groups/sssonector PrimaryGroupID | awk '{print $2}')
+    dscl . -create /Users/sssonector NFSHomeDirectory /var/empty
+    dscl . -create /Users/sssonector Password "*"
+fi
+
+# Create required directories
+mkdir -p /etc/sssonector/certs
+mkdir -p /var/log/sssonector
+
+# Set permissions
+chown -R sssonector:sssonector /etc/sssonector
+chown -R sssonector:sssonector /var/log/sssonector
+chmod 755 /etc/sssonector
+chmod 700 /etc/sssonector/certs
+chmod 755 /var/log/sssonector
+chmod 755 /usr/local/bin/sssonector
+
+# Configure log rotation
+cat > /etc/newsyslog.d/sssonector.conf << EOF
+# logfilename                       [owner:group]    mode count size when  flags [/pid_file] [sig_num]
+/var/log/sssonector/sssonector.log  sssonector:sssonector 644  7     *    \$D0   J
+EOF
+
+# Load and start service
 launchctl load -w /Library/LaunchDaemons/com.o3willard.sssonector.plist
+
+# Configure firewall
+/usr/libexec/ApplicationFirewall/socketfilterfw --add /usr/local/bin/sssonector
+/usr/libexec/ApplicationFirewall/socketfilterfw --unblock /usr/local/bin/sssonector
+
+# Create symlink for easier access
+ln -sf /usr/local/bin/sssonector /usr/local/bin/sssonector-cli
+
+# Print installation summary
+echo "Installation completed successfully!"
+echo "Service status: $(launchctl list | grep sssonector || echo 'Not running')"
+echo "Configuration: /etc/sssonector/config.yaml"
+echo "Logs: /var/log/sssonector/sssonector.log"
+echo "CLI command: sssonector-cli"
 
 exit 0

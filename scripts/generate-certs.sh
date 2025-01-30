@@ -1,67 +1,107 @@
 #!/bin/bash
-
-# Exit on any error
 set -e
 
-CERT_DIR="../certs"
+# Configuration
+CERT_DIR="certs"
 DAYS=365
 KEY_SIZE=4096
-COUNTRY="US"
-STATE="California"
-LOCALITY="San Francisco"
+COUNTRY="EU"
+STATE="Europe"
+LOCALITY="European Union"
 ORGANIZATION="SSSonector"
 SERVER_CN="sssonector-server"
 CLIENT_CN="sssonector-client"
 
-# Create certificates directory if it doesn't exist
+# Create certificates directory
 mkdir -p "$CERT_DIR"
+cd "$CERT_DIR"
 
-# Function to generate a certificate
-generate_cert() {
-    local name=$1
-    local cn=$2
-    local key_file="$CERT_DIR/$name.key"
-    local csr_file="$CERT_DIR/$name.csr"
-    local crt_file="$CERT_DIR/$name.crt"
+echo "Generating certificates in $CERT_DIR..."
 
-    echo "Generating $name certificate..."
+# Generate CA key and certificate
+echo "Generating CA certificate..."
+openssl genrsa -out ca.key $KEY_SIZE
+openssl req -new -x509 -days $DAYS -key ca.key -out ca.crt -subj "/C=$COUNTRY/ST=$STATE/L=$LOCALITY/O=$ORGANIZATION/CN=SSSonector CA"
 
-    # Generate private key
-    openssl genrsa -out "$key_file" $KEY_SIZE
+# Generate server key and CSR
+echo "Generating server certificate..."
+openssl genrsa -out server.key $KEY_SIZE
+openssl req -new -key server.key -out server.csr -subj "/C=$COUNTRY/ST=$STATE/L=$LOCALITY/O=$ORGANIZATION/CN=$SERVER_CN"
 
-    # Generate CSR
-    openssl req -new -key "$key_file" -out "$csr_file" -subj "/C=$COUNTRY/ST=$STATE/L=$LOCALITY/O=$ORGANIZATION/CN=$cn"
+# Generate client key and CSR
+echo "Generating client certificate..."
+openssl genrsa -out client.key $KEY_SIZE
+openssl req -new -key client.key -out client.csr -subj "/C=$COUNTRY/ST=$STATE/L=$LOCALITY/O=$ORGANIZATION/CN=$CLIENT_CN"
 
-    # Generate self-signed certificate
-    openssl x509 -req -days $DAYS -in "$csr_file" -signkey "$key_file" -out "$crt_file"
+# Create config file for certificate extensions
+cat > openssl.cnf << EOF
+[ v3_server ]
+basicConstraints = CA:FALSE
+keyUsage = digitalSignature, keyEncipherment
+extendedKeyUsage = serverAuth
+subjectAltName = DNS:$SERVER_CN,DNS:localhost,IP:127.0.0.1
 
-    # Remove CSR file
-    rm "$csr_file"
+[ v3_client ]
+basicConstraints = CA:FALSE
+keyUsage = digitalSignature, keyEncipherment
+extendedKeyUsage = clientAuth
+subjectAltName = DNS:$CLIENT_CN
+EOF
 
-    # Set permissions
-    chmod 600 "$key_file"
-    chmod 644 "$crt_file"
+# Sign server certificate
+echo "Signing server certificate..."
+openssl x509 -req -days $DAYS -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
+    -out server.crt -extfile openssl.cnf -extensions v3_server
 
-    echo "Generated $name certificate files:"
-    echo "  Private key: $key_file"
-    echo "  Certificate: $crt_file"
-    echo
-}
+# Sign client certificate
+echo "Signing client certificate..."
+openssl x509 -req -days $DAYS -in client.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
+    -out client.crt -extfile openssl.cnf -extensions v3_client
 
-echo "Generating SSL certificates for SSSonector..."
-echo "Certificates will be valid for $DAYS days"
-echo
+# Clean up CSRs and config
+rm -f *.csr openssl.cnf
 
-# Generate server certificate
-generate_cert "server" "$SERVER_CN"
-
-# Generate client certificate
-generate_cert "client" "$CLIENT_CN"
+# Set permissions
+chmod 600 *.key
+chmod 644 *.crt
 
 echo "Certificate generation complete!"
-echo "Certificate files are in: $CERT_DIR"
 echo
-echo "Remember to:"
-echo "1. Copy the certificates to /etc/sssonector/certs/"
-echo "2. Set proper permissions (600 for .key files, 644 for .crt files)"
-echo "3. Update the configuration files with the correct certificate paths"
+echo "Generated files:"
+ls -l
+
+echo
+echo "Certificate details:"
+echo "==================="
+echo
+echo "CA Certificate:"
+openssl x509 -in ca.crt -text -noout | grep "Subject:"
+echo
+echo "Server Certificate:"
+openssl x509 -in server.crt -text -noout | grep -E "Subject:|DNS:|IP Address:"
+echo
+echo "Client Certificate:"
+openssl x509 -in client.crt -text -noout | grep -E "Subject:|DNS:"
+
+echo
+echo "Verifying certificate chain..."
+echo "=============================="
+echo
+echo "Server certificate:"
+openssl verify -CAfile ca.crt server.crt
+echo
+echo "Client certificate:"
+openssl verify -CAfile ca.crt client.crt
+
+echo
+echo "Testing TLS 1.3 compatibility..."
+echo "==============================="
+openssl ciphers -v 'TLSv1.3' | grep TLS_
+
+echo
+echo "Next steps:"
+echo "1. Copy certificates to /etc/sssonector/certs/"
+echo "2. Set correct permissions:"
+echo "   sudo chown -R root:root /etc/sssonector/certs/"
+echo "   sudo chmod 600 /etc/sssonector/certs/*.key"
+echo "   sudo chmod 644 /etc/sssonector/certs/*.crt"

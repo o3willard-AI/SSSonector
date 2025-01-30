@@ -7,24 +7,20 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/o3willard-AI/SSSonector/internal/adapter"
 	"github.com/o3willard-AI/SSSonector/internal/config"
-	"github.com/o3willard-AI/SSSonector/internal/tunnel"
 	"go.uber.org/zap"
 )
 
 var (
-	configFile = flag.String("config", "", "Path to configuration file")
+	configPath string
 )
+
+func init() {
+	flag.StringVar(&configPath, "config", "/etc/sssonector/config.yaml", "Path to configuration file")
+}
 
 func main() {
 	flag.Parse()
-
-	if *configFile == "" {
-		fmt.Fprintln(os.Stderr, "Error: config file path is required")
-		flag.Usage()
-		os.Exit(1)
-	}
 
 	// Initialize logger
 	logger, err := zap.NewProduction()
@@ -35,44 +31,78 @@ func main() {
 	defer logger.Sync()
 
 	// Load configuration
-	cfg, err := config.LoadConfig(*configFile)
+	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
 		logger.Fatal("Failed to load configuration",
+			zap.String("path", configPath),
 			zap.Error(err),
 		)
 	}
 
-	// Create network interface
-	adapterManager := adapter.NewManager(logger, &cfg.Network)
-	iface, err := adapterManager.CreateInterface()
+	logger.Info("Starting SSSonector",
+		zap.String("mode", cfg.Mode),
+		zap.String("interface", cfg.Network.Interface),
+	)
+
+	// Set up signal handling
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	// Initialize components based on mode
+	var tunnel interface {
+		Start() error
+		Stop() error
+	}
+
+	if cfg.Mode == "server" {
+		tunnel, err = initializeServer(logger, cfg)
+	} else {
+		tunnel, err = initializeClient(logger, cfg)
+	}
+
 	if err != nil {
-		logger.Fatal("Failed to create network interface",
+		logger.Fatal("Failed to initialize tunnel",
+			zap.String("mode", cfg.Mode),
 			zap.Error(err),
 		)
 	}
 
-	// Create and start tunnel
-	tun := tunnel.NewTunnel(logger, &cfg.Tunnel, iface)
-	if err := tun.Start(cfg.Mode); err != nil {
+	// Start the tunnel
+	if err := tunnel.Start(); err != nil {
 		logger.Fatal("Failed to start tunnel",
 			zap.Error(err),
 		)
 	}
 
-	// Handle signals for graceful shutdown
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-
-	// Wait for signal
+	// Wait for shutdown signal
 	sig := <-sigChan
-	logger.Info("Received signal, shutting down",
+	logger.Info("Received shutdown signal",
 		zap.String("signal", sig.String()),
 	)
 
-	// Stop tunnel
-	if err := tun.Stop(); err != nil {
-		logger.Error("Failed to stop tunnel",
+	// Graceful shutdown
+	if err := tunnel.Stop(); err != nil {
+		logger.Error("Error during shutdown",
 			zap.Error(err),
 		)
+		os.Exit(1)
 	}
+
+	logger.Info("Shutdown complete")
+}
+
+func initializeServer(logger *zap.Logger, cfg *config.Config) (interface {
+	Start() error
+	Stop() error
+}, error) {
+	// TODO: Initialize server components
+	return nil, fmt.Errorf("server mode not implemented")
+}
+
+func initializeClient(logger *zap.Logger, cfg *config.Config) (interface {
+	Start() error
+	Stop() error
+}, error) {
+	// TODO: Initialize client components
+	return nil, fmt.Errorf("client mode not implemented")
 }

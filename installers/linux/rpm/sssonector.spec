@@ -1,86 +1,86 @@
 Name:           sssonector
-Version:        1.0.0
-Release:        1%{?dist}
-Summary:        Secure Scalable SSL Connector
-
+Version:        %{_version}
+Release:        %{_release}%{?dist}
+Summary:        Secure SSL Tunnel Service
 License:        MIT
 URL:            https://github.com/o3willard-AI/SSSonector
-Source0:        %{name}-%{version}.tar.gz
-
-BuildRequires:  golang >= 1.21
-BuildRequires:  systemd-rpm-macros
-Requires:       systemd
-Requires:       iproute
+BuildArch:      x86_64
 
 %description
-A multipurpose utility for connecting services over the internet
-or through insecure network links without having to utilize a VPN.
-Features include TLS 1.3 with EU-exportable cipher suites,
-automatic certificate management, bandwidth throttling,
-SNMP monitoring support, and cross-platform compatibility.
-
-%prep
-%autosetup
-
-%build
-make build
+SSSonector is a secure SSL tunnel service for remote office connectivity.
+It provides a persistent TLS 1.3 tunnel with EU-exportable cipher suites,
+virtual network interfaces, and SNMP monitoring capabilities.
 
 %install
 rm -rf $RPM_BUILD_ROOT
-# Binary
-install -D -m 755 build/%{name} %{buildroot}%{_bindir}/%{name}
+mkdir -p $RPM_BUILD_ROOT/usr/bin
+mkdir -p $RPM_BUILD_ROOT/etc/sssonector/certs
+mkdir -p $RPM_BUILD_ROOT/etc/systemd/system
+mkdir -p $RPM_BUILD_ROOT/var/log/sssonector
 
-# Configuration
-install -d %{buildroot}%{_sysconfdir}/%{name}
-install -d %{buildroot}%{_sysconfdir}/%{name}/certs
-install -m 644 configs/server.yaml %{buildroot}%{_sysconfdir}/%{name}/server.yaml.example
-install -m 644 configs/client.yaml %{buildroot}%{_sysconfdir}/%{name}/client.yaml.example
+# Install binary
+install -m 755 %{_build_dir}/sssonector-linux-amd64 $RPM_BUILD_ROOT/usr/bin/sssonector
 
-# Systemd service
-install -D -m 644 scripts/service/systemd/%{name}.service %{buildroot}%{_unitdir}/%{name}.service
+# Install config files
+install -m 644 %{_sourcedir}/configs/server.yaml $RPM_BUILD_ROOT/etc/sssonector/config.yaml
+install -m 644 %{_sourcedir}/configs/client.yaml $RPM_BUILD_ROOT/etc/sssonector/client.yaml
 
-# Log directory
-install -d %{buildroot}%{_localstatedir}/log/%{name}
+# Install systemd service
+install -m 644 %{_sourcedir}/scripts/service/systemd/sssonector.service $RPM_BUILD_ROOT/etc/systemd/system/sssonector.service
 
-# Data directory
-install -d %{buildroot}%{_sharedstatedir}/%{name}
+%files
+%defattr(-,root,root,-)
+/usr/bin/sssonector
+%config(noreplace) /etc/sssonector/config.yaml
+%config(noreplace) /etc/sssonector/client.yaml
+/etc/systemd/system/sssonector.service
+%dir /etc/sssonector
+%dir /etc/sssonector/certs
+%dir /var/log/sssonector
 
 %pre
-getent group %{name} >/dev/null || groupadd -r %{name}
-getent passwd %{name} >/dev/null || \
-    useradd -r -g %{name} -d %{_sharedstatedir}/%{name} \
-    -s /sbin/nologin -c "SSSonector Service Account" %{name}
-exit 0
+# Create sssonector group if it doesn't exist
+getent group sssonector >/dev/null || groupadd -r sssonector
+
+# Create sssonector user if it doesn't exist
+getent passwd sssonector >/dev/null || \
+    useradd -r -g sssonector -d /etc/sssonector \
+    -s /sbin/nologin -c "SSSonector Service User" sssonector
 
 %post
-%systemd_post %{name}.service
-if [ $1 -eq 1 ] ; then
-    # Initial installation
-    systemctl preset %{name}.service >/dev/null 2>&1 || :
+# Set permissions
+chown -R sssonector:sssonector /etc/sssonector
+chown -R sssonector:sssonector /var/log/sssonector
+chmod 755 /etc/sssonector
+chmod 700 /etc/sssonector/certs
+chmod 755 /var/log/sssonector
+
+# Reload systemd
+systemctl daemon-reload
+
+# Enable and start service if this is a fresh install
+if [ $1 -eq 1 ]; then
+    systemctl enable sssonector.service
+    systemctl start sssonector.service
 fi
 
 %preun
-%systemd_preun %{name}.service
-
-%postun
-%systemd_postun_with_restart %{name}.service
-if [ $1 -eq 0 ] ; then
-    # Package removal, not upgrade
-    userdel %{name} >/dev/null 2>&1 || :
-    groupdel %{name} >/dev/null 2>&1 || :
+# Stop service before uninstall
+if [ $1 -eq 0 ]; then
+    systemctl stop sssonector.service
+    systemctl disable sssonector.service
 fi
 
-%files
-%license LICENSE
-%doc README.md
-%{_bindir}/%{name}
-%dir %{_sysconfdir}/%{name}
-%dir %attr(750,%{name},%{name}) %{_sysconfdir}/%{name}/certs
-%config(noreplace) %{_sysconfdir}/%{name}/*.yaml.example
-%{_unitdir}/%{name}.service
-%dir %attr(750,%{name},%{name}) %{_localstatedir}/log/%{name}
-%dir %attr(750,%{name},%{name}) %{_sharedstatedir}/%{name}
+%postun
+# Remove user and group on uninstall
+if [ $1 -eq 0 ]; then
+    userdel sssonector
+    groupdel sssonector
+fi
+
+# Reload systemd
+systemctl daemon-reload
 
 %changelog
-* Mon Jan 29 2025 o3willard-AI <o3willard@yahoo.com> - 1.0.0-1
-- Initial package release
+* Tue Jan 29 2025 O3Willard <support@o3willard.com> - 1.0.0-1
+- Initial release

@@ -3,10 +3,19 @@ Version: 1.0.0
 Section: net
 Priority: optional
 Architecture: amd64
-Depends: openssl
-Maintainer: O3Willard AI <support@o3willard.ai>
-Description: SSL Tunnel Application for Secure Network Connectivity
- SSSonector is a lightweight, cross-platform SSL tunnel application
- that creates secure network connections between remote locations.
- Features include TLS 1.3 support, bandwidth throttling, SNMP
- monitoring, and automatic reconnection capabilities.
+Essential: no
+Depends: openssl, systemd
+Maintainer: O3Willard <support@o3willard.com>
+Description: Secure SSL Tunnel Service
+ SSSonector is a secure SSL tunnel service for remote office connectivity.
+ .
+ Features:
+  * TLS 1.3 with EU-exportable cipher suites
+  * Virtual network interfaces
+  * Persistent tunnel connections
+  * Automatic reconnection
+  * Bandwidth throttling
+  * SNMP monitoring
+  * Cross-platform support (Linux, Windows, macOS)
+Homepage: https://github.com/o3willard-AI/SSSonector
+Installed-Size: 20000

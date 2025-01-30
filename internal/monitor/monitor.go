@@ -1,73 +1,87 @@
 package monitor
 
 import (
-	"fmt"
 	"sync"
+	"time"
 
 	"github.com/o3willard-AI/SSSonector/internal/config"
 	"go.uber.org/zap"
 )
 
-// Monitor handles system monitoring and telemetry
+// Monitor handles monitoring and metrics collection
 type Monitor struct {
-	logger *zap.Logger
-	config *config.MonitorConfig
-	snmp   *SNMPAgent
-	wg     sync.WaitGroup
+	logger    *zap.Logger
+	config    *config.MonitorConfig
+	snmpAgent *SNMPAgent
+	mu        sync.RWMutex
+	metrics   *Metrics
+	startTime time.Time
 }
 
 // NewMonitor creates a new monitor instance
 func NewMonitor(logger *zap.Logger, cfg *config.MonitorConfig) (*Monitor, error) {
 	m := &Monitor{
-		logger: logger,
-		config: cfg,
+		logger:    logger,
+		config:    cfg,
+		startTime: time.Now(),
+		metrics:   NewMetrics(),
 	}
 
 	if cfg.SNMPEnabled {
-		snmp, err := NewSNMPAgent(logger, cfg)
+		agent, err := NewSNMPAgent(logger, cfg)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create SNMP agent: %w", err)
+			return nil, err
 		}
-		m.snmp = snmp
+		m.snmpAgent = agent
 	}
 
 	return m, nil
 }
 
-// Start starts the monitoring services
+// Start starts the monitoring
 func (m *Monitor) Start() error {
-	if m.snmp != nil {
-		m.wg.Add(1)
-		go func() {
-			defer m.wg.Done()
-			if err := m.snmp.Start(); err != nil {
-				m.logger.Error("SNMP agent error",
-					zap.Error(err),
-				)
-			}
-		}()
-	}
-
-	return nil
-}
-
-// Close stops all monitoring services
-func (m *Monitor) Close() error {
-	if m.snmp != nil {
-		if err := m.snmp.Stop(); err != nil {
-			m.logger.Error("Failed to stop SNMP agent",
-				zap.Error(err),
-			)
+	if m.snmpAgent != nil {
+		if err := m.snmpAgent.Start(); err != nil {
+			return err
 		}
 	}
-
-	m.wg.Wait()
 	return nil
 }
 
-// UpdateStats updates monitoring statistics
-func (m *Monitor) UpdateStats(stats interface{}) {
-	if m.snmp != nil {
-		m.snmp.UpdateStats(stats)
+// Stop stops the monitoring
+func (m *Monitor) Stop() error {
+	if m.snmpAgent != nil {
+		if err := m.snmpAgent.Stop(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// UpdateMetrics updates monitoring metrics
+func (m *Monitor) UpdateMetrics(bytesReceived, bytesSent uint64, connections int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.metrics.BytesReceived = bytesReceived
+	m.metrics.BytesSent = bytesSent
+	m.metrics.Connections = connections
+	m.metrics.Uptime = time.Since(m.startTime).Seconds()
+
+	if m.snmpAgent != nil {
+		m.snmpAgent.UpdateMetrics(bytesReceived, bytesSent, connections)
+	}
+}
+
+// GetMetrics returns current metrics
+func (m *Monitor) GetMetrics() *Metrics {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	return &Metrics{
+		BytesReceived: m.metrics.BytesReceived,
+		BytesSent:     m.metrics.BytesSent,
+		Connections:   m.metrics.Connections,
+		Uptime:        m.metrics.Uptime,
 	}
 }

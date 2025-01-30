@@ -4,37 +4,60 @@
 <dict>
     <key>Label</key>
     <string>com.o3willard.sssonector</string>
+    
     <key>ProgramArguments</key>
     <array>
         <string>/usr/local/bin/sssonector</string>
-        <string>--config</string>
+        <string>-config</string>
         <string>/etc/sssonector/config.yaml</string>
     </array>
+    
     <key>RunAtLoad</key>
     <true/>
+    
     <key>KeepAlive</key>
     <true/>
+    
     <key>StandardOutPath</key>
-    <string>/var/log/sssonector/service.log</string>
+    <string>/var/log/sssonector/sssonector.log</string>
+    
     <key>StandardErrorPath</key>
-    <string>/var/log/sssonector/service.log</string>
+    <string>/var/log/sssonector/sssonector.err</string>
+    
+    <key>UserName</key>
+    <string>root</string>
+    
+    <key>GroupName</key>
+    <string>wheel</string>
+    
     <key>WorkingDirectory</key>
-    <string>/var/lib/sssonector</string>
+    <string>/etc/sssonector</string>
+    
     <key>ProcessType</key>
     <string>Background</string>
-    <key>ThrottleInterval</key>
-    <integer>5</integer>
+    
     <key>Nice</key>
     <integer>0</integer>
+    
     <key>HardResourceLimits</key>
     <dict>
         <key>NumberOfFiles</key>
-        <integer>4096</integer>
+        <integer>65535</integer>
     </dict>
+    
     <key>SoftResourceLimits</key>
     <dict>
         <key>NumberOfFiles</key>
-        <integer>4096</integer>
+        <integer>65535</integer>
+    </dict>
+    
+    <key>ThrottleInterval</key>
+    <integer>5</integer>
+    
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     </dict>
 </dict>
 </plist>
