@@ -127,7 +127,7 @@ This guide provides step-by-step instructions for setting up a test environment 
 1. Install SSSonector:
    ```bash
    # Download package
-   wget https://github.com/o3willard-AI/SSSonector/releases/latest/download/sssonector_1.0.0_amd64.deb
+   wget https://github.com/o3willard-AI/SSSonector/dist/v1.0.0/sssonector_1.0.0_amd64.deb
 
    # Install
    sudo dpkg -i sssonector_1.0.0_amd64.deb
@@ -165,7 +165,7 @@ This guide provides step-by-step instructions for setting up a test environment 
 1. Install SSSonector:
    ```bash
    # Download package
-   wget https://github.com/o3willard-AI/SSSonector/releases/latest/download/sssonector_1.0.0_amd64.deb
+   wget https://github.com/o3willard-AI/SSSonector/dist/v1.0.0/sssonector_1.0.0_amd64.deb
 
    # Install
    sudo dpkg -i sssonector_1.0.0_amd64.deb
