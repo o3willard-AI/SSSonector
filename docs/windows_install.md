@@ -14,14 +14,14 @@ This guide provides detailed instructions for installing and configuring SSSonec
 ### Method 1: Using Windows Installer (Recommended)
 
 1. Download the installer:
-   - Visit the [releases page](https://github.com/o3willard-AI/SSSonector/releases)
-   - Download `SSSonector-1.0.0-windows-amd64.exe`
+   - Visit the [dist folder](https://github.com/o3willard-AI/SSSonector/dist/v1.0.0)
+   - Download `sssonector-1.0.0-setup.exe`
 
 2. Run the installer:
    ```powershell
    # Right-click the installer and select "Run as administrator"
    # Or from PowerShell (Admin):
-   Start-Process -FilePath "SSSonector-1.0.0-windows-amd64.exe" -Verb RunAs
+   Start-Process -FilePath "sssonector-1.0.0-setup.exe" -Verb RunAs
    ```
 
 3. Follow the installation wizard:

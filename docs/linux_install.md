@@ -6,7 +6,7 @@ This guide covers installation instructions for various Linux distributions.
 
 ```bash
 # Download the package
-wget https://github.com/o3willard-AI/SSSonector/releases/download/v1.0.0/sssonector_1.0.0_amd64.deb
+wget https://github.com/o3willard-AI/SSSonector/dist/v1.0.0/sssonector_1.0.0_amd64.deb
 
 # Install the package
 sudo dpkg -i sssonector_1.0.0_amd64.deb
@@ -19,7 +19,7 @@ sudo apt-get install -f  # Install dependencies if needed
 
 ```bash
 # Download the package
-wget https://github.com/o3willard-AI/SSSonector/releases/download/v1.0.0/sssonector-1.0.0-1.el8.x86_64.rpm
+wget https://github.com/o3willard-AI/SSSonector/dist/v1.0.0/sssonector-1.0.0-1.el8.x86_64.rpm
 
 # Install the package
 sudo dnf install sssonector-1.0.0-1.el8.x86_64.rpm

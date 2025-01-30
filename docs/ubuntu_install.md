@@ -50,9 +50,9 @@ sudo apt upgrade -y
 sudo apt install -y openssl
 ```
 
-3. Download the latest release:
+3. Download the latest version:
 ```bash
-wget https://github.com/o3willard-AI/SSSonector/releases/latest/download/sssonector_1.0.0_amd64.deb
+wget https://github.com/o3willard-AI/SSSonector/dist/v1.0.0/sssonector_1.0.0_amd64.deb
 ```
 
 4. Install the package:
