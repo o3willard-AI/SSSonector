@@ -136,7 +136,17 @@ This guide provides step-by-step instructions for setting up a test environment 
 
 2. Generate certificates:
    ```bash
-   sudo sssonector-cli generate-certs
+   # Create certificates directory if it doesn't exist
+   sudo mkdir -p /etc/sssonector/certs
+   cd /etc/sssonector/certs
+   
+   # Generate server and client certificates
+   sudo openssl req -x509 -newkey rsa:4096 -keyout server.key -out server.crt -days 365 -nodes -subj "/CN=sssonector-server"
+   sudo openssl req -x509 -newkey rsa:4096 -keyout client.key -out client.crt -days 365 -nodes -subj "/CN=sssonector-client"
+   
+   # Set proper permissions
+   sudo chmod 600 *.key
+   sudo chmod 644 *.crt
    ```
 
 3. Configure server:
@@ -216,7 +226,7 @@ This guide provides step-by-step instructions for setting up a test environment 
    ping 10.0.0.1
 
    # Check connection details
-   sssonector-cli status
+   sudo systemctl status sssonector
    ```
 
 ### Performance Testing
