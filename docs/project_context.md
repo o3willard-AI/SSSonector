@@ -1,344 +1,185 @@
-SSSonector Project Context
+# SSSonector Project Context
 
 ## Project Overview
+SSSonector is a cross-platform SSL tunneling application that provides secure network connectivity between systems. It supports both server and client modes, with configurable bandwidth controls and comprehensive monitoring capabilities.
 
-SSSonector is a cross-platform SSL tunneling application written in Go that enables secure communication between remote office locations through firewalls. The application can operate in both client and server modes creating persistent SSL tunnels for data transport.
+## Core Components
 
-### Key Features
+### 1. Network Interface Management
+- Platform-specific virtual network interfaces (TUN/TAP)
+- Implementations for Linux, Windows, and macOS
+- Automatic interface creation and cleanup
+- MTU configuration support
 
-- TLS 1.3 with EU-exportable cipher suites
-- Virtual network interfaces for transparent routing
-- Persistent tunnel connections with automatic reconnection
-- Bandwidth throttling capabilities
-- SNMP monitoring and telemetry
-- Cross-platform support (Linux Windows macOS)
-- Comprehensive logging and monitoring
-- Systemd/Launchd/Windows Service integration
-- Certificate management and rotation
+### 2. SSL/TLS Implementation
+- Certificate-based authentication
+- Support for CA, server, and client certificates
+- Secure key management
+- Certificate validation and verification
 
-## Technical Architecture
+### 3. Bandwidth Control
+- Configurable upload and download throttling
+- Per-connection bandwidth limits
+- Real-time bandwidth monitoring
+- Default limits of 10 Mbps for both directions
 
-### Core Components
-
-1. Network Adapters
-- Virtual network interface creation and management
-- Platform-specific implementations (Linux Windows macOS)
-- Private IP space configuration (10.x.x.x 192.168.x.x)
-
-2. Tunnel Management
-- TLS 1.3 implementation
-- Certificate handling
-- Connection persistence
-- Automatic reconnection logic
-
-3. Configuration Management
+### 4. Configuration System
 - YAML-based configuration
-- Server/Client mode settings
-- Network interface settings
-- Certificate paths
-- Bandwidth throttling settings
+- Support for both server and client modes
+- Flexible certificate path configuration
+- Monitoring and logging settings
 
-4. Monitoring & Telemetry
-- SNMP integration
-- Logging system
-- Performance metrics
-- Connection status tracking
+## Recent Updates (as of January 31, 2025)
 
-### Directory Structure
+### Core Functionality Implementation
+1. Server and Client Modes
+   - Fully implemented server mode with client acceptance
+   - Client mode with automatic reconnection
+   - Support for multiple simultaneous clients
+   - Proper connection handling and cleanup
 
-```
-SSSonector/
-├── cmd/
-│   └── tunnel/           # Main application entry point
-├── internal/
-│   ├── adapter/          # Virtual network interface implementations
-│   ├── cert/            # Certificate management
-│   ├── config/          # Configuration handling
-│   ├── monitor/         # Monitoring and telemetry
-│   ├── throttle/        # Bandwidth throttling
-│   └── tunnel/          # Core tunneling logic
-├── configs/             # Configuration templates
-├── dist/                # Release artifacts
-│   └── v1.0.0/         # Version-specific release files
-├── docs/               # Documentation
-│   ├── installation.md # Installation guide
-│   └── macos_build.md # macOS build instructions
-├── installers/         # Platform-specific installers
-│   └── windows.nsi    # NSIS installer script
-└── scripts/            # Build and maintenance scripts
-```
+2. Cross-Platform Support
+   - Linux: Full TUN/TAP support with ip command integration
+   - Windows: TAP driver integration
+   - macOS: TUN device support
+   - Platform-specific network configuration
 
-## Build System
+3. Performance Features
+   - Bandwidth throttling implementation
+   - Connection monitoring
+   - Statistics collection
+   - Resource cleanup
 
-### Prerequisites
-- Go 1.21 or later (required for atomic operations and newer stdlib features)
-- Platform-specific build tools:
-  - Windows: NSIS (for creating Windows installers)
-  - Linux: dpkg-deb (for .deb packages), rpmbuild (for .rpm packages)
-  - macOS: pkgbuild (for .pkg installers)
-
-### Build Process
-1. Generate certificates (if needed)
-2. Compile platform-specific binaries using the Makefile:
-   ```bash
-   make build  # Builds binaries for all platforms
+### Configuration Updates
+1. New Configuration Options
+   ```yaml
+   tunnel:
+     uploadKbps: 10240    # 10 Mbps
+     downloadKbps: 10240  # 10 Mbps
    ```
-3. Create installers:
-   ```bash
-   make package-deb     # Create Debian package
-   make package-rpm     # Create RPM package
-   make package-windows # Create Windows installer
-   make package-macos   # Create macOS package (requires macOS)
-   # Or build all:
-   make package
+
+2. Enhanced Certificate Management
+   - Support for CA certificates
+   - Proper certificate validation
+   - Secure key file handling
+
+3. Monitoring Configuration
+   ```yaml
+   monitor:
+     logFile: "/var/log/sssonector/monitor.log"
+     snmpEnabled: false
+     snmpPort: 161
+     snmpCommunity: "public"
    ```
-4. Package documentation and artifacts
 
-### Release Process
-1. Build all installers using the Makefile
-2. Generate SHA256 checksums for verification
-3. Create GitHub release with version tag
-4. Upload installer packages to GitHub release
-5. Update installation documentation with new download links
+## Package Management
 
-## GitHub Integration
-
-### Release Structure
-- All releases are tagged (e.g., v1.0.0)
-- Release assets include:
+### Build System
+- Cross-platform build support
+- Automated package generation
+- Platform-specific installers:
   - Linux: .deb and .rpm packages
-  - Windows: NSIS installer (.exe)
-  - macOS: Build instructions (pending community contribution)
-  - SHA256 checksums file
-  - Release notes
+  - Windows: NSIS-based installer
+  - macOS: pkg installer structure
 
-### File Handling
-- Large binary files (installers) are distributed through GitHub Releases
-- Build artifacts are excluded via .gitignore
-- Documentation and source files are version controlled
-- Release assets have consistent naming:
-  - sssonector_${VERSION}_amd64.deb
-  - sssonector-${VERSION}-1.x86_64.rpm
-  - sssonector-${VERSION}-setup.exe
-  - sssonector-${VERSION}.pkg (macOS, pending)
-
-## Deployment
-
-### Installation Methods
-
-1. Linux (Debian/Ubuntu)
-```bash
-wget https://github.com/o3willard-AI/SSSonector/releases/download/v${VERSION}/sssonector_${VERSION}_amd64.deb
-sudo dpkg -i sssonector_${VERSION}_amd64.deb
-```
-
-2. Linux (RHEL/CentOS)
-```bash
-wget https://github.com/o3willard-AI/SSSonector/releases/download/v${VERSION}/sssonector-${VERSION}-1.x86_64.rpm
-sudo yum install sssonector-${VERSION}-1.x86_64.rpm
-```
-
-3. Windows
-- Download installer from GitHub releases page
-- Run with administrator privileges
-
-4. macOS
-- Follow build instructions in docs/macos_build.md
-- Community contributions welcome for official packages
-
-### Configuration
-
-#### Server Mode
-```yaml
-mode: "server"
-network:
-  interface: "tun0"
-  address: "10.0.0.1/24"
-  mtu: 1500
-tunnel:
-  cert_file: "/etc/sssonector/certs/server.crt"
-  key_file: "/etc/sssonector/certs/server.key"
-  ca_file: "/etc/sssonector/certs/ca.crt"
-  listen_address: "0.0.0.0"
-  listen_port: 8443
-```
-
-#### Client Mode
-```yaml
-mode: "client"
-network:
-  interface: "tun0"
-  address: "10.0.0.2/24"
-  mtu: 1500
-tunnel:
-  cert_file: "/etc/sssonector/certs/client.crt"
-  key_file: "/etc/sssonector/certs/client.key"
-  ca_file: "/etc/sssonector/certs/ca.crt"
-  server_address: "tunnel.example.com"
-  server_port: 8443
-```
-
-## Testing
-
-### VirtualBox Testing Environment
-- Two VMs: server and client
-- Host-only network for inter-VM communication
-- NAT for internet access
-- Detailed setup in docs/virtualbox_testing.md
-
-### Performance Testing
-```bash
-# Install iperf3 on both VMs
-sudo apt install iperf3
-
-# On server
-iperf3 -s
-
-# On client
-iperf3 -c 10.0.0.1 -t 30
-```
+### Installation
+- Automated service installation
+- Configuration file deployment
+- Certificate directory setup
+- Proper permissions management
 
 ## Development Guidelines
 
-### Code Organization
-1. Platform-specific code in separate files
-2. Interface-based design for modularity
-3. Clear separation of concerns
-4. Comprehensive error handling
-5. Detailed logging
+### Code Structure
+1. Main Components:
+   - cmd/tunnel: Main application entry point
+   - internal/adapter: Platform-specific network interfaces
+   - internal/cert: Certificate management
+   - internal/config: Configuration handling
+   - internal/tunnel: Core tunneling logic
 
-### Testing Requirements
-1. Unit tests for core components
-2. Integration tests for tunnel functionality
-3. Platform-specific testing
-4. Performance benchmarks
+2. Platform-Specific Code:
+   - interface_linux.go
+   - interface_windows.go
+   - interface_darwin.go
 
-### Documentation Standards
-1. Clear code comments
-2. Up-to-date API documentation
-3. Comprehensive user guides
-4. Detailed installation instructions
+### Best Practices
+1. Error Handling:
+   - Proper error wrapping
+   - Detailed error messages
+   - Graceful failure handling
 
-## Future Enhancements
+2. Resource Management:
+   - Proper cleanup of network interfaces
+   - Certificate file handling
+   - Memory management
 
-1. Additional Platform Support
-- ARM architecture support
-- Container-based deployment
-- Cloud platform integration
+3. Security:
+   - Secure certificate handling
+   - Proper file permissions
+   - Network security best practices
 
-2. Feature Enhancements
-- Multiple tunnel support
-- Advanced routing capabilities
-- Enhanced monitoring dashboard
-- Automated certificate rotation
+## Testing
 
-3. Performance Improvements
-- Optimized packet handling
-- Reduced memory footprint
-- Improved reconnection logic
+### Test Environment
+- VirtualBox-based testing environment
+- Cross-platform testing requirements
+- Network isolation for security testing
 
-## Using This Context
+### Test Cases
+1. Basic Functionality:
+   - Server/client connection
+   - Certificate validation
+   - Bandwidth control
 
-When working with this project in AI-assisted development:
+2. Error Conditions:
+   - Network failures
+   - Invalid certificates
+   - Resource exhaustion
 
-1. Initial Setup
-- Share this context document at the start of each new task
-- Highlight specific sections relevant to the task
+3. Performance:
+   - Bandwidth limits
+   - Multiple clients
+   - Resource usage
 
-2. Task Structure
-- Begin with clear task objectives
-- Reference relevant sections from this document
-- Include any additional context specific to the task
+## Known Issues and Limitations
+1. macOS Package:
+   - Final package must be built on macOS system
+   - Requires additional signing steps
 
-3. Implementation
-- Follow existing patterns and conventions
-- Maintain consistency with current architecture
-- Update documentation as needed
+2. Windows TAP Driver:
+   - Requires administrator privileges
+   - May need manual driver installation
 
-4. Testing
-- Follow established testing patterns
-- Use VirtualBox environment for validation
-- Verify cross-platform compatibility
+## Future Improvements
+1. Planned Features:
+   - UDP tunnel support
+   - IPv6 support
+   - Dynamic reconfiguration
+   - Web-based management interface
 
-5. Documentation
-- Update this context document for significant changes
-- Maintain platform-specific documentation
-- Keep installation guides current
+2. Performance Optimizations:
+   - Connection pooling
+   - Improved buffer management
+   - Protocol optimizations
 
-Example Task Format:
-```markdown
-Task: [Brief description]
+## Maintenance
+1. Regular Tasks:
+   - Certificate rotation
+   - Log rotation
+   - Performance monitoring
+   - Security updates
 
-Relevant Context:
-- [Section from this document]
-- [Additional specific details]
+2. Troubleshooting:
+   - Log analysis
+   - Network diagnostics
+   - Performance profiling
 
-Requirements:
-1. [Requirement 1]
-2. [Requirement 2]
-...
+## Documentation
+- Installation guides for all platforms
+- Configuration reference
+- API documentation
+- Troubleshooting guide
+- Release notes
 
-Expected Outcome:
-- [What success looks like]
-```
-
-This context document should be treated as a living document and updated as the project evolves.
-
-## Recent Changes and Improvements
-
-### Download and Distribution Changes (January 2025)
-
-1. GitHub Releases Integration
-- All installer packages are now exclusively distributed through GitHub Releases
-- Direct repository downloads (via /blob/main/dist/...) have been deprecated
-- Binary files are no longer stored in the repository's dist directory
-- SHA256 checksums are included with each release
-
-2. Download URL Format
-- Correct format: `https://github.com/o3willard-AI/SSSonector/releases/download/v${VERSION}/[package-name]`
-- Example: `https://github.com/o3willard-AI/SSSonector/releases/download/v1.0.0/sssonector_1.0.0_amd64.deb`
-- This format ensures:
-  * Correct filename preservation when downloading
-  * Compatibility with wget and other download tools
-  * Proper version tracking and distribution
-
-3. Documentation Updates
-- All documentation now uses consistent GitHub Releases URLs
-- Added download verification steps
-- Added warnings about correct URL format usage
-- Updated installation guides with proper download instructions
-
-### File Organization
-
-1. Repository Structure
-- Source code and documentation in version control
-- Binary files (installers) in GitHub Releases
-- Build artifacts excluded via .gitignore
-- Clear separation between source and distribution files
-
-2. Best Practices
-- Always use GitHub Releases URLs for downloads
-- Verify downloads using provided SHA256 checksums
-- Follow platform-specific installation guides
-- Reference this context document for project standards
-
-### Important Notes for AI Development
-
-1. URL Handling
-- Always use GitHub Releases URLs in documentation and scripts
-- Include download verification steps
-- Add clear warnings about URL format when documenting downloads
-
-2. File Management
-- Do not commit binary files to the repository
-- Use GitHub Releases for distributing installers
-- Keep documentation in sync with current practices
-- Update this context document when making significant changes
-
-3. Testing Considerations
-- Verify download URLs work with wget and curl
-- Check SHA256 checksums after downloads
-- Test installation procedures on all supported platforms
-- Ensure documentation reflects actual user experience
-
-This section will be updated as new changes and improvements are made to the project.
+This context document should be updated with any significant changes to the project structure, features, or best practices.
