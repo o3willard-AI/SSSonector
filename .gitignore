@@ -27,7 +27,5 @@ vendor/
 .DS_Store
 Thumbs.db
 
-# Allow dist/v1.0.0 directory
-!dist/
-!dist/v1.0.0/
-!dist/v1.0.0/*
+# Distribution artifacts
+dist/
