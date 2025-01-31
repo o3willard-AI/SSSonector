@@ -37,7 +37,7 @@ SSSonector is a secure SSL tunnel service designed for remote office connectivit
 #### Linux (Debian/Ubuntu)
 ```bash
 # Download the latest .deb package
-wget https://github.com/o3willard-AI/SSSonector/releases/latest/download/sssonector_1.0.0_amd64.deb
+wget https://github.com/o3willard-AI/SSSonector/dist/v1.0.0/sssonector_1.0.0_amd64.deb
 
 # Install the package
 sudo dpkg -i sssonector_1.0.0_amd64.deb
@@ -47,14 +47,14 @@ sudo apt-get install -f
 #### macOS
 ```bash
 # Download the latest .pkg installer
-curl -LO https://github.com/o3willard-AI/SSSonector/releases/latest/download/sssonector-1.0.0.pkg
+curl -LO https://github.com/o3willard-AI/SSSonector/dist/v1.0.0/sssonector-1.0.0.pkg
 
 # Install the package
 sudo installer -pkg sssonector-1.0.0.pkg -target /
 ```
 
 #### Windows
-1. Download the latest installer from the releases page
+1. Download the latest installer from the dist/v1.0.0 folder
 2. Run the installer with administrator privileges
 3. Follow the installation wizard
 

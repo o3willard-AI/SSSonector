@@ -33,7 +33,7 @@ cat > "$DOCS_DIR/linux_install.md" << EOF
 ### Debian/Ubuntu
 \`\`\`bash
 # Download the package
-wget https://github.com/o3willard-AI/SSSonector/releases/download/v${VERSION}/sssonector_${VERSION}_amd64.deb
+wget https://github.com/o3willard-AI/SSSonector/dist/v${VERSION}/sssonector_${VERSION}_amd64.deb
 
 # Install dependencies
 sudo apt-get update
@@ -47,7 +47,7 @@ sudo apt-get install -f
 ### RHEL/CentOS
 \`\`\`bash
 # Download the package
-wget https://github.com/o3willard-AI/SSSonector/releases/download/v${VERSION}/sssonector-${VERSION}-1.x86_64.rpm
+wget https://github.com/o3willard-AI/SSSonector/dist/v${VERSION}/sssonector-${VERSION}-1.x86_64.rpm
 
 # Install package
 sudo yum install sssonector-${VERSION}-1.x86_64.rpm
@@ -100,7 +100,7 @@ cat > "$DOCS_DIR/macos_install.md" << EOF
 
 1. Download the installer:
 \`\`\`bash
-curl -LO https://github.com/o3willard-AI/SSSonector/releases/download/v${VERSION}/sssonector-${VERSION}.pkg
+curl -LO https://github.com/o3willard-AI/SSSonector/dist/v${VERSION}/sssonector-${VERSION}.pkg
 \`\`\`
 
 2. Install the package:
@@ -154,7 +154,7 @@ cat > "$DOCS_DIR/windows_install.md" << EOF
 ## Installation
 
 1. Download the installer from:
-   https://github.com/o3willard-AI/SSSonector/releases/download/v${VERSION}/sssonector-${VERSION}-setup.exe
+   https://github.com/o3willard-AI/SSSonector/dist/v${VERSION}/sssonector-${VERSION}-setup.exe
 
 2. Run the installer with administrator privileges
 
