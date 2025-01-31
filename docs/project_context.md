@@ -35,7 +35,7 @@ SSSonector is a cross-platform SSL tunneling application that provides secure ne
 - Monitoring and logging settings
 - Bandwidth control settings
 
-## Recent Updates (as of January 31, 2025)
+## Recent Updates (Version 1.0.0 - January 31, 2025)
 
 ### Core Functionality Implementation
 1. Server and Client Modes
@@ -168,6 +168,12 @@ SSSonector is a cross-platform SSL tunneling application that provides secure ne
 2. Windows TAP Driver:
    - Requires administrator privileges
    - May need manual driver installation
+   - Some antivirus software may require manual whitelisting
+
+3. Interface Management:
+   - Race conditions in tunnel initialization have been fixed
+   - Improved error handling for interface operations
+   - Enhanced packet handling in tunnel transfer
 
 ## Future Improvements
 1. Planned Features:
