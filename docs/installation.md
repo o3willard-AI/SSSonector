@@ -2,7 +2,9 @@
 
 ## Download Installers
 
-All installer packages are available on the [releases page](https://github.com/o3willard-AI/SSSonector/releases/tag/v1.0.0):
+⚠️ **Important:** All installer packages are distributed through [GitHub Releases](https://github.com/o3willard-AI/SSSonector/releases/tag/v1.0.0). Do not attempt to download installers directly from repository URLs (like `/blob/main/dist/...`) as these URLs will not work with wget or other download tools.
+
+Available installers:
 
 - Linux (Debian/Ubuntu): `sssonector_1.0.0_amd64.deb`
 - Linux (RHEL/CentOS): `sssonector-1.0.0-1.x86_64.rpm`
@@ -13,13 +15,18 @@ All installer packages are available on the [releases page](https://github.com/o
 
 ### Linux (Debian/Ubuntu)
 ```bash
-# Download the package
+# Download the package (make sure to use the GitHub Releases URL)
 wget https://github.com/o3willard-AI/SSSonector/releases/download/v1.0.0/sssonector_1.0.0_amd64.deb
+
+# Verify the download URL worked (should show sssonector_1.0.0_amd64.deb)
+ls sssonector_1.0.0_amd64.deb
 
 # Install the package
 sudo dpkg -i sssonector_1.0.0_amd64.deb
 sudo apt-get install -f  # Install any missing dependencies
 ```
+
+Note: If wget fails with a 404 error, double-check that you're using the GitHub Releases URL format shown above, not a repository URL.
 
 ### Linux (RHEL/CentOS)
 ```bash
