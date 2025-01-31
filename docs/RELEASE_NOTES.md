@@ -14,15 +14,17 @@
 
 ## Installation
 
+⚠️ **Important:** All installer packages are distributed through [GitHub Releases](https://github.com/o3willard-AI/SSSonector/releases/tag/v1.0.0). Always use the GitHub Releases URLs for downloading packages.
+
 ### Linux (Debian/Ubuntu)
 ```bash
-wget https://github.com/o3willard-AI/SSSonector/dist/v1.0.0/sssonector_1.0.0_amd64.deb
+wget https://github.com/o3willard-AI/SSSonector/releases/download/v1.0.0/sssonector_1.0.0_amd64.deb
 sudo dpkg -i sssonector_1.0.0_amd64.deb
 sudo apt-get install -f
 ```
 
 ### Windows
-1. Download sssonector-1.0.0-setup.exe from the dist/v1.0.0 folder
+1. Download `sssonector-1.0.0-setup.exe` from the [releases page](https://github.com/o3willard-AI/SSSonector/releases/tag/v1.0.0)
 2. Run the installer with administrator privileges
 3. Follow the installation wizard
 
