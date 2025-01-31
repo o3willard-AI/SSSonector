@@ -2,11 +2,16 @@
 
 This guide covers installation instructions for various Linux distributions.
 
+⚠️ **Important:** All installer packages are distributed through [GitHub Releases](https://github.com/o3willard-AI/SSSonector/releases/tag/v1.0.0). Always use the GitHub Releases URLs for downloading packages. Do not use repository URLs (like `/blob/main/dist/...`) as they will not work with wget or other download tools.
+
 ## Debian/Ubuntu
 
 ```bash
 # Download the package
-wget https://github.com/o3willard-AI/SSSonector/dist/v1.0.0/sssonector_1.0.0_amd64.deb
+wget https://github.com/o3willard-AI/SSSonector/releases/download/v1.0.0/sssonector_1.0.0_amd64.deb
+
+# Verify the download URL worked (should show sssonector_1.0.0_amd64.deb)
+ls sssonector_1.0.0_amd64.deb
 
 # Install the package
 sudo dpkg -i sssonector_1.0.0_amd64.deb
@@ -19,10 +24,13 @@ sudo apt-get install -f  # Install dependencies if needed
 
 ```bash
 # Download the package
-wget https://github.com/o3willard-AI/SSSonector/dist/v1.0.0/sssonector-1.0.0-1.el8.x86_64.rpm
+wget https://github.com/o3willard-AI/SSSonector/releases/download/v1.0.0/sssonector-1.0.0-1.x86_64.rpm
+
+# Verify the download URL worked (should show sssonector-1.0.0-1.x86_64.rpm)
+ls sssonector-1.0.0-1.x86_64.rpm
 
 # Install the package
-sudo dnf install sssonector-1.0.0-1.el8.x86_64.rpm
+sudo dnf install sssonector-1.0.0-1.x86_64.rpm
 ```
 
 ### From Source

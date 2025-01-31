@@ -13,9 +13,21 @@ This guide provides detailed instructions for installing and configuring SSSonec
 
 ### Method 1: Using Windows Installer (Recommended)
 
+⚠️ **Important:** The installer package is distributed through [GitHub Releases](https://github.com/o3willard-AI/SSSonector/releases/tag/v1.0.0). Always use the GitHub Releases URL for downloading the installer.
+
 1. Download the installer:
-   - Visit the [dist folder](https://github.com/o3willard-AI/SSSonector/dist/v1.0.0)
+   - Visit the [releases page](https://github.com/o3willard-AI/SSSonector/releases/tag/v1.0.0)
    - Download `sssonector-1.0.0-setup.exe`
+   - Or use PowerShell:
+     ```powershell
+     # Download installer using the GitHub Releases URL
+     Invoke-WebRequest -Uri "https://github.com/o3willard-AI/SSSonector/releases/download/v1.0.0/sssonector-1.0.0-setup.exe" -OutFile "sssonector-1.0.0-setup.exe"
+     
+     # Verify the download
+     if (Test-Path "sssonector-1.0.0-setup.exe") {
+         Write-Host "Installer downloaded successfully"
+     }
+     ```
 
 2. Run the installer:
    ```powershell
