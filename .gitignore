@@ -29,3 +29,16 @@ Thumbs.db
 
 # Distribution artifacts
 dist/
+
+# Certificate files
+certs/
+*.crt
+*.key
+
+# Log files
+logs/
+*.log
+
+# Release artifacts
+release.json
+go*.tar.gz
