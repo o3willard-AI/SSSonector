@@ -15,6 +15,7 @@ import (
 
 var (
 configPath string
+Version    string = "development"
 )
 
 func init() {
@@ -41,7 +42,13 @@ zap.Error(err),
 )
 }
 
+// Override mode from build tag if not explicitly set
+if cfg.Mode == "" {
+cfg.Mode = defaultMode
+}
+
 logger.Info("Starting SSSonector",
+zap.String("version", Version),
 zap.String("mode", cfg.Mode),
 zap.String("interface", cfg.Network.Interface),
 )
@@ -120,7 +127,16 @@ Address: cfg.Network.Address,
 MTU:     cfg.Network.MTU,
 })
 if err != nil {
-return nil, fmt.Errorf("failed to create interface: %w", err)
+return nil, fmt.Errorf("failed to create interface manager: %w", err)
+}
+
+// Create and configure the interface
+if err := ifaceManager.Create(&adapter.Config{
+Name:    cfg.Network.Interface,
+Address: cfg.Network.Address,
+MTU:     cfg.Network.MTU,
+}); err != nil {
+return nil, fmt.Errorf("failed to create and configure interface: %w", err)
 }
 
 // Create tunnel
@@ -139,7 +155,16 @@ Address: cfg.Network.Address,
 MTU:     cfg.Network.MTU,
 })
 if err != nil {
-return nil, fmt.Errorf("failed to create interface: %w", err)
+return nil, fmt.Errorf("failed to create interface manager: %w", err)
+}
+
+// Create and configure the interface
+if err := ifaceManager.Create(&adapter.Config{
+Name:    cfg.Network.Interface,
+Address: cfg.Network.Address,
+MTU:     cfg.Network.MTU,
+}); err != nil {
+return nil, fmt.Errorf("failed to create and configure interface: %w", err)
 }
 
 // Create tunnel

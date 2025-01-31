@@ -1,15 +1,18 @@
 # SSSonector
 
-SSSonector is a secure SSL tunnel service designed for remote office connectivity. It creates persistent TLS 1.3 tunnels with EU-exportable cipher suites, enabling secure communication between remote locations without requiring inbound firewall rules.
+SSSonector is a secure SSL tunnel service designed for remote office connectivity. It creates persistent TLS 1.3 tunnels with EU-exportable cipher suites enabling secure communication between remote locations without requiring inbound firewall rules.
 
 ## Features
 
 - TLS 1.3 with EU-exportable cipher suites
-- Virtual network interfaces for transparent routing
+- Thread-safe virtual network interfaces for all platforms
+- Bandwidth throttling with upload/download controls
+- Separate server and client binaries
 - Persistent tunnel connections with automatic reconnection
-- Bandwidth throttling capabilities
-- SNMP monitoring and telemetry
-- Cross-platform support (Linux, Windows, macOS)
+- Cross-platform support:
+  - Linux: Native TUN with ICMP handling
+  - Windows: TAP with mutex protection
+  - macOS: UTUN with proper byte handling
 - Comprehensive logging and monitoring
 - Systemd/Launchd/Windows Service integration
 - Certificate management and rotation
@@ -52,7 +55,13 @@ sudo apt-get install -f  # Install any missing dependencies
 3. Follow the installation wizard
 
 #### macOS
-The macOS package is not yet available. Please follow the [macOS Build Guide](docs/macos_build_guide.md) to build from source.
+```bash
+# Download the package
+curl -LO https://github.com/o3willard-AI/SSSonector/releases/download/v1.0.0/sssonector-1.0.0-macos.pkg
+
+# Install the package
+sudo installer -pkg sssonector-1.0.0-macos.pkg -target /
+```
 
 ### Configuration
 
@@ -83,7 +92,7 @@ net start SSSonector
 ```yaml
 mode: "server"
 network:
-  interface: "tun0"
+  interface: "tun0"  # or "utun0" on macOS
   address: "10.0.0.1/24"
   mtu: 1500
 tunnel:
@@ -92,13 +101,16 @@ tunnel:
   ca_file: "/etc/sssonector/certs/client.crt"
   listen_address: "0.0.0.0"
   listen_port: 8443
+  # Bandwidth control (optional)
+  upload_kbps: 10240    # 10 Mbps
+  download_kbps: 10240  # 10 Mbps
 ```
 
 ### Client Mode
 ```yaml
 mode: "client"
 network:
-  interface: "tun0"
+  interface: "tun0"  # or "utun0" on macOS
   address: "10.0.0.2/24"
   mtu: 1500
 tunnel:
@@ -107,6 +119,9 @@ tunnel:
   ca_file: "/etc/sssonector/certs/server.crt"
   server_address: "SERVER_IP"
   server_port: 8443
+  # Bandwidth control (optional)
+  upload_kbps: 10240    # 10 Mbps
+  download_kbps: 10240  # 10 Mbps
 ```
 
 ## Building from Source
@@ -124,13 +139,13 @@ git clone https://github.com/o3willard-AI/SSSonector.git
 cd SSSonector
 
 # Install dependencies
-make install-deps
+make deps
 
 # Build the project
 make build
 
 # Create packages
-make package
+make dist
 ```
 
 ## Monitoring
@@ -192,12 +207,7 @@ MIT License - see LICENSE file for details
 4. Push to the branch
 5. Create a Pull Request
 
-### macOS Installer Contributors
-
-If you're interested in contributing the macOS installer package:
-1. Follow the [macOS Build Guide](docs/macos_build_guide.md)
-2. Build and test the installer on your macOS system
-3. Submit a PR with the built installer
+For detailed contribution guidelines, see [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## Support
 

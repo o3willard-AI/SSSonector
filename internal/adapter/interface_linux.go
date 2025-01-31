@@ -5,7 +5,22 @@ import (
 "net"
 "os"
 "os/exec"
+"syscall"
+"unsafe"
 )
+
+const (
+TUNSETIFF = 0x400454ca
+IFF_TUN   = 0x0001
+IFF_NO_PI = 0x1000
+IFF_UP    = 0x1
+)
+
+type ifReq struct {
+Name  [0x10]byte
+Flags uint16
+pad   [0x28 - 0x10 - 2]byte
+}
 
 type linuxInterface struct {
 name    string
@@ -23,17 +38,51 @@ mtu:  1500, // Default MTU
 }
 
 func (i *linuxInterface) Create() error {
-cmd := exec.Command("ip", "tuntap", "add", i.name, "mode", "tun")
-if err := cmd.Run(); err != nil {
-return fmt.Errorf("failed to create tun interface: %w", err)
-}
-
-// Open the TUN device file
 fd, err := os.OpenFile("/dev/net/tun", os.O_RDWR, 0)
 if err != nil {
 return fmt.Errorf("failed to open TUN device: %w", err)
 }
+
+var req ifReq
+copy(req.Name[:], i.name)
+req.Flags = IFF_TUN | IFF_NO_PI
+_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, fd.Fd(), uintptr(TUNSETIFF), uintptr(unsafe.Pointer(&req)))
+if errno != 0 {
+fd.Close()
+return fmt.Errorf("failed to create TUN interface: %v", errno)
+}
+
 i.fd = fd
+
+// Set interface flags
+cmd := exec.Command("ip", "link", "set", "dev", i.name, "up")
+if err := cmd.Run(); err != nil {
+return fmt.Errorf("failed to set interface up: %w", err)
+}
+
+// Disable multicast and enable point-to-point mode
+cmd = exec.Command("ip", "link", "set", "dev", i.name, "multicast", "off")
+if err := cmd.Run(); err != nil {
+return fmt.Errorf("failed to disable multicast: %w", err)
+}
+
+// Enable ICMP forwarding
+cmd = exec.Command("sysctl", "-w", fmt.Sprintf("net.ipv4.conf.%s.forwarding=1", i.name))
+if err := cmd.Run(); err != nil {
+return fmt.Errorf("failed to enable forwarding: %w", err)
+}
+
+// Disable reverse path filtering
+cmd = exec.Command("sysctl", "-w", fmt.Sprintf("net.ipv4.conf.%s.rp_filter=0", i.name))
+if err := cmd.Run(); err != nil {
+return fmt.Errorf("failed to disable rp_filter: %w", err)
+}
+
+// Accept local packets
+cmd = exec.Command("sysctl", "-w", fmt.Sprintf("net.ipv4.conf.%s.accept_local=1", i.name))
+if err := cmd.Run(); err != nil {
+return fmt.Errorf("failed to enable accept_local: %w", err)
+}
 
 return nil
 }
