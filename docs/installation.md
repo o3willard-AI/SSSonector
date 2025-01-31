@@ -1,86 +1,112 @@
-# SSSonector Installation Guide
+# Installation Guide
 
-## Download Installers
+## Configuration
 
-⚠️ **Important:** All installer packages are distributed through [GitHub Releases](https://github.com/o3willard-AI/SSSonector/releases/tag/v1.0.0). Do not attempt to download installers directly from repository URLs (like `/blob/main/dist/...`) as these URLs will not work with wget or other download tools.
+The SSSonector service uses a YAML configuration file located at `/etc/sssonector/config.yaml`. Here's a complete configuration reference:
 
-Available installers:
+```yaml
+# Mode can be "server" or "client"
+mode: "server"
 
-- Linux (Debian/Ubuntu): `sssonector_1.0.0_amd64.deb`
-- Linux (RHEL/CentOS): `sssonector-1.0.0-1.x86_64.rpm`
-- Windows: `sssonector-1.0.0-setup.exe`
-- macOS: See [macOS Build Guide](macos_build.md) for build instructions
+# Network interface configuration
+network:
+  interface: "tun0"
+  address: "10.0.0.1/24"
+  mtu: 1500
 
-## Installation Instructions
+# Tunnel configuration
+tunnel:
+  # Certificate paths
+  certFile: "/etc/sssonector/certs/server.crt"
+  keyFile: "/etc/sssonector/certs/server.key"
+  caFile: "/etc/sssonector/certs/ca.crt"
+  
+  # Server mode settings
+  listenAddress: "127.0.0.1"
+  listenPort: 8443
+  maxClients: 10
+  
+  # Client mode settings (only needed in client mode)
+  serverAddress: "server.example.com"
+  serverPort: 8443
+  
+  # Bandwidth control (in Kbps)
+  uploadKbps: 10240    # 10 Mbps
+  downloadKbps: 10240  # 10 Mbps
+
+# Monitoring configuration
+monitor:
+  logFile: "/var/log/sssonector/monitor.log"
+  snmpEnabled: false
+  snmpPort: 161
+  snmpCommunity: "public"
+
+# Logging configuration
+logging:
+  level: "info"
+  filePath: "/var/log/sssonector/service.log"
+  maxSize: 100  # MB
+```
+
+## Platform-Specific Installation
 
 ### Linux (Debian/Ubuntu)
 ```bash
-# Download the package (make sure to use the GitHub Releases URL)
-wget https://github.com/o3willard-AI/SSSonector/releases/download/v1.0.0/sssonector_1.0.0_amd64.deb
-
-# Verify the download URL worked (should show sssonector_1.0.0_amd64.deb)
-ls sssonector_1.0.0_amd64.deb
-
-# Install the package
 sudo dpkg -i sssonector_1.0.0_amd64.deb
-sudo apt-get install -f  # Install any missing dependencies
 ```
-
-Note: If wget fails with a 404 error, double-check that you're using the GitHub Releases URL format shown above, not a repository URL.
 
 ### Linux (RHEL/CentOS)
 ```bash
-# Download the package
-wget https://github.com/o3willard-AI/SSSonector/releases/download/v1.0.0/sssonector-1.0.0-1.x86_64.rpm
-
-# Install the package
-sudo yum install sssonector-1.0.0-1.x86_64.rpm
+sudo rpm -i sssonector-1.0.0-1.x86_64.rpm
 ```
 
 ### Windows
-1. Download `sssonector-1.0.0-setup.exe` from the [releases page](https://github.com/o3willard-AI/SSSonector/releases/tag/v1.0.0)
-2. Run the installer with administrator privileges
-3. Follow the installation wizard
+Run the installer: `sssonector-1.0.0-setup.exe`
 
 ### macOS
-The macOS package is not yet available. Please follow the [macOS Build Guide](macos_build.md) to build from source.
-
-## Verifying Installation
-
-After installation, verify that SSSonector is installed correctly:
-
 ```bash
-# Check version
-sssonector --version
-
-# Check service status (Linux)
-systemctl status sssonector
-
-# Check service status (macOS)
-launchctl list | grep sssonector
-
-# Check service status (Windows)
-sc query sssonector
+sudo installer -pkg sssonector-1.0.0.pkg -target /
 ```
 
-## Troubleshooting
+## Certificate Setup
 
-If you encounter any issues during installation:
+1. Generate CA certificate:
+```bash
+openssl req -x509 -newkey rsa:4096 -keyout ca.key -out ca.crt -days 365 -nodes
+```
 
-1. Check system requirements:
-   - Linux: Debian 11+/Ubuntu 22.04+ or RHEL 8+/CentOS 8+
-   - Windows: Windows 10/11 64-bit
-   - macOS: macOS 11+ (Big Sur)
+2. Generate server certificate:
+```bash
+openssl req -newkey rsa:4096 -keyout server.key -out server.csr -nodes
+openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out server.crt -days 365
+```
 
-2. Common issues:
-   - Missing dependencies: Run `sudo apt-get install -f` (Debian/Ubuntu)
-   - Permission issues: Ensure you have administrator/root privileges
-   - Service not starting: Check system logs for errors
+3. Place certificates in the appropriate directory:
+```bash
+sudo mkdir -p /etc/sssonector/certs
+sudo cp ca.crt server.crt server.key /etc/sssonector/certs/
+sudo chmod 644 /etc/sssonector/certs/*.crt
+sudo chmod 600 /etc/sssonector/certs/*.key
+```
 
-3. For additional help:
-   - Check the [troubleshooting guide](troubleshooting.md)
-   - Create an issue on GitHub with:
-     - Your OS version and architecture
-     - Installation method used
-     - Error messages or logs
-     - Steps to reproduce the issue
+## Service Management
+
+Start the service:
+```bash
+sudo systemctl start sssonector
+```
+
+Enable at boot:
+```bash
+sudo systemctl enable sssonector
+```
+
+Check status:
+```bash
+sudo systemctl status sssonector
+```
+
+View logs:
+```bash
+sudo journalctl -u sssonector
+```

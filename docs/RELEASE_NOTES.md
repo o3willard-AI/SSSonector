@@ -1,41 +1,28 @@
-# SSSonector v1.0.0
+# Release Notes
 
-## Features
+## Version 1.0.0 (January 31, 2025)
 
-- TLS 1.3 with EU-exportable cipher suites
-- Virtual network interfaces for transparent routing
-- Persistent tunnel connections with automatic reconnection
-- Bandwidth throttling capabilities
-- SNMP monitoring and telemetry
-- Cross-platform support (Linux, Windows, macOS)
-- Comprehensive logging and monitoring
-- Systemd/Launchd/Windows Service integration
-- Certificate management and rotation
+### New Features
+- Implemented server and client modes for SSL tunneling
+- Added bandwidth control with upload and download throttling
+- Added cross-platform support for Linux, Windows, and macOS
+- Implemented platform-specific virtual network interfaces
+- Added TLS certificate management
 
-## Installation
+### Configuration Changes
+- Added `uploadKbps` and `downloadKbps` settings for bandwidth control
+- Improved certificate configuration with proper validation
+- Added support for CA certificates
 
-⚠️ **Important:** All installer packages are distributed through [GitHub Releases](https://github.com/o3willard-AI/SSSonector/releases/tag/v1.0.0). Always use the GitHub Releases URLs for downloading packages.
+### Bug Fixes
+- Fixed interface initialization issues
+- Improved error handling and resource cleanup
+- Fixed cross-platform compatibility issues
 
-### Linux (Debian/Ubuntu)
-```bash
-wget https://github.com/o3willard-AI/SSSonector/releases/download/v1.0.0/sssonector_1.0.0_amd64.deb
-sudo dpkg -i sssonector_1.0.0_amd64.deb
-sudo apt-get install -f
-```
+### Documentation
+- Updated configuration documentation with new bandwidth settings
+- Added platform-specific installation guides
+- Improved troubleshooting documentation
 
-### Windows
-1. Download `sssonector-1.0.0-setup.exe` from the [releases page](https://github.com/o3willard-AI/SSSonector/releases/tag/v1.0.0)
-2. Run the installer with administrator privileges
-3. Follow the installation wizard
-
-### macOS
-The macOS installer is pending contribution from the community. Please see [macOS Build Guide](../docs/macos_build_guide.md) if you'd like to help build and submit it.
-
-## Documentation
-
-Full documentation is available at: https://github.com/o3willard-AI/SSSonector/tree/v1.0.0/docs
-
-## Notes
-
-- macOS installer will be added in a future release
-- RPM package will be added in a future release
+### Known Issues
+- macOS package requires final build on macOS system
