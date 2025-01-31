@@ -126,12 +126,15 @@ This guide provides step-by-step instructions for setting up a test environment 
 
 1. Install SSSonector:
    ```bash
-   # Download package
-   wget https://github.com/o3willard-AI/SSSonector/dist/v1.0.0/sssonector_1.0.0_amd64.deb
+   # Download package from GitHub Releases
+   wget https://github.com/o3willard-AI/SSSonector/releases/download/v1.0.0/sssonector_1.0.0_amd64.deb
+
+   # Verify the download URL worked (should show sssonector_1.0.0_amd64.deb)
+   ls sssonector_1.0.0_amd64.deb
 
    # Install
    sudo dpkg -i sssonector_1.0.0_amd64.deb
-   sudo apt-get install -f
+   sudo apt-get install -f  # Install any missing dependencies
    ```
 
 2. Generate certificates:
@@ -174,12 +177,15 @@ This guide provides step-by-step instructions for setting up a test environment 
 
 1. Install SSSonector:
    ```bash
-   # Download package
-   wget https://github.com/o3willard-AI/SSSonector/dist/v1.0.0/sssonector_1.0.0_amd64.deb
+   # Download package from GitHub Releases
+   wget https://github.com/o3willard-AI/SSSonector/releases/download/v1.0.0/sssonector_1.0.0_amd64.deb
+
+   # Verify the download URL worked (should show sssonector_1.0.0_amd64.deb)
+   ls sssonector_1.0.0_amd64.deb
 
    # Install
    sudo dpkg -i sssonector_1.0.0_amd64.deb
-   sudo apt-get install -f
+   sudo apt-get install -f  # Install any missing dependencies
    ```
 
 2. Copy certificates from server:

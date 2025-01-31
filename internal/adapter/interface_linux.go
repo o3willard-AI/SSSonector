@@ -1,130 +1,131 @@
 package adapter
 
 import (
-	"fmt"
-	"net"
-	"os/exec"
-	"strings"
-	"syscall"
-	"unsafe"
-)
-
-const (
-	IFF_TUN   = 0x0001
-	IFF_NO_PI = 0x1000
-	TUNSETIFF = 0x400454ca
+"fmt"
+"net"
+"os"
+"os/exec"
 )
 
 type linuxInterface struct {
-	name    string
-	fd      int
-	ip      net.IP
-	netmask net.IPMask
-	mtu     int
+name    string
+address net.IP
+netmask net.IPMask
+mtu     int
+fd      *os.File
 }
 
 func newPlatformInterface(name string) (Interface, error) {
-	return &linuxInterface{
-		name: name,
-		mtu:  1500,
-	}, nil
+return &linuxInterface{
+name: name,
+mtu:  1500, // Default MTU
+}, nil
 }
 
 func (i *linuxInterface) Create() error {
-	// Open TUN device
-	fd, err := syscall.Open("/dev/net/tun", syscall.O_RDWR, 0)
-	if err != nil {
-		return fmt.Errorf("failed to open /dev/net/tun: %w", err)
-	}
+cmd := exec.Command("ip", "tuntap", "add", i.name, "mode", "tun")
+if err := cmd.Run(); err != nil {
+return fmt.Errorf("failed to create tun interface: %w", err)
+}
 
-	// Create interface request
-	var ifr struct {
-		name  [16]byte
-		flags uint16
-		_     [22]byte
-	}
-	copy(ifr.name[:], i.name)
-	ifr.flags = IFF_TUN | IFF_NO_PI
+// Open the TUN device file
+fd, err := os.OpenFile("/dev/net/tun", os.O_RDWR, 0)
+if err != nil {
+return fmt.Errorf("failed to open TUN device: %w", err)
+}
+i.fd = fd
 
-	// Configure TUN interface
-	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), uintptr(TUNSETIFF), uintptr(unsafe.Pointer(&ifr)))
-	if errno != 0 {
-		syscall.Close(fd)
-		return fmt.Errorf("failed to configure TUN interface: %w", errno)
-	}
-
-	i.fd = fd
-	return nil
+return nil
 }
 
 func (i *linuxInterface) Configure(cfg *Config) error {
-	// Parse IP address and netmask
-	ip, mask, err := ParseCIDR(cfg.Address)
-	if err != nil {
-		return err
-	}
-	i.ip = ip
-	i.netmask = mask
-	i.mtu = cfg.MTU
+ip, mask, err := ParseCIDR(cfg.Address)
+if err != nil {
+return fmt.Errorf("failed to parse address: %w", err)
+}
 
-	// Set IP address
-	cmd := exec.Command("ip", "addr", "add", cfg.Address, "dev", i.name)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to set IP address: %s: %w", strings.TrimSpace(string(output)), err)
-	}
+i.address = ip
+i.netmask = mask
+i.mtu = cfg.MTU
 
-	// Set MTU
-	cmd = exec.Command("ip", "link", "set", "mtu", fmt.Sprint(i.mtu), "dev", i.name)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to set MTU: %s: %w", strings.TrimSpace(string(output)), err)
-	}
+// Set IP address
+cmd := exec.Command("ip", "addr", "add", cfg.Address, "dev", i.name)
+if err := cmd.Run(); err != nil {
+return fmt.Errorf("failed to set interface address: %w", err)
+}
 
-	return nil
+// Set MTU
+cmd = exec.Command("ip", "link", "set", i.name, "mtu", fmt.Sprintf("%d", cfg.MTU))
+if err := cmd.Run(); err != nil {
+return fmt.Errorf("failed to set interface MTU: %w", err)
+}
+
+return nil
 }
 
 func (i *linuxInterface) Up() error {
-	cmd := exec.Command("ip", "link", "set", "dev", i.name, "up")
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to bring interface up: %s: %w", strings.TrimSpace(string(output)), err)
-	}
-	return nil
+cmd := exec.Command("ip", "link", "set", i.name, "up")
+if err := cmd.Run(); err != nil {
+return fmt.Errorf("failed to bring interface up: %w", err)
+}
+return nil
 }
 
 func (i *linuxInterface) Down() error {
-	cmd := exec.Command("ip", "link", "set", "dev", i.name, "down")
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to bring interface down: %s: %w", strings.TrimSpace(string(output)), err)
-	}
-	return nil
+cmd := exec.Command("ip", "link", "set", i.name, "down")
+if err := cmd.Run(); err != nil {
+return fmt.Errorf("failed to bring interface down: %w", err)
+}
+return nil
 }
 
 func (i *linuxInterface) Delete() error {
-	if i.fd != 0 {
-		if err := syscall.Close(i.fd); err != nil {
-			return fmt.Errorf("failed to close interface: %w", err)
-		}
-		i.fd = 0
-	}
-
-	cmd := exec.Command("ip", "link", "delete", "dev", i.name)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to delete interface: %s: %w", strings.TrimSpace(string(output)), err)
-	}
-	return nil
+cmd := exec.Command("ip", "link", "delete", i.name)
+if err := cmd.Run(); err != nil {
+return fmt.Errorf("failed to delete interface: %w", err)
+}
+return nil
 }
 
 func (i *linuxInterface) Name() string {
-	return i.name
+return i.name
 }
 
 func (i *linuxInterface) MTU() int {
-	return i.mtu
+return i.mtu
 }
 
 func (i *linuxInterface) Address() net.IP {
-	return i.ip
+return i.address
 }
 
 func (i *linuxInterface) Netmask() net.IPMask {
-	return i.netmask
+return i.netmask
+}
+
+// Read implements io.Reader
+func (i *linuxInterface) Read(p []byte) (n int, err error) {
+if i.fd == nil {
+return 0, fmt.Errorf("interface not initialized")
+}
+return i.fd.Read(p)
+}
+
+// Write implements io.Writer
+func (i *linuxInterface) Write(p []byte) (n int, err error) {
+if i.fd == nil {
+return 0, fmt.Errorf("interface not initialized")
+}
+return i.fd.Write(p)
+}
+
+// Close implements io.Closer
+func (i *linuxInterface) Close() error {
+if i.fd != nil {
+if err := i.fd.Close(); err != nil {
+return fmt.Errorf("failed to close interface file: %w", err)
+}
+i.fd = nil
+}
+return nil
 }
