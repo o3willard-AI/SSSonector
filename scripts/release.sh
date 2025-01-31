@@ -74,19 +74,19 @@ cat > "$RELEASE_DIR/RELEASE_NOTES.md" << EOF
 
 ### Linux (Debian/Ubuntu)
 \`\`\`bash
-wget https://github.com/o3willard-AI/SSSonector/releases/download/v$VERSION/sssonector_${VERSION}_amd64.deb
+wget https://github.com/o3willard-AI/SSSonector/dist/v$VERSION/sssonector_${VERSION}_amd64.deb
 sudo dpkg -i sssonector_${VERSION}_amd64.deb
 sudo apt-get install -f
 \`\`\`
 
 ### macOS
 \`\`\`bash
-curl -LO https://github.com/o3willard-AI/SSSonector/releases/download/v$VERSION/sssonector-${VERSION}.pkg
+curl -LO https://github.com/o3willard-AI/SSSonector/dist/v$VERSION/sssonector-${VERSION}.pkg
 sudo installer -pkg sssonector-${VERSION}.pkg -target /
 \`\`\`
 
 ### Windows
-1. Download sssonector-${VERSION}-setup.exe
+1. Download sssonector-${VERSION}-setup.exe from dist/v$VERSION/
 2. Run the installer with administrator privileges
 
 ## Checksums
