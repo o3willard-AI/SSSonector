@@ -283,3 +283,62 @@ Expected Outcome:
 ```
 
 This context document should be treated as a living document and updated as the project evolves.
+
+## Recent Changes and Improvements
+
+### Download and Distribution Changes (January 2025)
+
+1. GitHub Releases Integration
+- All installer packages are now exclusively distributed through GitHub Releases
+- Direct repository downloads (via /blob/main/dist/...) have been deprecated
+- Binary files are no longer stored in the repository's dist directory
+- SHA256 checksums are included with each release
+
+2. Download URL Format
+- Correct format: `https://github.com/o3willard-AI/SSSonector/releases/download/v${VERSION}/[package-name]`
+- Example: `https://github.com/o3willard-AI/SSSonector/releases/download/v1.0.0/sssonector_1.0.0_amd64.deb`
+- This format ensures:
+  * Correct filename preservation when downloading
+  * Compatibility with wget and other download tools
+  * Proper version tracking and distribution
+
+3. Documentation Updates
+- All documentation now uses consistent GitHub Releases URLs
+- Added download verification steps
+- Added warnings about correct URL format usage
+- Updated installation guides with proper download instructions
+
+### File Organization
+
+1. Repository Structure
+- Source code and documentation in version control
+- Binary files (installers) in GitHub Releases
+- Build artifacts excluded via .gitignore
+- Clear separation between source and distribution files
+
+2. Best Practices
+- Always use GitHub Releases URLs for downloads
+- Verify downloads using provided SHA256 checksums
+- Follow platform-specific installation guides
+- Reference this context document for project standards
+
+### Important Notes for AI Development
+
+1. URL Handling
+- Always use GitHub Releases URLs in documentation and scripts
+- Include download verification steps
+- Add clear warnings about URL format when documenting downloads
+
+2. File Management
+- Do not commit binary files to the repository
+- Use GitHub Releases for distributing installers
+- Keep documentation in sync with current practices
+- Update this context document when making significant changes
+
+3. Testing Considerations
+- Verify download URLs work with wget and curl
+- Check SHA256 checksums after downloads
+- Test installation procedures on all supported platforms
+- Ensure documentation reflects actual user experience
+
+This section will be updated as new changes and improvements are made to the project.
