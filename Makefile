@@ -23,12 +23,12 @@ deb: build
 
 rpm: build
 	@if which rpmbuild > /dev/null; then \
-		mkdir -p build/rpm/{BUILD,RPMS,SOURCES,SPECS,SRPMS}; \
-		mkdir -p build/rpm/SOURCES/usr/bin; \
-		mkdir -p build/rpm/SOURCES/etc/sssonector; \
-		cp build/sssonector build/rpm/SOURCES/usr/bin/; \
-		cp -r configs/* build/rpm/SOURCES/etc/sssonector/; \
-		echo "Name: sssonector\nVersion: 1.0.0\nRelease: 1\nSummary: SSL tunneling application\nLicense: Proprietary\n\n%description\nSSL tunneling application\n\n%files\n/usr/bin/sssonector\n/etc/sssonector/*" > build/rpm/SPECS/sssonector.spec; \
+		mkdir -p build/rpm/{BUILD,RPMS,SOURCES,SPECS,SRPMS,BUILDROOT}; \
+		mkdir -p build/rpm/BUILDROOT/sssonector-1.0.0-1.x86_64/usr/bin; \
+		mkdir -p build/rpm/BUILDROOT/sssonector-1.0.0-1.x86_64/etc/sssonector; \
+		cp build/sssonector build/rpm/BUILDROOT/sssonector-1.0.0-1.x86_64/usr/bin/; \
+		cp -r configs/* build/rpm/BUILDROOT/sssonector-1.0.0-1.x86_64/etc/sssonector/; \
+		echo "Name: sssonector\nVersion: 1.0.0\nRelease: 1\nSummary: SSL tunneling application\nLicense: MIT\n\n%description\nSSL tunneling application\n\n%files\n/usr/bin/sssonector\n/etc/sssonector/*" > build/rpm/SPECS/sssonector.spec; \
 		rpmbuild -bb --define "_topdir $(PWD)/build/rpm" build/rpm/SPECS/sssonector.spec; \
 		mkdir -p dist; \
 		cp build/rpm/RPMS/x86_64/sssonector-1.0.0-1.x86_64.rpm dist/ 2>/dev/null || true; \
@@ -39,7 +39,7 @@ rpm: build
 win: build
 	@if which makensis > /dev/null; then \
 		mkdir -p build/win; \
-		cp build/sssonector build/win/; \
+		cp build/sssonector build/win/sssonector.exe; \
 		cp -r configs build/win/; \
 		makensis installers/windows.nsi; \
 		mkdir -p dist; \
