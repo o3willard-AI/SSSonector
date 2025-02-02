@@ -24,11 +24,14 @@ deb: build
 rpm: build
 	@if which rpmbuild > /dev/null; then \
 		mkdir -p build/rpm/{BUILD,RPMS,SOURCES,SPECS,SRPMS}; \
-		cp build/sssonector build/rpm/SOURCES/; \
-		cp -r configs build/rpm/SOURCES/; \
+		mkdir -p build/rpm/SOURCES/usr/bin; \
+		mkdir -p build/rpm/SOURCES/etc/sssonector; \
+		cp build/sssonector build/rpm/SOURCES/usr/bin/; \
+		cp -r configs/* build/rpm/SOURCES/etc/sssonector/; \
 		echo "Name: sssonector\nVersion: 1.0.0\nRelease: 1\nSummary: SSL tunneling application\nLicense: Proprietary\n\n%description\nSSL tunneling application\n\n%files\n/usr/bin/sssonector\n/etc/sssonector/*" > build/rpm/SPECS/sssonector.spec; \
 		rpmbuild -bb --define "_topdir $(PWD)/build/rpm" build/rpm/SPECS/sssonector.spec; \
-		cp build/rpm/RPMS/x86_64/sssonector-1.0.0-1.x86_64.rpm dist/; \
+		mkdir -p dist; \
+		cp build/rpm/RPMS/x86_64/sssonector-1.0.0-1.x86_64.rpm dist/ 2>/dev/null || true; \
 	else \
 		echo "Skipping RPM build - rpmbuild not installed"; \
 	fi
@@ -39,7 +42,8 @@ win: build
 		cp build/sssonector build/win/; \
 		cp -r configs build/win/; \
 		makensis installers/windows.nsi; \
-		cp build/sssonector-1.0.0-setup.exe dist/; \
+		mkdir -p dist; \
+		cp build/sssonector-1.0.0-setup.exe dist/ 2>/dev/null || true; \
 	else \
 		echo "Skipping Windows build - makensis not installed"; \
 	fi
@@ -50,6 +54,7 @@ mac: build
 		mkdir -p build/macos/root/etc/sssonector; \
 		cp build/sssonector build/macos/root/usr/local/bin/; \
 		cp -r configs/* build/macos/root/etc/sssonector/; \
+		mkdir -p dist; \
 		pkgbuild --root build/macos/root \
 			--identifier com.o3willard-ai.sssonector \
 			--version 1.0.0 \
@@ -75,6 +80,11 @@ dist: build
 	@if [ -f dist/sssonector-1.0.0-1.x86_64.rpm ]; then cd dist && sha256sum sssonector-1.0.0-1.x86_64.rpm >> checksums.txt; fi
 	@if [ -f dist/sssonector-1.0.0-setup.exe ]; then cd dist && sha256sum sssonector-1.0.0-setup.exe >> checksums.txt; fi
 	@if [ -f dist/sssonector-1.0.0-macos.pkg ]; then cd dist && sha256sum sssonector-1.0.0-macos.pkg >> checksums.txt; fi
+	mkdir -p dist/v1.0.0
+	@if [ -f dist/sssonector_1.0.0_amd64.deb ]; then cp dist/sssonector_1.0.0_amd64.deb dist/v1.0.0/; fi
+	@if [ -f dist/sssonector-1.0.0-1.x86_64.rpm ]; then cp dist/sssonector-1.0.0-1.x86_64.rpm dist/v1.0.0/; fi
+	@if [ -f dist/sssonector-1.0.0-setup.exe ]; then cp dist/sssonector-1.0.0-setup.exe dist/v1.0.0/; fi
+	@if [ -f dist/sssonector-1.0.0-macos.pkg ]; then cp dist/sssonector-1.0.0-macos.pkg dist/v1.0.0/; fi
 
 install: build
 	sudo mkdir -p /usr/bin
