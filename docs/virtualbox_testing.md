@@ -120,6 +120,61 @@ This guide provides step-by-step instructions for setting up a test environment 
    sudo netplan apply
    ```
 
+### SNMP Monitoring VM
+
+1. Create new VM:
+   ```
+   Name: sssonector-qa-monitor
+   Type: Linux
+   Version: Ubuntu (64-bit)
+   Memory: 2048 MB
+   CPU: 2 cores
+   Disk: 20 GB (dynamically allocated)
+   ```
+
+2. Network Configuration:
+   - Adapter 1: NAT (for internet access)
+   - Adapter 2: Host-only (vboxnet0)
+
+3. Install Ubuntu Server:
+   - Language: English
+   - Network: Use default settings
+   - Storage: Use entire disk
+   - Profile:
+     ```
+     Name: sblanken
+     Server name: sssonector-qa-monitor
+     Username: sblanken
+     Password: 101abn
+     ```
+
+4. Post-Installation:
+   ```bash
+   # Update system
+   sudo apt update && sudo apt upgrade -y
+
+   # Install NTOPNG and SNMP tools
+   sudo apt install -y ntopng snmp snmpd
+
+   # Set static IP for host-only adapter
+   sudo nano /etc/netplan/00-installer-config.yaml
+   ```
+   Add:
+   ```yaml
+   network:
+     ethernets:
+       enp0s3:
+         dhcp4: true
+       enp0s8:
+         dhcp4: false
+         addresses: [192.168.50.212/24]
+     version: 2
+   ```
+   Apply:
+   ```bash
+   sudo netplan apply
+   ```
+
 ## Software Installation
 
 ### Server VM
@@ -310,6 +365,23 @@ This guide provides step-by-step instructions for setting up a test environment 
    ```bash
    # On either VM
    snmpwalk -v2c -c public localhost .1.3.6.1.4.1.XXXXX
+   ```
+
+### NTOPNG Monitoring
+
+1. Access NTOPNG:
+   ```bash
+   # NTOPNG is running on port 3000
+   http://192.168.50.212:3000
+   ```
+
+2. Credentials:
+   ```
+   Server: sssonector-qa-monitor
+   IP: 192.168.50.212
+   Username: sblanken
+   Password: 101abn
+   Sudo Password: 101abn
    ```
 
 ### Log Analysis
