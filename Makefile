@@ -1,67 +1,33 @@
-BINARY_NAME=sssonector
-VERSION=1.0.0
-BUILD_DIR=build
-DIST_DIR=dist/v$(VERSION)
-INSTALL_DIR=/usr/bin
-CONFIG_DIR=/etc/sssonector
-LOG_DIR=/var/log/sssonector
-
-.PHONY: all build clean install uninstall dist
+.PHONY: all build clean dist install test
 
 all: build
 
-deps:
+build:
 	go mod download
 	go mod tidy
-
-build: deps
-	mkdir -p $(BUILD_DIR)
-	go build -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/tunnel
-	chmod 755 $(BUILD_DIR)/$(BINARY_NAME)
+	mkdir -p build
+	go build -o build/sssonector ./cmd/tunnel
+	chmod 755 build/sssonector
 
 clean:
-	rm -rf $(BUILD_DIR)
-	rm -rf $(DIST_DIR)
-
-install: build
-	# Create directories
-	mkdir -p $(CONFIG_DIR)
-	mkdir -p $(CONFIG_DIR)/certs
-	mkdir -p $(LOG_DIR)
-	
-	# Install binary
-	install -m 755 $(BUILD_DIR)/$(BINARY_NAME) $(INSTALL_DIR)/$(BINARY_NAME)
-	
-	# Install config files if they don't exist
-	test -f $(CONFIG_DIR)/config.yaml || install -m 644 configs/server.yaml $(CONFIG_DIR)/config.yaml
-	test -f $(CONFIG_DIR)/client.yaml || install -m 644 configs/client.yaml $(CONFIG_DIR)/client.yaml
-	
-	# Set permissions
-	chown -R root:root $(CONFIG_DIR)
-	chmod -R 755 $(CONFIG_DIR)
-	chmod 644 $(CONFIG_DIR)/*.yaml
-	chown -R root:root $(LOG_DIR)
-	chmod 755 $(LOG_DIR)
-
-uninstall:
-	rm -f $(INSTALL_DIR)/$(BINARY_NAME)
-	rm -rf $(CONFIG_DIR)
-	rm -rf $(LOG_DIR)
+	rm -rf build dist
 
 dist: build
-	mkdir -p $(DIST_DIR)
-	cp $(BUILD_DIR)/$(BINARY_NAME) $(DIST_DIR)/
-	cp -r configs $(DIST_DIR)/
-	cp README.md $(DIST_DIR)/
-	cd $(DIST_DIR) && tar czf ../$(BINARY_NAME)-$(VERSION).tar.gz .
-	cd $(DIST_DIR) && zip -r ../$(BINARY_NAME)-$(VERSION).zip .
-	sha256sum $(DIST_DIR)/../$(BINARY_NAME)-$(VERSION).tar.gz > $(DIST_DIR)/../checksums.txt
-	sha256sum $(DIST_DIR)/../$(BINARY_NAME)-$(VERSION).zip >> $(DIST_DIR)/../checksums.txt
+	mkdir -p dist/v1.0.0
+	cp build/sssonector dist/v1.0.0/
+	cp -r configs dist/v1.0.0/
+	cp README.md dist/v1.0.0/
+	cd dist/v1.0.0 && tar czf ../sssonector-1.0.0.tar.gz .
+	cd dist/v1.0.0 && zip -r ../sssonector-1.0.0.zip .
+	sha256sum dist/v1.0.0/../sssonector-1.0.0.tar.gz > dist/v1.0.0/../checksums.txt
+	sha256sum dist/v1.0.0/../sssonector-1.0.0.zip >> dist/v1.0.0/../checksums.txt
+
+install: build
+	sudo mkdir -p /usr/bin
+	sudo cp build/sssonector /usr/bin/
+	sudo chmod 755 /usr/bin/sssonector
+	sudo mkdir -p /etc/sssonector
+	sudo cp -r configs/* /etc/sssonector/
 
 test:
 	go test -v ./...
-
-lint:
-	golangci-lint run
-
-.DEFAULT_GOAL := build
