@@ -67,12 +67,18 @@ sudo apt-get install -f  # Install dependencies
 ```
 
 ### Linux (RHEL/CentOS)
+For RHEL/CentOS systems, please use the source archive:
 ```bash
 # Download from GitHub Releases
-wget https://github.com/o3willard-AI/SSSonector/releases/download/v1.0.0/sssonector-1.0.0-1.x86_64.rpm
+wget https://github.com/o3willard-AI/SSSonector/releases/download/v1.0.0/sssonector-1.0.0.tar.gz
 
-# Install the package
-sudo rpm -i sssonector-1.0.0-1.x86_64.rpm
+# Extract and install
+tar xzf sssonector-1.0.0.tar.gz
+cd sssonector-1.0.0
+sudo mkdir -p /usr/bin /etc/sssonector
+sudo cp sssonector /usr/bin/
+sudo cp -r configs/* /etc/sssonector/
+sudo chmod 755 /usr/bin/sssonector
 ```
 
 ### Windows
@@ -81,12 +87,18 @@ sudo rpm -i sssonector-1.0.0-1.x86_64.rpm
 3. TAP driver will be installed automatically
 
 ### macOS
+For macOS systems, please use the source archive:
 ```bash
 # Download from GitHub Releases
-curl -LO https://github.com/o3willard-AI/SSSonector/releases/download/v1.0.0/sssonector-1.0.0-macos.pkg
+curl -LO https://github.com/o3willard-AI/SSSonector/releases/download/v1.0.0/sssonector-1.0.0.tar.gz
 
-# Install the package
-sudo installer -pkg sssonector-1.0.0-macos.pkg -target /
+# Extract and install
+tar xzf sssonector-1.0.0.tar.gz
+cd sssonector-1.0.0
+sudo mkdir -p /usr/local/bin /etc/sssonector
+sudo cp sssonector /usr/local/bin/
+sudo cp -r configs/* /etc/sssonector/
+sudo chmod 755 /usr/local/bin/sssonector
 ```
 
 ## Certificate Setup
