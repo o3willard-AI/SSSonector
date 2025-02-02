@@ -1,60 +1,59 @@
 # Release Notes
 
-## Version 1.0.0 (January 31, 2025)
+## Version 1.0.0 (2025-02-02)
 
-### Major Improvements
-- Fixed interface implementations for all platforms:
-  - Linux: Added proper ICMP handling and packet routing
-  - macOS: Improved UTUN interface with proper byte handling
-  - Windows: Enhanced TAP device handling with mutex protection
-- Added thread-safe operations with proper mutex locking
-- Improved error handling and resource cleanup
-- Fixed race conditions in tunnel initialization
+### Major Features
+- Implemented Linux TUN device support with full network interface management
+- Added SSL/TLS encryption for secure tunneling
+- Introduced bandwidth throttling capabilities
+- Added comprehensive monitoring system with SNMP support
+- Implemented connection management with client limits
 
-### New Features
-- Added build tags for separate server/client binaries
-- Implemented bandwidth throttling with upload/download controls
-- Added cross-platform support improvements
-- Enhanced platform-specific network interface handling
-- Added comprehensive logging and monitoring
+### Core Components
+- Network Interface Layer:
+  - Linux TUN device implementation with dynamic configuration
+  - Platform stubs for Darwin and Windows
+  - MTU and address management
+  - Interface cleanup on shutdown
 
-### Configuration Changes
-- Added `uploadKbps` and `downloadKbps` settings for bandwidth control
-- Improved certificate configuration with proper validation
-- Added support for CA certificates
-- Enhanced network interface configuration options
+- Tunnel Management:
+  - SSL/TLS encrypted connections
+  - Bandwidth throttling
+  - Connection pooling
+  - Automatic reconnection support
 
-### Bug Fixes
-- Fixed interface initialization race conditions
-- Improved error handling and resource cleanup
-- Fixed packet handling issues in tunnel transfer
-- Resolved cross-platform compatibility issues
-- Fixed memory leaks in interface management
+- Monitoring System:
+  - Real-time metrics collection
+  - SNMP integration
+  - Performance monitoring
+  - Connection tracking
 
-### Documentation Updates
-- Added detailed platform-specific installation guides
-- Updated configuration documentation with new settings
-- Improved troubleshooting documentation
-- Added cross-platform build instructions
-- Enhanced testing procedures
+### Configuration
+- YAML-based configuration system
+- Separate server and client configurations
+- Runtime configuration validation
+- Environment variable support
 
-### Security Improvements
-- Enhanced certificate handling
-- Improved resource cleanup
-- Added mutex protection for thread safety
-- Enhanced error handling for security-critical operations
+### Installation
+- Added support for multiple platforms:
+  - Linux (deb, rpm packages)
+  - macOS (darwin builds)
+  - Windows (installer)
+- Automated installation scripts
+- Configuration templates
+
+### Documentation
+- Added comprehensive installation guides
+- Updated configuration documentation
+- Added troubleshooting guides
+- Improved API documentation
 
 ### Known Issues
-- macOS package requires final build on macOS system
-- Windows TAP driver may need manual installation on some systems
-- Some antivirus software may require manual whitelisting
+- Partial packet loss during initial connection setup
+- Windows and Darwin implementations currently stubbed
 
 ### Upcoming Features
-- Web-based management interface
-- Enhanced monitoring capabilities
-- Additional platform support
-- Performance optimizations
-
-## Previous Versions
-
-For information about previous versions, please see our GitHub repository history.
+- Full Windows TAP adapter support
+- macOS TUN/TAP implementation
+- UDP hole punching for NAT traversal
+- Web-based monitoring interface

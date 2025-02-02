@@ -1,48 +1,38 @@
 package config
 
-// Config represents the main configuration
+// Config holds the complete application configuration
 type Config struct {
-Mode    string        `yaml:"mode"`
-Network NetworkConfig `yaml:"network"`
-Tunnel  TunnelConfig `yaml:"tunnel"`
-Monitor MonitorConfig `yaml:"monitor"`
-Logging LoggingConfig `yaml:"logging"`
+	Mode    string        `yaml:"mode"`
+	Network NetworkConfig `yaml:"network"`
+	Tunnel  TunnelConfig  `yaml:"tunnel"`
+	Monitor MonitorConfig `yaml:"monitor"`
 }
 
-// NetworkConfig represents network interface configuration
+// NetworkConfig holds network interface configuration
 type NetworkConfig struct {
-Interface string `yaml:"interface"`
-Address   string `yaml:"address"`
-MTU       int    `yaml:"mtu"`
+	Interface string `yaml:"interface"`
+	Address   string `yaml:"address"`
+	MTU       int    `yaml:"mtu"`
 }
 
-// TunnelConfig represents SSL tunnel configuration
+// TunnelConfig holds tunnel configuration
 type TunnelConfig struct {
-CertFile       string `yaml:"certFile"`
-KeyFile        string `yaml:"keyFile"`
-CAFile         string `yaml:"caFile"`
-ListenAddress  string `yaml:"listenAddress"`
-ListenPort     int    `yaml:"listenPort"`
-ServerAddress  string `yaml:"serverAddress,omitempty"`
-ServerPort     int    `yaml:"serverPort,omitempty"`
-MaxClients     int    `yaml:"maxClients,omitempty"`
-RetryAttempts  int    `yaml:"retryAttempts"`
-RetryInterval  int    `yaml:"retryInterval"`
-UploadKbps     int    `yaml:"uploadKbps"`
-DownloadKbps   int    `yaml:"downloadKbps"`
+	CertFile      string `yaml:"cert_file"`
+	KeyFile       string `yaml:"key_file"`
+	CAFile        string `yaml:"ca_file"`
+	ListenAddress string `yaml:"listen_address"`
+	ListenPort    int    `yaml:"listen_port"`
+	ServerAddress string `yaml:"server_address"`
+	ServerPort    int    `yaml:"server_port"`
+	MaxClients    int    `yaml:"max_clients"`
+	UploadKbps    int    `yaml:"upload_kbps"`
+	DownloadKbps  int    `yaml:"download_kbps"`
 }
 
-// MonitorConfig represents monitoring configuration
+// MonitorConfig holds monitoring configuration
 type MonitorConfig struct {
-LogFile        string `yaml:"logFile"`
-SNMPEnabled    bool   `yaml:"snmpEnabled"`
-SNMPPort       int    `yaml:"snmpPort"`
-SNMPCommunity  string `yaml:"snmpCommunity"`
-}
-
-// LoggingConfig represents logging configuration
-type LoggingConfig struct {
-Level    string `yaml:"level"`
-FilePath string `yaml:"filePath"`
-MaxSize  int    `yaml:"maxSize"`
+	LogFile       string `yaml:"log_file"`
+	SNMPEnabled   bool   `yaml:"snmp_enabled"`
+	SNMPPort      int    `yaml:"snmp_port"`
+	SNMPCommunity string `yaml:"snmp_community"`
 }

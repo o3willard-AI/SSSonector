@@ -1,216 +1,134 @@
 # SSSonector
 
-SSSonector is a secure SSL tunnel service designed for remote office connectivity. It creates persistent TLS 1.3 tunnels with EU-exportable cipher suites enabling secure communication between remote locations without requiring inbound firewall rules.
+A high-performance SSL tunneling application for secure network connectivity.
 
 ## Features
 
-- TLS 1.3 with EU-exportable cipher suites
-- Thread-safe virtual network interfaces for all platforms
-- Bandwidth throttling with upload/download controls
-- Separate server and client binaries
-- Persistent tunnel connections with automatic reconnection
-- Cross-platform support:
-  - Linux: Native TUN with ICMP handling
-  - Windows: TAP with mutex protection
-  - macOS: UTUN with proper byte handling
-- Comprehensive logging and monitoring
-- Systemd/Launchd/Windows Service integration
-- Certificate management and rotation
+- Secure SSL/TLS encrypted tunneling
+- Linux TUN device support
+- Bandwidth throttling
+- Connection management
+- Real-time monitoring with SNMP support
+- YAML-based configuration
+- Cross-platform support (Linux, macOS*, Windows*)
 
-## Requirements
-
-### Server
-- Linux/Windows/macOS
-- Root/Administrator privileges
-- Network access (outbound port 8443 by default)
-- 100MB RAM minimum
-- 50MB disk space
-
-### Client
-- Linux/Windows/macOS
-- Root/Administrator privileges
-- Outbound network access
-- 50MB RAM minimum
-- 20MB disk space
+*Platform support in development
 
 ## Quick Start
 
 ### Installation
 
-⚠️ **Important:** All installer packages are distributed through [GitHub Releases](https://github.com/o3willard-AI/SSSonector/releases/tag/v1.0.0). Always use the GitHub Releases URLs for downloading packages.
+#### From Packages
 
-#### Linux (Debian/Ubuntu)
+##### Debian/Ubuntu:
 ```bash
-# Download the latest .deb package
-wget https://github.com/o3willard-AI/SSSonector/releases/download/v1.0.0/sssonector_1.0.0_amd64.deb
-
-# Install the package
 sudo dpkg -i sssonector_1.0.0_amd64.deb
-sudo apt-get install -f  # Install any missing dependencies
 ```
 
-#### Windows
-1. Download `sssonector-1.0.0-setup.exe` from the [releases page](https://github.com/o3willard-AI/SSSonector/releases/tag/v1.0.0)
-2. Run the installer with administrator privileges
-3. Follow the installation wizard
-
-#### macOS
+##### RHEL/CentOS:
 ```bash
-# Download the package
-curl -LO https://github.com/o3willard-AI/SSSonector/releases/download/v1.0.0/sssonector-1.0.0-macos.pkg
-
-# Install the package
-sudo installer -pkg sssonector-1.0.0-macos.pkg -target /
+sudo rpm -i sssonector-1.0.0-1.x86_64.rpm
 ```
+
+##### macOS:
+```bash
+sudo installer -pkg sssonector-1.0.0.pkg -target /
+```
+
+##### Windows:
+Run the installer: `sssonector-1.0.0-setup.exe`
+
+#### From Source
+
+1. Install Go 1.21 or later
+2. Clone the repository:
+   ```bash
+   git clone https://github.com/o3willard-AI/SSSonector.git
+   cd SSSonector
+   ```
+3. Build and install:
+   ```bash
+   make
+   sudo make install
+   ```
 
 ### Configuration
 
-1. Generate certificates (if not using existing ones):
+1. Create configuration directory:
+   ```bash
+   sudo mkdir -p /etc/sssonector/certs
+   ```
+
+2. Copy sample configurations:
+   ```bash
+   sudo cp configs/server.yaml /etc/sssonector/config.yaml  # For server
+   sudo cp configs/client.yaml /etc/sssonector/config.yaml  # For client
+   ```
+
+3. Generate SSL certificates:
+   ```bash
+   openssl req -x509 -newkey rsa:4096 -keyout /etc/sssonector/certs/server.key \
+     -out /etc/sssonector/certs/server.crt -days 365 -nodes
+   ```
+
+### Usage
+
+#### Server Mode
 ```bash
-sudo sssonector-cli generate-certs
+sudo sssonector -config /etc/sssonector/config.yaml
 ```
 
-2. Edit the configuration file:
-- Server: `/etc/sssonector/config.yaml`
-- Client: `/etc/sssonector/client.yaml`
-
-3. Start the service:
+#### Client Mode
 ```bash
-# Linux
-sudo systemctl start sssonector
-
-# macOS
-sudo launchctl load /Library/LaunchDaemons/com.o3willard.sssonector.plist
-
-# Windows
-net start SSSonector
+sudo sssonector -config /etc/sssonector/config.yaml
 ```
 
-## Configuration
+## Documentation
 
-### Server Mode
-```yaml
-mode: "server"
-network:
-  interface: "tun0"  # or "utun0" on macOS
-  address: "10.0.0.1/24"
-  mtu: 1500
-tunnel:
-  cert_file: "/etc/sssonector/certs/server.crt"
-  key_file: "/etc/sssonector/certs/server.key"
-  ca_file: "/etc/sssonector/certs/client.crt"
-  listen_address: "0.0.0.0"
-  listen_port: 8443
-  # Bandwidth control (optional)
-  upload_kbps: 10240    # 10 Mbps
-  download_kbps: 10240  # 10 Mbps
-```
+- [Installation Guide](docs/installation.md)
+- [Configuration Guide](docs/configuration.md)
+- [API Documentation](docs/api.md)
+- [Troubleshooting](docs/troubleshooting.md)
 
-### Client Mode
-```yaml
-mode: "client"
-network:
-  interface: "tun0"  # or "utun0" on macOS
-  address: "10.0.0.2/24"
-  mtu: 1500
-tunnel:
-  cert_file: "/etc/sssonector/certs/client.crt"
-  key_file: "/etc/sssonector/certs/client.key"
-  ca_file: "/etc/sssonector/certs/server.crt"
-  server_address: "SERVER_IP"
-  server_port: 8443
-  # Bandwidth control (optional)
-  upload_kbps: 10240    # 10 Mbps
-  download_kbps: 10240  # 10 Mbps
-```
+## Development
 
-## Building from Source
+### Requirements
 
-### Prerequisites
-- Go 1.21 or later
+- Go 1.21+
 - Make
+- OpenSSL
 - GCC
-- OpenSSL development libraries
 
-### Build Steps
+### Building
+
 ```bash
-# Clone the repository
-git clone https://github.com/o3willard-AI/SSSonector.git
-cd SSSonector
-
-# Install dependencies
-make deps
-
-# Build the project
+# Build binary
 make build
 
-# Create packages
+# Build packages
 make dist
+
+# Run tests
+make test
+
+# Install locally
+sudo make install
 ```
 
-## Monitoring
-
-### SNMP Metrics
-- Tunnel status
-- Connection uptime
-- Bandwidth usage
-- Packet loss
-- Latency
-- Error counts
-
-### Log Files
-- Linux: `/var/log/sssonector/sssonector.log`
-- macOS: `/var/log/sssonector/sssonector.log`
-- Windows: `C:\ProgramData\SSSonector\logs\sssonector.log`
-
-## Troubleshooting
-
-### Common Issues
-
-1. Connection Failures
-- Check firewall rules
-- Verify certificate permissions
-- Ensure correct IP addresses in configs
-
-2. Performance Issues
-- Check MTU settings
-- Verify bandwidth throttling configuration
-- Monitor system resources
-
-3. Certificate Problems
-- Verify certificate dates
-- Check certificate permissions
-- Ensure proper CA chain
-
-### Debug Mode
-```bash
-sudo sssonector -config /etc/sssonector/config.yaml -debug
-```
-
-## Security
-
-- TLS 1.3 only
-- EU-exportable cipher suites
-- Perfect Forward Secrecy
-- Certificate-based authentication
-- Regular security updates
-
-## License
-
-MIT License - see LICENSE file for details
-
-## Contributing
+### Contributing
 
 1. Fork the repository
-2. Create a feature branch
+2. Create your feature branch
 3. Commit your changes
 4. Push to the branch
 5. Create a Pull Request
 
-For detailed contribution guidelines, see [CONTRIBUTING.md](CONTRIBUTING.md)
+## License
 
-## Support
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-- GitHub Issues: Bug reports and feature requests
-- Documentation: [docs/](docs/)
-- Email: support@o3willard.com
+## Acknowledgments
+
+- The Go team for the excellent networking libraries
+- OpenSSL for the cryptographic foundations
+- The Linux kernel team for the TUN/TAP implementation

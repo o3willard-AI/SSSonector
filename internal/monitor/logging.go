@@ -5,85 +5,58 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/o3willard-AI/SSSonector/internal/config"
-
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
-	"gopkg.in/natefinch/lumberjack.v2"
 )
 
-var (
-	logger *zap.Logger
-)
-
-// InitLogging initializes the logging system based on configuration
-func InitLogging() error {
-	// Create default logger for startup
-	var err error
-	logger, err = zap.NewDevelopment()
-	if err != nil {
-		return fmt.Errorf("failed to create default logger: %w", err)
-	}
-	zap.ReplaceGlobals(logger)
-	return nil
+// LogConfig holds logging configuration
+type LogConfig struct {
+	LogFile  string
+	LogLevel string
+	MaxSize  int // megabytes
+	MaxAge   int // days
 }
 
-// ConfigureLogging configures logging based on the provided configuration
-func ConfigureLogging(cfg *config.LoggingConfig) error {
-	// Ensure log directory exists
-	logDir := filepath.Dir(cfg.FilePath)
-	if err := os.MkdirAll(logDir, 0755); err != nil {
-		return fmt.Errorf("failed to create log directory: %w", err)
+// NewLogger creates a new logger instance
+func NewLogger(cfg *LogConfig) (*zap.Logger, error) {
+	// Create log directory if it doesn't exist
+	if cfg.LogFile != "" {
+		logDir := filepath.Dir(cfg.LogFile)
+		if err := os.MkdirAll(logDir, 0755); err != nil {
+			return nil, fmt.Errorf("failed to create log directory: %w", err)
+		}
 	}
 
-	// Configure log rotation
-	writer := &lumberjack.Logger{
-		Filename:   cfg.FilePath,
-		MaxSize:    cfg.MaxSize,
-		MaxBackups: 3,
-		MaxAge:     28,   // days
-		Compress:   true, // compress rotated files
-	}
-
-	// Parse log level
-	var level zapcore.Level
-	switch cfg.Level {
-	case "debug":
-		level = zapcore.DebugLevel
-	case "info":
-		level = zapcore.InfoLevel
-	default:
-		return fmt.Errorf("invalid log level: %s (must be 'debug' or 'info')", cfg.Level)
-	}
-
-	// Create encoder config
+	// Configure encoder
 	encoderConfig := zap.NewProductionEncoderConfig()
-	encoderConfig.TimeKey = "timestamp"
+	encoderConfig.TimeKey = "ts"
 	encoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
 
-	// Create core for file logging
-	fileCore := zapcore.NewCore(
-		zapcore.NewJSONEncoder(encoderConfig),
-		zapcore.AddSync(writer),
-		level,
-	)
+	// Create core
+	var core zapcore.Core
+	if cfg.LogFile == "" {
+		// Log to stderr if no file specified
+		core = zapcore.NewCore(
+			zapcore.NewJSONEncoder(encoderConfig),
+			zapcore.Lock(os.Stderr),
+			zap.NewAtomicLevelAt(zap.InfoLevel),
+		)
+	} else {
+		// Log to file
+		file, err := os.OpenFile(cfg.LogFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			return nil, fmt.Errorf("failed to open log file: %w", err)
+		}
 
-	// Create new logger
-	newLogger := zap.New(fileCore, zap.AddCaller())
+		core = zapcore.NewCore(
+			zapcore.NewJSONEncoder(encoderConfig),
+			zapcore.Lock(file),
+			zap.NewAtomicLevelAt(zap.InfoLevel),
+		)
+	}
 
-	// Replace global logger
-	zap.ReplaceGlobals(newLogger)
-	logger = newLogger
+	// Create logger
+	logger := zap.New(core)
 
-	return nil
-}
-
-// GetLogger returns the configured logger instance
-func GetLogger() *zap.Logger {
-	return logger
-}
-
-// Sync flushes any buffered log entries
-func Sync() error {
-	return logger.Sync()
+	return logger, nil
 }
