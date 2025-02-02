@@ -1,173 +1,95 @@
 package main
 
 import (
-"flag"
-"fmt"
-"os"
-"os/signal"
-"syscall"
+	"flag"
+	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
 
-"github.com/o3willard-AI/SSSonector/internal/adapter"
-"github.com/o3willard-AI/SSSonector/internal/config"
-"github.com/o3willard-AI/SSSonector/internal/tunnel"
-"go.uber.org/zap"
+	"github.com/o3willard-AI/SSSonector/internal/config"
+	"go.uber.org/zap"
 )
 
 var (
-configPath string
-Version    string = "development"
+	configFile = flag.String("config", "/etc/sssonector/config.yaml", "Path to configuration file")
+	logger     *zap.Logger
 )
 
-func init() {
-flag.StringVar(&configPath, "config", "/etc/sssonector/config.yaml", "Path to configuration file")
+type tunneler interface {
+	Start() error
+	Stop() error
 }
 
 func main() {
-flag.Parse()
+	var err error
+	logger, err = zap.NewProduction()
+	if err != nil {
+		fmt.Printf("Failed to create logger: %v\n", err)
+		os.Exit(1)
+	}
+	defer logger.Sync()
 
-// Initialize logger
-logger, err := zap.NewProduction()
-if err != nil {
-fmt.Fprintf(os.Stderr, "Failed to initialize logger: %v\n", err)
-os.Exit(1)
-}
-defer logger.Sync()
+	flag.Parse()
 
-// Load configuration
-cfg, err := config.LoadConfig(configPath)
-if err != nil {
-logger.Fatal("Failed to load configuration",
-zap.String("path", configPath),
-zap.Error(err),
-)
-}
+	// Load configuration
+	cfg, err := config.Load(*configFile)
+	if err != nil {
+		logger.Fatal("Failed to load configuration",
+			zap.String("path", *configFile),
+			zap.Error(err),
+		)
+	}
 
-// Override mode from build tag if not explicitly set
-if cfg.Mode == "" {
-cfg.Mode = defaultMode
-}
+	// Create tunnel instance based on mode
+	var t tunneler
+	switch cfg.Mode {
+	case "server":
+		t, err = NewServer(cfg)
+	case "client":
+		t, err = NewClient(cfg)
+	default:
+		logger.Fatal("Invalid mode",
+			zap.String("mode", cfg.Mode),
+			zap.String("valid_modes", "server, client"),
+		)
+	}
 
-logger.Info("Starting SSSonector",
-zap.String("version", Version),
-zap.String("mode", cfg.Mode),
-zap.String("interface", cfg.Network.Interface),
-)
+	if err != nil {
+		logger.Fatal("Failed to create tunnel instance",
+			zap.String("mode", cfg.Mode),
+			zap.Error(err),
+		)
+	}
 
-// Set up signal handling
-sigChan := make(chan os.Signal, 1)
-signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	// Start tunnel
+	if err := t.Start(); err != nil {
+		logger.Fatal("Failed to start tunnel",
+			zap.String("mode", cfg.Mode),
+			zap.Error(err),
+		)
+	}
 
-// Initialize components based on mode
-var tunnel interface {
-Start() error
-Stop() error
-}
+	logger.Info("Tunnel started",
+		zap.String("mode", cfg.Mode),
+		zap.String("interface", cfg.Network.Interface),
+	)
 
-if cfg.Mode == "server" {
-tunnel, err = initializeServer(logger, cfg)
-} else {
-tunnel, err = initializeClient(logger, cfg)
-}
+	// Handle shutdown signals
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	<-sigCh
 
-if err != nil {
-logger.Fatal("Failed to initialize tunnel",
-zap.String("mode", cfg.Mode),
-zap.Error(err),
-)
-}
+	logger.Info("Shutting down...")
 
-// Start the tunnel
-if err := tunnel.Start(); err != nil {
-logger.Fatal("Failed to start tunnel",
-zap.Error(err),
-)
-}
+	// Stop tunnel
+	if err := t.Stop(); err != nil {
+		logger.Error("Failed to stop tunnel cleanly",
+			zap.String("mode", cfg.Mode),
+			zap.Error(err),
+		)
+		os.Exit(1)
+	}
 
-// Wait for shutdown signal
-sig := <-sigChan
-logger.Info("Received shutdown signal",
-zap.String("signal", sig.String()),
-)
-
-// Graceful shutdown
-if err := tunnel.Stop(); err != nil {
-logger.Error("Error during shutdown",
-zap.Error(err),
-)
-os.Exit(1)
-}
-
-logger.Info("Shutdown complete")
-}
-
-type serverTunnel struct {
-*tunnel.Tunnel
-}
-
-func (s *serverTunnel) Start() error {
-return s.Tunnel.Start("server")
-}
-
-type clientTunnel struct {
-*tunnel.Tunnel
-}
-
-func (c *clientTunnel) Start() error {
-return c.Tunnel.Start("client")
-}
-
-func initializeServer(logger *zap.Logger, cfg *config.Config) (interface {
-Start() error
-Stop() error
-}, error) {
-// Create network interface
-ifaceManager, err := adapter.NewManager(&adapter.Config{
-Name:    cfg.Network.Interface,
-Address: cfg.Network.Address,
-MTU:     cfg.Network.MTU,
-})
-if err != nil {
-return nil, fmt.Errorf("failed to create interface manager: %w", err)
-}
-
-// Create and configure the interface
-if err := ifaceManager.Create(&adapter.Config{
-Name:    cfg.Network.Interface,
-Address: cfg.Network.Address,
-MTU:     cfg.Network.MTU,
-}); err != nil {
-return nil, fmt.Errorf("failed to create and configure interface: %w", err)
-}
-
-// Create tunnel
-t := tunnel.NewTunnel(logger, &cfg.Tunnel, ifaceManager.GetInterface())
-return &serverTunnel{Tunnel: t}, nil
-}
-
-func initializeClient(logger *zap.Logger, cfg *config.Config) (interface {
-Start() error
-Stop() error
-}, error) {
-// Create network interface
-ifaceManager, err := adapter.NewManager(&adapter.Config{
-Name:    cfg.Network.Interface,
-Address: cfg.Network.Address,
-MTU:     cfg.Network.MTU,
-})
-if err != nil {
-return nil, fmt.Errorf("failed to create interface manager: %w", err)
-}
-
-// Create and configure the interface
-if err := ifaceManager.Create(&adapter.Config{
-Name:    cfg.Network.Interface,
-Address: cfg.Network.Address,
-MTU:     cfg.Network.MTU,
-}); err != nil {
-return nil, fmt.Errorf("failed to create and configure interface: %w", err)
-}
-
-// Create tunnel
-t := tunnel.NewTunnel(logger, &cfg.Tunnel, ifaceManager.GetInterface())
-return &clientTunnel{Tunnel: t}, nil
+	logger.Info("Shutdown complete")
 }

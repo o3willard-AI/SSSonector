@@ -2,64 +2,32 @@ package config
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
+	"io/ioutil"
 
-	"github.com/spf13/viper"
+	"gopkg.in/yaml.v3"
 )
 
-// LoadConfig loads the configuration from the specified file
-func LoadConfig(configPath string) (*Config, error) {
-	v := viper.New()
-	v.SetConfigType("yaml")
-
-	// Read config file
-	configFile, err := os.Open(configPath)
+// Load reads and parses the configuration file
+func Load(path string) (*Config, error) {
+	data, err := ioutil.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("error opening config file: %w", err)
-	}
-	defer configFile.Close()
-
-	if err := v.ReadConfig(configFile); err != nil {
-		return nil, fmt.Errorf("error reading config file: %w", err)
+		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
 
-	// Set default values
-	setDefaults(v)
-
-	// Unmarshal config
-	var config Config
-	if err := v.Unmarshal(&config); err != nil {
-		return nil, fmt.Errorf("error unmarshaling config: %w", err)
+	cfg := &Config{}
+	if err := yaml.Unmarshal(data, cfg); err != nil {
+		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
 
-	// Validate config
-	if err := validateConfig(&config); err != nil {
+	if err := validate(cfg); err != nil {
 		return nil, fmt.Errorf("config validation error: %w", err)
 	}
 
-	// Resolve paths
-	resolvePaths(&config, filepath.Dir(configPath))
-
-	return &config, nil
+	return cfg, nil
 }
 
-// setDefaults sets default values for configuration
-func setDefaults(v *viper.Viper) {
-	v.SetDefault("network.mtu", 1500)
-	v.SetDefault("tunnel.retry_attempts", 3)
-	v.SetDefault("tunnel.retry_interval", 5)
-	v.SetDefault("monitor.snmp_enabled", false)
-	v.SetDefault("monitor.snmp_port", 161)
-	v.SetDefault("monitor.snmp_community", "public")
-	v.SetDefault("logging.level", "info")
-	v.SetDefault("logging.max_size", 100)
-	v.SetDefault("throttle.upload_kbps", 10240)   // 10 Mbps
-	v.SetDefault("throttle.download_kbps", 10240) // 10 Mbps
-}
-
-// validateConfig validates the configuration
-func validateConfig(cfg *Config) error {
+// validate checks the configuration for required fields and valid values
+func validate(cfg *Config) error {
 	if cfg.Mode != "server" && cfg.Mode != "client" {
 		return fmt.Errorf("invalid mode: %s (must be 'server' or 'client')", cfg.Mode)
 	}
@@ -72,8 +40,8 @@ func validateConfig(cfg *Config) error {
 		return fmt.Errorf("network address is required")
 	}
 
-	if cfg.Network.MTU < 576 || cfg.Network.MTU > 9000 {
-		return fmt.Errorf("invalid MTU: %d (must be between 576 and 9000)", cfg.Network.MTU)
+	if cfg.Network.MTU < 1280 || cfg.Network.MTU > 9000 {
+		return fmt.Errorf("invalid MTU: %d (must be between 1280 and 9000)", cfg.Network.MTU)
 	}
 
 	if cfg.Tunnel.CertFile == "" {
@@ -89,39 +57,28 @@ func validateConfig(cfg *Config) error {
 	}
 
 	if cfg.Mode == "server" {
-		if cfg.Tunnel.ListenAddress == "" {
-			return fmt.Errorf("listen address is required in server mode")
-		}
-		if cfg.Tunnel.ListenPort <= 0 || cfg.Tunnel.ListenPort > 65535 {
+		if cfg.Tunnel.ListenPort < 1 || cfg.Tunnel.ListenPort > 65535 {
 			return fmt.Errorf("invalid listen port: %d", cfg.Tunnel.ListenPort)
+		}
+		if cfg.Tunnel.MaxClients < 1 {
+			return fmt.Errorf("max clients must be greater than 0")
 		}
 	} else {
 		if cfg.Tunnel.ServerAddress == "" {
 			return fmt.Errorf("server address is required in client mode")
 		}
-		if cfg.Tunnel.ServerPort <= 0 || cfg.Tunnel.ServerPort > 65535 {
+		if cfg.Tunnel.ServerPort < 1 || cfg.Tunnel.ServerPort > 65535 {
 			return fmt.Errorf("invalid server port: %d", cfg.Tunnel.ServerPort)
 		}
 	}
 
-	return nil
-}
+	if cfg.Tunnel.UploadKbps < 0 {
+		return fmt.Errorf("upload bandwidth limit cannot be negative")
+	}
 
-// resolvePaths resolves relative paths in the configuration
-func resolvePaths(cfg *Config, baseDir string) {
-	if !filepath.IsAbs(cfg.Tunnel.CertFile) {
-		cfg.Tunnel.CertFile = filepath.Join(baseDir, cfg.Tunnel.CertFile)
+	if cfg.Tunnel.DownloadKbps < 0 {
+		return fmt.Errorf("download bandwidth limit cannot be negative")
 	}
-	if !filepath.IsAbs(cfg.Tunnel.KeyFile) {
-		cfg.Tunnel.KeyFile = filepath.Join(baseDir, cfg.Tunnel.KeyFile)
-	}
-	if !filepath.IsAbs(cfg.Tunnel.CAFile) {
-		cfg.Tunnel.CAFile = filepath.Join(baseDir, cfg.Tunnel.CAFile)
-	}
-	if !filepath.IsAbs(cfg.Monitor.LogFile) {
-		cfg.Monitor.LogFile = filepath.Join(baseDir, cfg.Monitor.LogFile)
-	}
-	if !filepath.IsAbs(cfg.Logging.FilePath) {
-		cfg.Logging.FilePath = filepath.Join(baseDir, cfg.Logging.FilePath)
-	}
+
+	return nil
 }

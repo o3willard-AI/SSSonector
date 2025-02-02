@@ -1,141 +1,95 @@
 package throttle
 
 import (
+	"context"
 	"io"
-	"time"
+	"sync"
 
 	"golang.org/x/time/rate"
 )
 
-// Limiter implements bandwidth throttling for network connections
+// Limiter implements bandwidth throttling
 type Limiter struct {
-	reader     io.Reader
-	writer     io.Writer
-	readLimit  *rate.Limiter
-	writeLimit *rate.Limiter
+	reader   io.Reader
+	writer   io.Writer
+	inLimit  *rate.Limiter
+	outLimit *rate.Limiter
+	mu       sync.RWMutex
 }
 
 // NewLimiter creates a new bandwidth limiter
 func NewLimiter(reader io.Reader, writer io.Writer, uploadKbps, downloadKbps int64) *Limiter {
-	var readLimit, writeLimit *rate.Limiter
-
-	if downloadKbps > 0 {
-		bytesPerSec := downloadKbps * 1024 / 8 // Convert Kbps to bytes per second
-		readLimit = rate.NewLimiter(rate.Limit(bytesPerSec), int(bytesPerSec))
-	}
-
-	if uploadKbps > 0 {
-		bytesPerSec := uploadKbps * 1024 / 8 // Convert Kbps to bytes per second
-		writeLimit = rate.NewLimiter(rate.Limit(bytesPerSec), int(bytesPerSec))
-	}
-
 	return &Limiter{
-		reader:     reader,
-		writer:     writer,
-		readLimit:  readLimit,
-		writeLimit: writeLimit,
+		reader:   reader,
+		writer:   writer,
+		inLimit:  rate.NewLimiter(rate.Limit(downloadKbps*1024), int(downloadKbps*1024)), // burst = 1 second worth
+		outLimit: rate.NewLimiter(rate.Limit(uploadKbps*1024), int(uploadKbps*1024)),     // burst = 1 second worth
 	}
 }
 
-// Read implements io.Reader with bandwidth throttling
+// Read implements io.Reader with download throttling
 func (l *Limiter) Read(p []byte) (n int, err error) {
-	if l.readLimit == nil {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+
+	if l.inLimit == nil {
 		return l.reader.Read(p)
 	}
 
 	n, err = l.reader.Read(p)
-	if n <= 0 {
+	if err != nil {
 		return n, err
 	}
 
-	now := time.Now()
-	reservation := l.readLimit.ReserveN(now, n)
-	if !reservation.OK() {
-		reservation.Cancel()
+	if err := l.inLimit.WaitN(context.Background(), n); err != nil {
 		return n, err
 	}
 
-	delay := reservation.DelayFrom(now)
-	if delay > 0 {
-		time.Sleep(delay)
-	}
-
-	return n, err
+	return n, nil
 }
 
-// Write implements io.Writer with bandwidth throttling
+// Write implements io.Writer with upload throttling
 func (l *Limiter) Write(p []byte) (n int, err error) {
-	if l.writeLimit == nil {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+
+	if l.outLimit == nil {
 		return l.writer.Write(p)
 	}
 
-	n, err = l.writer.Write(p)
-	if n <= 0 {
-		return n, err
+	if err := l.outLimit.WaitN(context.Background(), len(p)); err != nil {
+		return 0, err
 	}
 
-	now := time.Now()
-	reservation := l.writeLimit.ReserveN(now, n)
-	if !reservation.OK() {
-		reservation.Cancel()
-		return n, err
-	}
-
-	delay := reservation.DelayFrom(now)
-	if delay > 0 {
-		time.Sleep(delay)
-	}
-
-	return n, err
-}
-
-// Close implements io.Closer
-func (l *Limiter) Close() error {
-	if closer, ok := l.reader.(io.Closer); ok {
-		if err := closer.Close(); err != nil {
-			return err
-		}
-	}
-	if closer, ok := l.writer.(io.Closer); ok {
-		if err := closer.Close(); err != nil {
-			return err
-		}
-	}
-	return nil
+	return l.writer.Write(p)
 }
 
 // SetUploadLimit updates the upload bandwidth limit
 func (l *Limiter) SetUploadLimit(kbps int64) {
-	if kbps > 0 {
-		bytesPerSec := kbps * 1024 / 8
-		l.writeLimit = rate.NewLimiter(rate.Limit(bytesPerSec), int(bytesPerSec))
-	} else {
-		l.writeLimit = nil
-	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.outLimit.SetLimit(rate.Limit(kbps * 1024))
+	l.outLimit.SetBurst(int(kbps * 1024))
 }
 
 // SetDownloadLimit updates the download bandwidth limit
 func (l *Limiter) SetDownloadLimit(kbps int64) {
-	if kbps > 0 {
-		bytesPerSec := kbps * 1024 / 8
-		l.readLimit = rate.NewLimiter(rate.Limit(bytesPerSec), int(bytesPerSec))
-	} else {
-		l.readLimit = nil
-	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.inLimit.SetLimit(rate.Limit(kbps * 1024))
+	l.inLimit.SetBurst(int(kbps * 1024))
 }
 
-// GetUploadLimit returns the current upload limit in Kbps
+// GetUploadLimit returns the current upload bandwidth limit in Kbps
 func (l *Limiter) GetUploadLimit() int64 {
-	if l.writeLimit == nil {
-		return 0
-	}
-	return int64(l.writeLimit.Limit()) * 8 / 1024
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return int64(l.outLimit.Limit() / 1024)
 }
 
-// GetDownloadLimit returns the current download limit in Kbps
+// GetDownloadLimit returns the current download bandwidth limit in Kbps
 func (l *Limiter) GetDownloadLimit() int64 {
-	if l.readLimit == nil {
-		return 0
-	}
-	return int64(l.readLimit.Limit()) * 8 / 1024
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return int64(l.inLimit.Limit() / 1024)
 }

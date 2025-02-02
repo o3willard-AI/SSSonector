@@ -1,97 +1,97 @@
 package monitor
 
 import (
+	"fmt"
+	"net"
+	"sync"
 	"time"
-
-	"github.com/gosnmp/gosnmp"
-	"github.com/o3willard-AI/SSSonector/internal/config"
-	"go.uber.org/zap"
 )
 
 // SNMPAgent handles SNMP monitoring
 type SNMPAgent struct {
-	logger    *zap.Logger
-	config    *config.MonitorConfig
-	snmp      *gosnmp.GoSNMP
+	config    *Config
 	metrics   *Metrics
+	conn      *net.UDPConn
 	startTime time.Time
+	mu        sync.RWMutex
 }
 
 // NewSNMPAgent creates a new SNMP agent
-func NewSNMPAgent(logger *zap.Logger, cfg *config.MonitorConfig) (*SNMPAgent, error) {
-	agent := &SNMPAgent{
-		logger:    logger,
+func NewSNMPAgent(cfg *Config, metrics *Metrics) (*SNMPAgent, error) {
+	return &SNMPAgent{
 		config:    cfg,
+		metrics:   metrics,
 		startTime: time.Now(),
-		metrics:   NewMetrics(),
-	}
-
-	if err := agent.initSNMP(); err != nil {
-		return nil, err
-	}
-
-	return agent, nil
+	}, nil
 }
 
-// initSNMP initializes the SNMP server
-func (a *SNMPAgent) initSNMP() error {
-	a.snmp = &gosnmp.GoSNMP{
-		Target:             a.config.SNMPAddress,
-		Port:               uint16(a.config.SNMPPort),
-		Community:          a.config.SNMPCommunity,
-		Version:            gosnmp.Version2c,
-		Timeout:            time.Duration(2) * time.Second,
-		SecurityModel:      gosnmp.UserSecurityModel,
-		MsgFlags:           gosnmp.NoAuthNoPriv,
-		SecurityParameters: &gosnmp.UsmSecurityParameters{},
-	}
-
-	return a.snmp.Connect()
-}
-
-// Start starts the SNMP agent
+// Start initializes the SNMP agent
 func (a *SNMPAgent) Start() error {
-	if !a.config.SNMPEnabled {
-		return nil
+	addr, err := net.ResolveUDPAddr("udp", fmt.Sprintf("%s:%d", a.config.SNMPAddress, a.config.SNMPPort))
+	if err != nil {
+		return fmt.Errorf("failed to resolve SNMP address: %w", err)
 	}
 
-	a.logger.Info("Starting SNMP agent",
-		zap.String("address", a.config.SNMPAddress),
-		zap.Int("port", a.config.SNMPPort),
+	conn, err := net.ListenUDP("udp", addr)
+	if err != nil {
+		return fmt.Errorf("failed to start SNMP listener: %w", err)
+	}
+
+	a.conn = conn
+	go a.handleRequests()
+
+	return nil
+}
+
+// Stop shuts down the SNMP agent
+func (a *SNMPAgent) Stop() {
+	if a.conn != nil {
+		a.conn.Close()
+	}
+}
+
+func (a *SNMPAgent) handleRequests() {
+	buffer := make([]byte, 1024)
+	for {
+		n, remoteAddr, err := a.conn.ReadFromUDP(buffer)
+		if err != nil {
+			// Connection closed or error
+			return
+		}
+
+		// Handle SNMP request
+		response := a.processRequest(buffer[:n])
+		a.conn.WriteToUDP(response, remoteAddr)
+	}
+}
+
+func (a *SNMPAgent) processRequest(request []byte) []byte {
+	// This is a simplified implementation
+	// In a real implementation, this would parse SNMP PDUs and handle different request types
+
+	a.mu.RLock()
+	metrics := a.metrics.Clone()
+	a.mu.RUnlock()
+
+	// Create a simple response with metrics
+	// In a real implementation, this would create proper SNMP PDUs
+	response := fmt.Sprintf(`{
+		"bytes_in": %d,
+		"bytes_out": %d,
+		"packets_in": %d,
+		"packets_out": %d,
+		"errors": %d,
+		"uptime": %d,
+		"connections": %d
+	}`,
+		metrics.BytesIn,
+		metrics.BytesOut,
+		metrics.PacketsIn,
+		metrics.PacketsOut,
+		metrics.Errors,
+		metrics.Uptime,
+		metrics.Connections,
 	)
 
-	return nil
-}
-
-// Stop stops the SNMP agent
-func (a *SNMPAgent) Stop() error {
-	if a.snmp != nil {
-		return a.snmp.Conn.Close()
-	}
-	return nil
-}
-
-// UpdateMetrics updates the SNMP metrics
-func (a *SNMPAgent) UpdateMetrics(bytesReceived, bytesSent uint64, connections int) {
-	if !a.config.SNMPEnabled {
-		return
-	}
-
-	a.metrics.BytesReceived = bytesReceived
-	a.metrics.BytesSent = bytesSent
-	a.metrics.Connections = connections
-	a.metrics.Uptime = time.Since(a.startTime).Seconds()
-}
-
-// Metrics holds monitoring metrics
-type Metrics struct {
-	BytesReceived uint64
-	BytesSent     uint64
-	Connections   int
-	Uptime        float64
-}
-
-// NewMetrics creates a new metrics instance
-func NewMetrics() *Metrics {
-	return &Metrics{}
+	return []byte(response)
 }
