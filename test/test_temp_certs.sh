@@ -51,6 +51,31 @@ EOL"
         return 1
     fi
     
+    # Install dependencies
+    ssh "$system" "cd /tmp/SSSonector && GOPROXY=direct go get gopkg.in/yaml.v2@v2.4.0"
+    if [ $? -ne 0 ]; then
+        log "Failed to get yaml.v2"
+        return 1
+    fi
+    
+    ssh "$system" "cd /tmp/SSSonector && GOPROXY=direct go get github.com/sirupsen/logrus@v1.9.3"
+    if [ $? -ne 0 ]; then
+        log "Failed to get logrus"
+        return 1
+    fi
+    
+    ssh "$system" "cd /tmp/SSSonector && GOPROXY=direct go get golang.org/x/crypto@v0.17.0"
+    if [ $? -ne 0 ]; then
+        log "Failed to get crypto"
+        return 1
+    fi
+    
+    ssh "$system" "cd /tmp/SSSonector && GOPROXY=direct go get golang.org/x/sys@v0.15.0"
+    if [ $? -ne 0 ]; then
+        log "Failed to get sys"
+        return 1
+    fi
+    
     # Download dependencies and build
     ssh "$system" "cd /tmp/SSSonector && GOPROXY=direct go mod download"
     if [ $? -ne 0 ]; then
