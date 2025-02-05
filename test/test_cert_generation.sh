@@ -21,12 +21,16 @@ ensure_binary() {
     # Clean up any existing repository
     ssh "$system" "rm -rf /tmp/SSSonector"
     
-    # Build and copy binary
-    if ! ssh "$system" "cd /tmp && git clone https://github.com/o3willard-AI/SSSonector.git && \
+    # Clone and build
+    if ! ssh "$system" "cd /tmp && \
+                        git clone https://github.com/o3willard-AI/SSSonector.git && \
                         cd SSSonector && \
                         git checkout main && \
                         git pull && \
-                        make clean && make build && \
+                        go mod download && \
+                        go mod tidy && \
+                        make clean && \
+                        GOPROXY=direct make build && \
                         sudo cp bin/sssonector /usr/local/bin/ && \
                         sudo chmod +x /usr/local/bin/sssonector"; then
         log "Failed to build and install sssonector on $system"
