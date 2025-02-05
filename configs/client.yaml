@@ -1,20 +1,21 @@
 mode: "client"
+
 network:
   interface: "tun0"
   address: "10.0.0.2/24"
   mtu: 1500
 
 tunnel:
-  certFile: "/etc/sssonector/certs/client.crt"
-  keyFile: "/etc/sssonector/certs/client.key"
-  caFile: "/etc/sssonector/certs/server.crt"
-  serverAddress: "192.168.50.210"
-  serverPort: 8443
-  uploadKbps: 10240
-  downloadKbps: 10240
+  cert_file: "/etc/sssonector/certs/client.crt"
+  key_file: "/etc/sssonector/certs/client.key"
+  ca_file: "/etc/sssonector/certs/ca.crt"
+  server_address: "server.example.com"
+  server_port: 8443
+  upload_kbps: 10240
+  download_kbps: 10240
 
 monitor:
-  logFile: "/var/log/sssonector/client.log"
-  snmpEnabled: false
-  snmpPort: 161
-  snmpCommunity: "public"
+  log_file: "/var/log/sssonector/client.log"
+  snmp_enabled: false
+  snmp_port: 161
+  snmp_community: "public"

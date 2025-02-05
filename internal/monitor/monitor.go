@@ -22,6 +22,7 @@ type Monitor struct {
 	logger    *zap.Logger
 	config    *Config
 	metrics   *Metrics
+	snmpAgent *SNMPAgent
 	startTime time.Time
 	mu        sync.RWMutex
 }
@@ -33,28 +34,42 @@ func New(cfg *Config) (*Monitor, error) {
 		return nil, fmt.Errorf("failed to create logger: %w", err)
 	}
 
-	return &Monitor{
+	m := &Monitor{
 		logger:    logger,
 		config:    cfg,
 		metrics:   NewMetrics(),
 		startTime: time.Now(),
-	}, nil
+	}
+
+	// Initialize SNMP agent if enabled
+	if cfg.SNMPEnabled {
+		m.snmpAgent, err = NewSNMPAgent(cfg, m.metrics)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create SNMP agent: %w", err)
+		}
+	}
+
+	return m, nil
 }
 
 // Start initializes monitoring
 func (m *Monitor) Start() error {
-	if m.config.SNMPEnabled {
-		if err := m.startSNMP(); err != nil {
-			return fmt.Errorf("failed to start SNMP: %w", err)
+	if m.config.SNMPEnabled && m.snmpAgent != nil {
+		if err := m.snmpAgent.Start(); err != nil {
+			return fmt.Errorf("failed to start SNMP agent: %w", err)
 		}
+		m.Info("SNMP monitoring started",
+			zap.String("address", m.config.SNMPAddress),
+			zap.Int("port", m.config.SNMPPort))
 	}
 	return nil
 }
 
 // Stop shuts down monitoring
 func (m *Monitor) Stop() {
-	if m.config.SNMPEnabled {
-		m.stopSNMP()
+	if m.config.SNMPEnabled && m.snmpAgent != nil {
+		m.snmpAgent.Stop()
+		m.Info("SNMP monitoring stopped")
 	}
 	m.logger.Sync()
 }
@@ -96,13 +111,4 @@ func (m *Monitor) GetMetrics() *Metrics {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.metrics.Clone()
-}
-
-func (m *Monitor) startSNMP() error {
-	// SNMP initialization would go here
-	return nil
-}
-
-func (m *Monitor) stopSNMP() {
-	// SNMP cleanup would go here
 }
