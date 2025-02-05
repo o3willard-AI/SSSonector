@@ -24,12 +24,20 @@ ensure_binary() {
     ssh "$system" "rm -rf /tmp/SSSonector"
     
     # Clone and build
-    if ! ssh "$system" "cd /tmp && \
-                        git clone https://github.com/o3willard-AI/SSSonector.git && \
-                        cd SSSonector && \
-                        git checkout main && \
-                        git pull && \
-                        cat > go.mod << 'EOL'
+    ssh "$system" "cd /tmp && git clone https://github.com/o3willard-AI/SSSonector.git"
+    if [ $? -ne 0 ]; then
+        log "Failed to clone repository"
+        return 1
+    fi
+    
+    ssh "$system" "cd /tmp/SSSonector && git checkout main && git pull"
+    if [ $? -ne 0 ]; then
+        log "Failed to update repository"
+        return 1
+    fi
+    
+    # Create go.mod with dependencies
+    ssh "$system" "cd /tmp/SSSonector && cat > go.mod << 'EOL'
 module github.com/o3willard-AI/SSSonector
 
 go 1.21
@@ -40,14 +48,41 @@ require (
     golang.org/x/crypto v0.17.0
     golang.org/x/sys v0.15.0
 )
-EOL
-                        && GOPROXY=direct go mod download && \
-                        GOPROXY=direct go mod tidy && \
-                        make clean && \
-                        GOPROXY=direct make build && \
-                        sudo cp bin/sssonector /usr/local/bin/ && \
-                        sudo chmod +x /usr/local/bin/sssonector"; then
-        log "Failed to build and install sssonector on $system"
+EOL"
+    if [ $? -ne 0 ]; then
+        log "Failed to create go.mod"
+        return 1
+    fi
+    
+    # Download dependencies and build
+    ssh "$system" "cd /tmp/SSSonector && GOPROXY=direct go mod download"
+    if [ $? -ne 0 ]; then
+        log "Failed to download dependencies"
+        return 1
+    fi
+    
+    ssh "$system" "cd /tmp/SSSonector && GOPROXY=direct go mod tidy"
+    if [ $? -ne 0 ]; then
+        log "Failed to tidy dependencies"
+        return 1
+    fi
+    
+    ssh "$system" "cd /tmp/SSSonector && make clean"
+    if [ $? -ne 0 ]; then
+        log "Failed to clean build"
+        return 1
+    fi
+    
+    ssh "$system" "cd /tmp/SSSonector && GOPROXY=direct make build"
+    if [ $? -ne 0 ]; then
+        log "Failed to build binary"
+        return 1
+    fi
+    
+    # Install binary
+    ssh "$system" "cd /tmp/SSSonector && sudo cp bin/sssonector /usr/local/bin/ && sudo chmod +x /usr/local/bin/sssonector"
+    if [ $? -ne 0 ]; then
+        log "Failed to install binary"
         return 1
     fi
     
