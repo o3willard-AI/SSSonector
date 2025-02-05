@@ -1,134 +1,142 @@
-# SSSonector
+# SSSonector - SSL Tunnel Application
 
-A high-performance SSL tunneling application for secure network connectivity.
+SSSonector is a secure SSL tunneling application that provides encrypted communication between servers and clients.
 
 ## Features
 
-- Secure SSL/TLS encrypted tunneling
-- Linux TUN device support
-- Bandwidth throttling
-- Connection management
-- Real-time monitoring with SNMP support
-- YAML-based configuration
-- Cross-platform support (Linux, macOS*, Windows*)
-
-*Platform support in development
+- Secure SSL/TLS tunneling
+- Automatic certificate management
+- Built-in certificate generation
+- Quick test mode for troubleshooting
+- Rate limiting support
+- SNMP monitoring (optional)
+- Cross-platform support (Linux, macOS, Windows)
 
 ## Quick Start
 
-### Installation
-
-#### From Packages
-
-##### Debian/Ubuntu:
+1. Generate certificates:
 ```bash
-sudo dpkg -i sssonector_1.0.0_amd64.deb
+sssonector -keygen
 ```
 
-##### RHEL/CentOS:
+2. Start the server:
 ```bash
-sudo rpm -i sssonector-1.0.0-1.x86_64.rpm
+sssonector -mode server -config /etc/sssonector/config.yaml
 ```
 
-##### macOS:
+3. Start the client:
 ```bash
-sudo installer -pkg sssonector-1.0.0.pkg -target /
+sssonector -mode client -config /etc/sssonector/config.yaml
 ```
 
-##### Windows:
-Run the installer: `sssonector-1.0.0-setup.exe`
+## Installation
 
-#### From Source
+See the installation guides for your platform:
+- [Linux Installation](docs/linux_install.md)
+- [Windows Installation](docs/windows_install.md)
+- [macOS Installation](docs/macos_build.md)
+- [Ubuntu Installation](docs/ubuntu_install.md)
 
-1. Install Go 1.21 or later
-2. Clone the repository:
-   ```bash
-   git clone https://github.com/o3willard-AI/SSSonector.git
-   cd SSSonector
-   ```
-3. Build and install:
-   ```bash
-   make
-   sudo make install
-   ```
+## Configuration
 
-### Configuration
+SSSonector uses YAML configuration files. Example configurations are provided:
+- [Server Configuration](configs/server.yaml)
+- [Client Configuration](configs/client.yaml)
 
-1. Create configuration directory:
-   ```bash
-   sudo mkdir -p /etc/sssonector/certs
-   ```
+## Certificate Management
 
-2. Copy sample configurations:
-   ```bash
-   sudo cp configs/server.yaml /etc/sssonector/config.yaml  # For server
-   sudo cp configs/client.yaml /etc/sssonector/config.yaml  # For client
-   ```
+SSSonector includes comprehensive certificate management features:
+- Automatic certificate generation
+- Certificate validation and verification
+- Test mode with temporary certificates
+- Flexible certificate location options
 
-3. Generate SSL certificates:
-   ```bash
-   openssl req -x509 -newkey rsa:4096 -keyout /etc/sssonector/certs/server.key \
-     -out /etc/sssonector/certs/server.crt -days 365 -nodes
-   ```
+See [Certificate Management](docs/certificate_management.md) for detailed documentation.
 
-### Usage
+## Command Line Options
 
-#### Server Mode
-```bash
-sudo sssonector -config /etc/sssonector/config.yaml
+```
+Usage: sssonector [options]
+
+Options:
+  -config string
+        Path to configuration file
+  -keygen
+        Generate SSL certificates
+  -keyfile string
+        Directory containing SSL certificates
+  -mode string
+        Operation mode (server/client)
+  -test-without-certs
+        Run a 15-second test connection without certificates
 ```
 
-#### Client Mode
-```bash
-sudo sssonector -config /etc/sssonector/config.yaml
-```
+## Testing
 
-## Documentation
-
-- [Installation Guide](docs/installation.md)
-- [Configuration Guide](docs/configuration.md)
-- [API Documentation](docs/api.md)
-- [Troubleshooting](docs/troubleshooting.md)
-
-## Development
-
-### Requirements
-
-- Go 1.21+
-- Make
-- OpenSSL
-- GCC
-
-### Building
+For quick connectivity testing without setting up certificates:
 
 ```bash
-# Build binary
-make build
+# Server side
+sssonector -mode server -test-without-certs
 
-# Build packages
-make dist
-
-# Run tests
-make test
-
-# Install locally
-sudo make install
+# Client side
+sssonector -mode client -test-without-certs
 ```
 
-### Contributing
+This will create temporary certificates valid for 15 seconds to test the connection.
+
+## Monitoring
+
+SSSonector supports SNMP monitoring for:
+- Connection status
+- Bandwidth usage
+- Error rates
+- Client connections (server mode)
+
+Enable monitoring in the configuration file:
+```yaml
+monitor:
+  snmp_enabled: true
+  snmp_port: 161
+  snmp_community: "public"
+```
+
+## Project Structure
+
+```
+.
+├── cmd/
+│   └── tunnel/          # Main application
+├── configs/             # Example configurations
+├── docs/               # Documentation
+├── internal/
+│   ├── adapter/        # Platform-specific code
+│   ├── cert/          # Certificate management
+│   ├── config/        # Configuration handling
+│   ├── connection/    # Connection management
+│   ├── monitor/       # Monitoring and metrics
+│   ├── throttle/      # Rate limiting
+│   └── tunnel/        # Core tunnel functionality
+└── installers/        # Platform installers
+```
+
+## Contributing
 
 1. Fork the repository
-2. Create your feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a Pull Request
+2. Create a feature branch
+3. Make your changes
+4. Submit a pull request
 
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## Acknowledgments
+## Security
 
-- The Go team for the excellent networking libraries
-- OpenSSL for the cryptographic foundations
-- The Linux kernel team for the TUN/TAP implementation
+Report security issues to security@sssonector.example.com (do not use for support).
+
+## Support
+
+- Documentation: See [docs/](docs/) directory
+- Issues: Use GitHub issue tracker
+- Community: Join our [Discord server](https://discord.gg/sssonector)

@@ -1,6 +1,6 @@
 package config
 
-// Config holds the complete application configuration
+// Config represents the main application configuration
 type Config struct {
 	Mode    string        `yaml:"mode"`
 	Network NetworkConfig `yaml:"network"`
@@ -8,28 +8,35 @@ type Config struct {
 	Monitor MonitorConfig `yaml:"monitor"`
 }
 
-// NetworkConfig holds network interface configuration
+// NetworkConfig contains network interface settings
 type NetworkConfig struct {
 	Interface string `yaml:"interface"`
 	Address   string `yaml:"address"`
 	MTU       int    `yaml:"mtu"`
 }
 
-// TunnelConfig holds tunnel configuration
+// TunnelConfig contains SSL tunnel settings
 type TunnelConfig struct {
-	CertFile      string `yaml:"cert_file"`
-	KeyFile       string `yaml:"key_file"`
-	CAFile        string `yaml:"ca_file"`
-	ListenAddress string `yaml:"listen_address"`
-	ListenPort    int    `yaml:"listen_port"`
-	ServerAddress string `yaml:"server_address"`
-	ServerPort    int    `yaml:"server_port"`
-	MaxClients    int    `yaml:"max_clients"`
-	UploadKbps    int    `yaml:"upload_kbps"`
-	DownloadKbps  int    `yaml:"download_kbps"`
+	// Certificate paths
+	CertFile string `yaml:"cert_file"`
+	KeyFile  string `yaml:"key_file"`
+	CAFile   string `yaml:"ca_file"`
+
+	// Server settings
+	ListenAddress string `yaml:"listen_address,omitempty"`
+	ListenPort    int    `yaml:"listen_port,omitempty"`
+	MaxClients    int    `yaml:"max_clients,omitempty"`
+
+	// Client settings
+	ServerAddress string `yaml:"server_address,omitempty"`
+	ServerPort    int    `yaml:"server_port,omitempty"`
+
+	// Rate limiting settings
+	UploadKbps   int `yaml:"upload_kbps"`
+	DownloadKbps int `yaml:"download_kbps"`
 }
 
-// MonitorConfig holds monitoring configuration
+// MonitorConfig contains monitoring settings
 type MonitorConfig struct {
 	LogFile       string `yaml:"log_file"`
 	SNMPEnabled   bool   `yaml:"snmp_enabled"`
