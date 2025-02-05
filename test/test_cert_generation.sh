@@ -18,11 +18,22 @@ ensure_binary() {
     local system=$1
     log "Building and installing sssonector on $system..."
     
+    # Clean up any existing repository
+    ssh "$system" "rm -rf /tmp/SSSonector"
+    
     # Build and copy binary
-    ssh "$system" "cd /tmp && git clone https://github.com/o3willard-AI/SSSonector.git && \
-                   cd SSSonector && make build && \
-                   sudo cp bin/sssonector /usr/local/bin/ && \
-                   sudo chmod +x /usr/local/bin/sssonector"
+    if ! ssh "$system" "cd /tmp && git clone https://github.com/o3willard-AI/SSSonector.git && \
+                        cd SSSonector && \
+                        git checkout main && \
+                        git pull && \
+                        make clean && make build && \
+                        sudo cp bin/sssonector /usr/local/bin/ && \
+                        sudo chmod +x /usr/local/bin/sssonector"; then
+        log "Failed to build and install sssonector on $system"
+        return 1
+    fi
+    
+    return 0
 }
 
 # Test default certificate generation
@@ -140,7 +151,10 @@ main() {
     log "Starting certificate generation and location tests..."
     
     # Ensure binary is installed
-    ensure_binary "$SERVER_SYSTEM"
+    if ! ensure_binary "$SERVER_SYSTEM"; then
+        log "Failed to install binary on server"
+        exit 1
+    fi
     
     # Run default generation test
     if ! test_default_generation; then
