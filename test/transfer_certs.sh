@@ -29,11 +29,19 @@ ensure_binary() {
                         cd SSSonector && \
                         git checkout main && \
                         git pull && \
-                        echo 'require gopkg.in/yaml.v2 v2.4.0' >> go.mod && \
-                        echo 'require github.com/sirupsen/logrus v1.9.3' >> go.mod && \
-                        echo 'require golang.org/x/crypto v0.17.0' >> go.mod && \
-                        echo 'require golang.org/x/sys v0.15.0' >> go.mod && \
-                        GOPROXY=direct go mod download && \
+                        cat > go.mod << 'EOL'
+module github.com/o3willard-AI/SSSonector
+
+go 1.21
+
+require (
+    gopkg.in/yaml.v2 v2.4.0
+    github.com/sirupsen/logrus v1.9.3
+    golang.org/x/crypto v0.17.0
+    golang.org/x/sys v0.15.0
+)
+EOL
+                        && GOPROXY=direct go mod download && \
                         GOPROXY=direct go mod tidy && \
                         make clean && \
                         GOPROXY=direct make build && \
