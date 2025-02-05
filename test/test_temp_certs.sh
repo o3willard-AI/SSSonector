@@ -12,6 +12,18 @@ log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
 }
 
+# Ensure sssonector binary is installed
+ensure_binary() {
+    local system=$1
+    log "Building and installing sssonector on $system..."
+    
+    # Build and copy binary
+    ssh "$system" "cd /tmp && git clone https://github.com/o3willard-AI/SSSonector.git && \
+                   cd SSSonector && make build && \
+                   sudo cp bin/sssonector /usr/local/bin/ && \
+                   sudo chmod +x /usr/local/bin/sssonector"
+}
+
 # Check if a process is running
 is_running() {
     local system=$1
@@ -34,9 +46,13 @@ test_basic_temp_certs() {
     cleanup "$SERVER_SYSTEM"
     cleanup "$CLIENT_SYSTEM"
     
+    # Create test configuration files
+    ssh "$SERVER_SYSTEM" "echo 'mode: server' > /tmp/server.yaml"
+    ssh "$CLIENT_SYSTEM" "echo 'mode: client' > /tmp/client.yaml"
+    
     # Start server with temporary certificates
     log "Starting server with temporary certificates..."
-    ssh "$SERVER_SYSTEM" "sssonector -mode server -test-without-certs" &
+    ssh "$SERVER_SYSTEM" "sssonector -mode server -test-without-certs -config /tmp/server.yaml" &
     sleep 5
     
     if ! is_running "$SERVER_SYSTEM"; then
@@ -46,7 +62,7 @@ test_basic_temp_certs() {
     
     # Start client with temporary certificates
     log "Starting client with temporary certificates..."
-    ssh "$CLIENT_SYSTEM" "sssonector -mode client -test-without-certs" &
+    ssh "$CLIENT_SYSTEM" "sssonector -mode client -test-without-certs -config /tmp/client.yaml" &
     sleep 5
     
     if ! is_running "$CLIENT_SYSTEM"; then
@@ -84,14 +100,18 @@ test_mixed_mode() {
     cleanup "$SERVER_SYSTEM"
     cleanup "$CLIENT_SYSTEM"
     
+    # Create test configuration files
+    ssh "$SERVER_SYSTEM" "echo 'mode: server' > /tmp/server.yaml"
+    ssh "$CLIENT_SYSTEM" "echo 'mode: client' > /tmp/client.yaml"
+    
     # Start server with temporary certificates
     log "Starting server with temporary certificates..."
-    ssh "$SERVER_SYSTEM" "sssonector -mode server -test-without-certs" &
+    ssh "$SERVER_SYSTEM" "sssonector -mode server -test-without-certs -config /tmp/server.yaml" &
     sleep 5
     
     # Start client with real certificates
     log "Starting client with real certificates..."
-    ssh "$CLIENT_SYSTEM" "sssonector -mode client" &
+    ssh "$CLIENT_SYSTEM" "sssonector -mode client -config /tmp/client.yaml" &
     sleep 5
     
     # Check if connection was properly rejected
@@ -114,15 +134,19 @@ test_concurrent() {
     cleanup "$SERVER_SYSTEM"
     cleanup "$CLIENT_SYSTEM"
     
+    # Create test configuration files
+    ssh "$SERVER_SYSTEM" "echo 'mode: server' > /tmp/server.yaml"
+    ssh "$CLIENT_SYSTEM" "echo 'mode: client' > /tmp/client.yaml"
+    
     # Start server with temporary certificates
     log "Starting server with temporary certificates..."
-    ssh "$SERVER_SYSTEM" "sssonector -mode server -test-without-certs" &
+    ssh "$SERVER_SYSTEM" "sssonector -mode server -test-without-certs -config /tmp/server.yaml" &
     sleep 5
     
     # Start multiple clients
     for i in {1..3}; do
         log "Starting client $i..."
-        ssh "$CLIENT_SYSTEM" "sssonector -mode client -test-without-certs" &
+        ssh "$CLIENT_SYSTEM" "sssonector -mode client -test-without-certs -config /tmp/client.yaml" &
         sleep 2
     done
     
@@ -145,6 +169,10 @@ test_concurrent() {
 # Main execution
 main() {
     log "Starting temporary certificate tests..."
+    
+    # Ensure binary is installed on both systems
+    ensure_binary "$SERVER_SYSTEM"
+    ensure_binary "$CLIENT_SYSTEM"
     
     # Run basic test
     if ! test_basic_temp_certs; then

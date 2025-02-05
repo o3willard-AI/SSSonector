@@ -15,6 +15,34 @@ log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
 }
 
+# Ensure sssonector binary is installed
+ensure_binary() {
+    local system=$1
+    log "Building and installing sssonector on $system..."
+    
+    # Build and copy binary
+    ssh "$system" "cd /tmp && git clone https://github.com/o3willard-AI/SSSonector.git && \
+                   cd SSSonector && make build && \
+                   sudo cp bin/sssonector /usr/local/bin/ && \
+                   sudo chmod +x /usr/local/bin/sssonector"
+}
+
+# Generate certificates on server
+generate_certificates() {
+    log "Generating certificates on server..."
+    
+    # Create certificate directory
+    ssh "$SERVER_SYSTEM" "sudo mkdir -p $CERT_DIR && sudo chown \$(whoami):\$(whoami) $CERT_DIR"
+    
+    # Generate certificates
+    if ! ssh "$SERVER_SYSTEM" "sssonector -keygen"; then
+        log "Failed to generate certificates"
+        return 1
+    fi
+    
+    return 0
+}
+
 # Calculate checksums for certificate files
 calculate_checksums() {
     local dir=$1
@@ -122,6 +150,16 @@ intermediary_transfer() {
 # Main execution
 main() {
     log "Starting certificate transfer process..."
+    
+    # Ensure binary is installed on all systems
+    ensure_binary "$SERVER_SYSTEM"
+    ensure_binary "$CLIENT_SYSTEM"
+    
+    # Generate certificates on server
+    if ! generate_certificates; then
+        log "Failed to generate certificates on server"
+        exit 1
+    fi
     
     # Try direct transfer first
     if direct_transfer; then
