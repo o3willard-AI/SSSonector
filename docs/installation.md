@@ -1,308 +1,146 @@
-# Installation Guide
+# SSSonector Installation Guide
 
-## Configuration
+This guide covers the installation and initial setup of SSSonector.
 
-The SSSonector service uses a YAML configuration file located at `/etc/sssonector/config.yaml`. Here's a complete configuration reference:
+## Prerequisites
 
-```yaml
-# Mode can be "server" or "client"
-mode: "server"
+- Linux, Windows, or macOS
+- Administrator/root access for installation
+- Go 1.22 or later (for building from source)
 
-# Network interface configuration
-network:
-  # Platform-specific interface names:
-  # - Linux: "tun0"
-  # - macOS: "utun0"
-  # - Windows: "SSSonector0"
-  interface: "tun0"
-  address: "10.0.0.1/24"
-  mtu: 1500
+## Installation Methods
 
-# Tunnel configuration
-tunnel:
-  # Certificate paths (use forward slashes even on Windows)
-  certFile: "/etc/sssonector/certs/server.crt"
-  keyFile: "/etc/sssonector/certs/server.key"
-  caFile: "/etc/sssonector/certs/ca.crt"
+### 1. Pre-built Packages
 
-  # Server mode settings
-  listenAddress: "0.0.0.0"
-  listenPort: 8443
-  maxClients: 10
-
-  # Client mode settings (only needed in client mode)
-  serverAddress: "server.example.com"
-  serverPort: 8443
-
-  # Bandwidth control (in Kbps)
-  uploadKbps: 10240    # 10 Mbps
-  downloadKbps: 10240  # 10 Mbps
-
-# Monitoring configuration
-monitor:
-  logFile: "/var/log/sssonector/monitor.log"
-  snmpEnabled: false
-  snmpPort: 161
-  snmpCommunity: "public"
-
-# Logging configuration
-logging:
-  level: "info"  # debug, info, warn, error
-  filePath: "/var/log/sssonector/service.log"
-  maxSize: 100  # MB
-  maxBackups: 5
-  maxAge: 30    # days
-```
-
-## Platform-Specific Installation
-
-### Linux (Debian/Ubuntu)
+#### Debian/Ubuntu
 ```bash
-# Download from GitHub Releases
-wget https://github.com/o3willard-AI/SSSonector/releases/download/v1.0.0/sssonector_1.0.0_amd64.deb
+# Download the package
+wget https://github.com/o3willard-AI/SSSonector/releases/download/v1.1.0/sssonector_1.0.0_amd64.deb
 
 # Install the package
 sudo dpkg -i sssonector_1.0.0_amd64.deb
-sudo apt-get install -f  # Install dependencies
 ```
 
-### Linux (RHEL/CentOS)
-For RHEL/CentOS systems, please use the source archive:
+#### Windows
+1. Download `sssonector-1.0.0-setup.exe` from the [releases page](https://github.com/o3willard-AI/SSSonector/releases)
+2. Run the installer
+3. Follow the installation wizard
+
+#### Source Archives
+- Download `sssonector-1.0.0.tar.gz` or `sssonector-1.0.0.zip`
+- Extract and follow the build instructions below
+
+## Initial Setup
+
+### 1. Certificate Generation
+SSSonector now includes built-in certificate generation:
+
 ```bash
-# Download from GitHub Releases
-wget https://github.com/o3willard-AI/SSSonector/releases/download/v1.0.0/sssonector-1.0.0.tar.gz
+# Generate certificates in the current directory
+sssonector -keygen
 
-# Extract and install
-tar xzf sssonector-1.0.0.tar.gz
-cd sssonector-1.0.0
-sudo mkdir -p /usr/bin /etc/sssonector
-sudo cp sssonector /usr/bin/
-sudo cp -r configs/* /etc/sssonector/
-sudo chmod 755 /usr/bin/sssonector
+# Generate certificates in a specific directory
+sssonector -keygen -keyfile /path/to/certs
 ```
 
-### Windows
-1. Download `sssonector-1.0.0-setup.exe` from GitHub Releases
-2. Run the installer with administrator privileges
-3. TAP driver will be installed automatically
+This will create:
+- `ca.crt`: CA certificate
+- `ca.key`: CA private key
+- `server.crt`: Server certificate
+- `server.key`: Server private key
+- `client.crt`: Client certificate
+- `client.key`: Client private key
 
-### macOS
-For macOS systems, please use the source archive:
-```bash
-# Download from GitHub Releases
-curl -LO https://github.com/o3willard-AI/SSSonector/releases/download/v1.0.0/sssonector-1.0.0.tar.gz
+### 2. Configuration
 
-# Extract and install
-tar xzf sssonector-1.0.0.tar.gz
-cd sssonector-1.0.0
-sudo mkdir -p /usr/local/bin /etc/sssonector
-sudo cp sssonector /usr/local/bin/
-sudo cp -r configs/* /etc/sssonector/
-sudo chmod 755 /usr/local/bin/sssonector
-```
+Create configuration files in `/etc/sssonector/`:
 
-## Certificate Setup
-
-1. Generate CA certificate:
-```bash
-openssl req -x509 -newkey rsa:4096 -keyout ca.key -out ca.crt -days 365 -nodes \
-    -subj "/C=US/ST=California/L=San Francisco/O=MyCompany/CN=SSSonector CA"
-```
-
-2. Generate server certificate:
-```bash
-# Generate key and CSR
-openssl req -newkey rsa:4096 -keyout server.key -out server.csr -nodes \
-    -subj "/C=US/ST=California/L=San Francisco/O=MyCompany/CN=server.example.com"
-
-# Sign with CA
-openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
-    -out server.crt -days 365 -sha256
-```
-
-3. Generate client certificate:
-```bash
-# Generate key and CSR
-openssl req -newkey rsa:4096 -keyout client.key -out client.csr -nodes \
-    -subj "/C=US/ST=California/L=San Francisco/O=MyCompany/CN=client.example.com"
-
-# Sign with CA
-openssl x509 -req -in client.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
-    -out client.crt -days 365 -sha256
-```
-
-4. Install certificates:
-
-Linux/macOS:
-```bash
-sudo mkdir -p /etc/sssonector/certs
-sudo cp ca.crt server.crt server.key /etc/sssonector/certs/
-sudo chmod 644 /etc/sssonector/certs/*.crt
-sudo chmod 600 /etc/sssonector/certs/*.key
-```
-
-Windows (PowerShell Admin):
-```powershell
-New-Item -ItemType Directory -Force -Path "C:\ProgramData\SSSonector\certs"
-Copy-Item ca.crt, server.crt, server.key -Destination "C:\ProgramData\SSSonector\certs"
-$acl = Get-Acl "C:\ProgramData\SSSonector\certs\server.key"
-$acl.SetAccessRuleProtection($true, $false)
-$rule = New-Object System.Security.AccessControl.FileSystemAccessRule("SYSTEM","FullControl","Allow")
-$acl.AddAccessRule($rule)
-Set-Acl "C:\ProgramData\SSSonector\certs\server.key" $acl
-```
-
-## Service Management
-
-### Linux (systemd)
-```bash
-# Start the service
-sudo systemctl start sssonector
-
-# Enable at boot
-sudo systemctl enable sssonector
-
-# Check status
-sudo systemctl status sssonector
-
-# View logs
-sudo journalctl -u sssonector -f
-```
-
-### macOS (launchd)
-```bash
-# Load the service
-sudo launchctl load /Library/LaunchDaemons/com.o3willard.sssonector.plist
-
-# Start the service
-sudo launchctl start com.o3willard.sssonector
-
-# Check status
-sudo launchctl list | grep sssonector
-
-# View logs
-sudo log show --predicate 'processImagePath contains "sssonector"' --last 30m
-```
-
-### Windows
-```powershell
-# Start the service
-Start-Service SSSonector
-
-# Set to auto-start
-Set-Service SSSonector -StartupType Automatic
-
-# Check status
-Get-Service SSSonector
-
-# View logs
-Get-EventLog -LogName Application -Source SSSonector -Newest 50
-```
-
-## Firewall Configuration
-
-### Linux (ufw)
-```bash
-sudo ufw allow 8443/tcp
-sudo ufw reload
-```
-
-### macOS
-```bash
-sudo /usr/libexec/ApplicationFirewall/socketfilterfw --add /usr/local/bin/sssonector
-sudo /usr/libexec/ApplicationFirewall/socketfilterfw --unblock /usr/local/bin/sssonector
-```
-
-### Windows
-```powershell
-New-NetFirewallRule -DisplayName "SSSonector" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 8443
-```
-
-## Monitoring Setup
-
-### SNMP Configuration
+#### Server Configuration
 ```yaml
-monitor:
-  snmpEnabled: true
-  snmpAddress: "0.0.0.0"  # Listen on all interfaces
-  snmpPort: 161
-  snmpCommunity: "public"
+mode: "server"
+network:
+  interface: "tun0"
+  address: "10.0.0.1/24"
+  mtu: 1500
+tunnel:
+  cert_file: "/etc/sssonector/certs/server.crt"
+  key_file: "/etc/sssonector/certs/server.key"
+  ca_file: "/etc/sssonector/certs/ca.crt"
+  listen_address: "0.0.0.0"
+  listen_port: 8443
+  max_clients: 10
 ```
 
-### Log Rotation
-Linux/macOS:
+#### Client Configuration
+```yaml
+mode: "client"
+network:
+  interface: "tun0"
+  address: "10.0.0.2/24"
+  mtu: 1500
+tunnel:
+  cert_file: "/etc/sssonector/certs/client.crt"
+  key_file: "/etc/sssonector/certs/client.key"
+  ca_file: "/etc/sssonector/certs/ca.crt"
+  server_address: "server.example.com"
+  server_port: 8443
+```
+
+### 3. Testing the Installation
+
+SSSonector includes a test mode for quick connectivity verification:
+
 ```bash
-sudo mkdir -p /var/log/sssonector
-sudo chown -R sssonector:sssonector /var/log/sssonector
+# On the server
+sssonector -mode server -test-without-certs
+
+# On the client
+sssonector -mode client -test-without-certs
 ```
 
-Windows:
-```powershell
-New-Item -ItemType Directory -Force -Path "C:\ProgramData\SSSonector\logs"
-$acl = Get-Acl "C:\ProgramData\SSSonector\logs"
-$rule = New-Object System.Security.AccessControl.FileSystemAccessRule("NetworkService","Modify","Allow")
-$acl.AddAccessRule($rule)
-Set-Acl "C:\ProgramData\SSSonector\logs" $acl
+This creates temporary 15-second certificates for testing.
+
+## Building from Source
+
+1. Clone the repository:
+```bash
+git clone https://github.com/o3willard-AI/SSSonector.git
+cd SSSonector
+```
+
+2. Build the project:
+```bash
+make
+```
+
+3. Install:
+```bash
+sudo make install
 ```
 
 ## Troubleshooting
 
-### Common Issues
+### Certificate Issues
+- Use `-keyfile` to specify certificate location
+- Check file permissions (private keys should be 600)
+- Use test mode (`-test-without-certs`) to verify basic connectivity
+- See [Certificate Management](certificate_management.md) for detailed guidance
 
-1. Certificate Problems:
-```bash
-# Check certificate validity
-openssl verify -CAfile /etc/sssonector/certs/ca.crt /etc/sssonector/certs/server.crt
-openssl x509 -in /etc/sssonector/certs/server.crt -text -noout
-```
+### Network Issues
+- Verify server is accessible
+- Check firewall rules
+- Ensure TUN/TAP interface is available
+- Verify port 8443 is open
 
-2. Network Interface Issues:
-Linux:
-```bash
-sudo ip link show tun0
-sudo ip addr add 10.0.0.1/24 dev tun0
-sudo ip link set tun0 up
-```
+## Next Steps
 
-macOS:
-```bash
-ifconfig utun0
-sudo ifconfig utun0 10.0.0.1 10.0.0.2
-```
+- Review [Certificate Management](certificate_management.md) for detailed certificate handling
+- Configure monitoring (optional)
+- Set up rate limiting (optional)
+- Configure automatic startup
 
-Windows:
-```powershell
-Get-NetAdapter | Where-Object {$_.InterfaceDescription -like "*TAP-Windows*"}
-```
+## Support
 
-3. Permission Issues:
-Linux/macOS:
-```bash
-sudo chown -R root:root /etc/sssonector
-sudo chmod 755 /etc/sssonector
-sudo chmod 700 /etc/sssonector/certs
-```
-
-Windows:
-```powershell
-$paths = @(
-    "C:\ProgramData\SSSonector",
-    "C:\ProgramData\SSSonector\certs",
-    "C:\ProgramData\SSSonector\logs"
-)
-foreach ($path in $paths) {
-    $acl = Get-Acl $path
-    $rule = New-Object System.Security.AccessControl.FileSystemAccessRule("NetworkService","Modify","Allow")
-    $acl.AddAccessRule($rule)
-    Set-Acl $path $acl
-}
-```
-
-### Debug Mode
-```bash
-# Linux/macOS
-sudo SSSONECTOR_DEBUG=1 sssonector -config /etc/sssonector/config.yaml
-
-# Windows
-$env:SSSONECTOR_DEBUG=1; & 'C:\Program Files\SSSonector\sssonector.exe' -config 'C:\ProgramData\SSSonector\config.yaml'
-```
+For issues and questions:
+- GitHub Issues: [SSSonector Issues](https://github.com/o3willard-AI/SSSonector/issues)
+- Documentation: See [docs/](../docs/) directory

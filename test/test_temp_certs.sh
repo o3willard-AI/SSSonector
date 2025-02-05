@@ -14,7 +14,8 @@ log() {
 
 # Check if a process is running
 is_running() {
-    ssh "$1" "pgrep -f sssonector" > /dev/null
+    local system=$1
+    ssh "$system" "pgrep -f sssonector" > /dev/null
     return $?
 }
 
@@ -52,7 +53,7 @@ test_basic_temp_certs() {
         log "Failed to start client"
         cleanup "$SERVER_SYSTEM"
         return 1
-    }
+    fi
     
     # Test data transfer
     log "Testing data transfer..."

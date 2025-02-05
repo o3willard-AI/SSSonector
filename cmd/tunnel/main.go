@@ -5,179 +5,101 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 
-	"github.com/o3willard-AI/SSSonector/internal/cert"
+	"github.com/o3willard-AI/SSSonector/internal/cert/generator"
+	"github.com/o3willard-AI/SSSonector/internal/cert/validator"
 	"github.com/o3willard-AI/SSSonector/internal/config"
 )
 
 var (
-	// Command-line flags
-	configFile      string
-	keygenFlag      bool
-	keyFileDir      string
-	testWithoutCert bool
-	mode            string
+	// Command line flags
+	configPath    string
+	generateCerts bool
+	certDir       string
+	validateCerts bool
+	testMode      bool
+	mode          string
 )
 
 func init() {
-	flag.StringVar(&configFile, "config", "", "Path to configuration file")
-	flag.BoolVar(&keygenFlag, "keygen", false, "Generate SSL certificates")
-	flag.StringVar(&keyFileDir, "keyfile", "", "Directory containing SSL certificates")
-	flag.BoolVar(&testWithoutCert, "test-without-certs", false, "Run a 15-second test connection without certificates")
+	// Basic flags
+	flag.StringVar(&configPath, "config", "/etc/sssonector/config.yaml", "Path to configuration file")
 	flag.StringVar(&mode, "mode", "", "Operation mode (server/client)")
+
+	// Certificate management flags
+	flag.BoolVar(&generateCerts, "keygen", false, "Generate SSL certificates")
+	flag.StringVar(&certDir, "keyfile", "/etc/sssonector/certs", "Certificate directory")
+	flag.BoolVar(&validateCerts, "validate-certs", false, "Validate existing certificates")
+	flag.BoolVar(&testMode, "test-without-certs", false, "Run in test mode with temporary certificates")
 }
 
 func main() {
 	flag.Parse()
 
 	// Handle certificate generation
-	if keygenFlag {
-		if err := generateCertificates(); err != nil {
+	if generateCerts {
+		if err := os.MkdirAll(certDir, 0755); err != nil {
+			log.Fatalf("Failed to create certificate directory: %v", err)
+		}
+
+		if err := generator.GenerateCertificates(certDir); err != nil {
 			log.Fatalf("Failed to generate certificates: %v", err)
 		}
+		fmt.Printf("Successfully generated certificates in %s\n", certDir)
 		return
 	}
 
+	// Handle certificate validation
+	if validateCerts {
+		if err := validator.ValidateCertificates(certDir); err != nil {
+			log.Fatalf("Certificate validation failed: %v", err)
+		}
+		fmt.Println("Certificate validation successful")
+		return
+	}
+
+	// Handle test mode
+	if testMode {
+		tempDir, err := os.MkdirTemp("", "sssonector-test-certs")
+		if err != nil {
+			log.Fatalf("Failed to create temporary directory: %v", err)
+		}
+		defer os.RemoveAll(tempDir)
+
+		if err := generator.GenerateTemporaryCertificates(tempDir); err != nil {
+			log.Fatalf("Failed to generate temporary certificates: %v", err)
+		}
+		certDir = tempDir
+	}
+
 	// Load configuration
-	cfg, err := loadConfig()
+	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
 
-	// Handle test mode
-	if testWithoutCert {
-		if err := runTestMode(cfg); err != nil {
-			log.Fatalf("Test connection failed: %v", err)
-		}
-		return
+	// Update certificate paths in configuration
+	if certDir != "/etc/sssonector/certs" {
+		cfg.UpdateCertificatePaths(certDir)
 	}
 
-	// Normal operation
-	if err := run(cfg); err != nil {
-		log.Fatalf("Application error: %v", err)
+	// Run in specified mode
+	switch mode {
+	case "server":
+		runServer(cfg)
+	case "client":
+		runClient(cfg)
+	default:
+		log.Fatal("Must specify -mode (server/client)")
 	}
 }
 
-func generateCertificates() error {
-	// Use current directory if not specified
-	outputDir := "."
-	if keyFileDir != "" {
-		outputDir = keyFileDir
-	}
-
-	// Create certificate generator
-	generator := cert.NewCertificateGenerator(outputDir)
-
-	// Generate CA certificate
-	if err := generator.GenerateCA(); err != nil {
-		return fmt.Errorf("failed to generate CA certificate: %v", err)
-	}
-
-	// Generate server certificate
-	if err := generator.GenerateServerCert(); err != nil {
-		return fmt.Errorf("failed to generate server certificate: %v", err)
-	}
-
-	// Generate client certificate
-	if err := generator.GenerateClientCert(); err != nil {
-		return fmt.Errorf("failed to generate client certificate: %v", err)
-	}
-
-	fmt.Println("Certificates generated successfully:")
-	fmt.Printf("  CA Certificate:     %s\n", filepath.Join(outputDir, "ca.crt"))
-	fmt.Printf("  Server Certificate: %s\n", filepath.Join(outputDir, "server.crt"))
-	fmt.Printf("  Server Key:        %s\n", filepath.Join(outputDir, "server.key"))
-	fmt.Printf("  Client Certificate: %s\n", filepath.Join(outputDir, "client.crt"))
-	fmt.Printf("  Client Key:        %s\n", filepath.Join(outputDir, "client.key"))
-
-	return nil
+func runServer(cfg *config.Config) {
+	// Server implementation
+	fmt.Println("Running in server mode...")
 }
 
-func loadConfig() (*config.Config, error) {
-	// If config file is not specified, use default location
-	if configFile == "" {
-		configFile = "/etc/sssonector/config.yaml"
-	}
-
-	cfg, err := config.LoadConfig(configFile)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load config: %v", err)
-	}
-
-	// Override mode if specified in command line
-	if mode != "" {
-		cfg.Mode = mode
-	}
-
-	// Validate mode
-	if cfg.Mode != "server" && cfg.Mode != "client" {
-		return nil, fmt.Errorf("invalid mode: %s (must be 'server' or 'client')", cfg.Mode)
-	}
-
-	// Handle certificate locations
-	if keyFileDir != "" {
-		// Update certificate paths if keyfile directory is specified
-		cfg.Tunnel.CertFile = filepath.Join(keyFileDir, filepath.Base(cfg.Tunnel.CertFile))
-		cfg.Tunnel.KeyFile = filepath.Join(keyFileDir, filepath.Base(cfg.Tunnel.KeyFile))
-		cfg.Tunnel.CAFile = filepath.Join(keyFileDir, filepath.Base(cfg.Tunnel.CAFile))
-	}
-
-	// Validate certificate files exist
-	locator := cert.NewCertificateLocator(filepath.Dir(cfg.Tunnel.CertFile))
-	certPath, keyPath, err := locator.FindCertificates(
-		filepath.Base(cfg.Tunnel.CertFile),
-		filepath.Base(cfg.Tunnel.KeyFile),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to locate certificates: %v", err)
-	}
-
-	// Update paths to found certificates
-	cfg.Tunnel.CertFile = certPath
-	cfg.Tunnel.KeyFile = keyPath
-
-	// Validate certificates
-	validator := cert.NewCertificateValidator(false)
-	if err := validator.ValidateCertificateFiles(certPath, keyPath, cfg.Tunnel.CAFile); err != nil {
-		return nil, fmt.Errorf("certificate validation failed: %v", err)
-	}
-
-	return cfg, nil
-}
-
-func runTestMode(cfg *config.Config) error {
-	fmt.Println("Starting 15-second test connection...")
-
-	// Create certificate generator for test certificates
-	generator := cert.NewCertificateGenerator(".")
-
-	// Generate test certificates
-	if err := generator.GenerateTestCerts(); err != nil {
-		return fmt.Errorf("failed to generate test certificates: %v", err)
-	}
-
-	// Update config to use test certificates
-	cfg.Tunnel.CertFile = "test_" + filepath.Base(cfg.Tunnel.CertFile)
-	cfg.Tunnel.KeyFile = "test_" + filepath.Base(cfg.Tunnel.KeyFile)
-	cfg.Tunnel.CAFile = "test_ca.crt"
-
-	// Run the tunnel with test certificates
-	if err := run(cfg); err != nil {
-		return fmt.Errorf("test connection failed: %v", err)
-	}
-
-	// Clean up test certificates
-	os.Remove(cfg.Tunnel.CertFile)
-	os.Remove(cfg.Tunnel.KeyFile)
-	os.Remove(cfg.Tunnel.CAFile)
-
-	fmt.Println("Test connection completed successfully")
-	return nil
-}
-
-func run(cfg *config.Config) error {
-	// Implementation of the main tunnel functionality
-	// This will be handled by the existing tunnel package
-	return fmt.Errorf("tunnel implementation not yet complete")
+func runClient(cfg *config.Config) {
+	// Client implementation
+	fmt.Println("Running in client mode...")
 }
