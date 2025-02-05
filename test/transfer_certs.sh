@@ -20,11 +20,22 @@ ensure_binary() {
     local system=$1
     log "Building and installing sssonector on $system..."
     
+    # Clean up any existing repository
+    ssh "$system" "rm -rf /tmp/SSSonector"
+    
     # Build and copy binary
-    ssh "$system" "cd /tmp && git clone https://github.com/o3willard-AI/SSSonector.git && \
-                   cd SSSonector && make build && \
-                   sudo cp bin/sssonector /usr/local/bin/ && \
-                   sudo chmod +x /usr/local/bin/sssonector"
+    if ! ssh "$system" "cd /tmp && git clone https://github.com/o3willard-AI/SSSonector.git && \
+                        cd SSSonector && \
+                        git checkout main && \
+                        git pull && \
+                        make clean && make build && \
+                        sudo cp bin/sssonector /usr/local/bin/ && \
+                        sudo chmod +x /usr/local/bin/sssonector"; then
+        log "Failed to build and install sssonector on $system"
+        return 1
+    fi
+    
+    return 0
 }
 
 # Generate certificates on server
@@ -34,8 +45,24 @@ generate_certificates() {
     # Create certificate directory
     ssh "$SERVER_SYSTEM" "sudo mkdir -p $CERT_DIR && sudo chown \$(whoami):\$(whoami) $CERT_DIR"
     
+    # Create test configuration file
+    local config_file="/tmp/server.yaml"
+    ssh "$SERVER_SYSTEM" "cat > $config_file << EOL
+mode: server
+network:
+  interface: tun0
+  mtu: 1500
+tunnel:
+  listen_address: 0.0.0.0
+  listen_port: 8443
+  max_clients: 10
+logging:
+  level: debug
+  file: /tmp/sssonector.log
+EOL"
+    
     # Generate certificates
-    if ! ssh "$SERVER_SYSTEM" "sssonector -keygen"; then
+    if ! ssh "$SERVER_SYSTEM" "sssonector -keygen -config $config_file"; then
         log "Failed to generate certificates"
         return 1
     fi
@@ -152,8 +179,15 @@ main() {
     log "Starting certificate transfer process..."
     
     # Ensure binary is installed on all systems
-    ensure_binary "$SERVER_SYSTEM"
-    ensure_binary "$CLIENT_SYSTEM"
+    if ! ensure_binary "$SERVER_SYSTEM"; then
+        log "Failed to install binary on server"
+        exit 1
+    fi
+    
+    if ! ensure_binary "$CLIENT_SYSTEM"; then
+        log "Failed to install binary on client"
+        exit 1
+    fi
     
     # Generate certificates on server
     if ! generate_certificates; then
