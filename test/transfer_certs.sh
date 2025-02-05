@@ -23,12 +23,16 @@ ensure_binary() {
     # Clean up any existing repository
     ssh "$system" "rm -rf /tmp/SSSonector"
     
-    # Build and copy binary
-    if ! ssh "$system" "cd /tmp && git clone https://github.com/o3willard-AI/SSSonector.git && \
+    # Clone and build
+    if ! ssh "$system" "cd /tmp && \
+                        git clone https://github.com/o3willard-AI/SSSonector.git && \
                         cd SSSonector && \
                         git checkout main && \
                         git pull && \
-                        make clean && make build && \
+                        go mod download && \
+                        go mod tidy && \
+                        make clean && \
+                        GOPROXY=direct make build && \
                         sudo cp bin/sssonector /usr/local/bin/ && \
                         sudo chmod +x /usr/local/bin/sssonector"; then
         log "Failed to build and install sssonector on $system"
@@ -59,6 +63,19 @@ tunnel:
 logging:
   level: debug
   file: /tmp/sssonector.log
+throttle:
+  enabled: false
+  rate_limit: 1000000
+  burst_limit: 2000000
+monitor:
+  enabled: false
+  snmp_enabled: false
+  snmp_address: 127.0.0.1
+  snmp_port: 161
+  snmp_community: public
+  snmp_version: 2c
+  log_file: /tmp/sssonector_metrics.log
+  update_interval: 30
 EOL"
     
     # Generate certificates
