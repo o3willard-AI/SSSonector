@@ -29,6 +29,9 @@ ensure_binary() {
                         cd SSSonector && \
                         git checkout main && \
                         git pull && \
+                        go get gopkg.in/yaml.v2 && \
+                        go get github.com/sirupsen/logrus && \
+                        go get golang.org/x/crypto && \
                         go mod download && \
                         go mod tidy && \
                         make clean && \
