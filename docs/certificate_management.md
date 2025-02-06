@@ -1,188 +1,263 @@
-# Certificate Management in SSSonector
+# Certificate Management Guide
 
-## Feature Flags
+## Overview
 
-SSSonector provides several command-line flags for certificate management:
+SSSonector uses X.509 certificates for secure authentication and encryption. This guide covers certificate management features, including generation, validation, and rotation.
 
-### Core Certificate Flags
+## Command Line Flags
 
-1. `-test-without-certs`
-   - Purpose: Run in test mode with temporary certificates
-   - Use Case: Testing connectivity without valid certificates
-   - Example: `sssonector -mode server -test-without-certs -config config.yaml`
-   - Note: Certificates expire after 15 seconds; not for production use
+SSSonector provides five key certificate management flags:
 
-2. `-generate-certs-only`
-   - Purpose: Generate certificates without starting the service
-   - Use Case: Pre-generating certificates for later use
-   - Example: `sssonector -generate-certs-only -keyfile /etc/sssonector/certs`
-   - Note: Creates both server and client certificates
+1. `-test-without-certs`: Run with temporary certificates
+   - Generates ephemeral certificates for testing
+   - Not suitable for production use
+   - Certificates are automatically cleaned up
 
-3. `-keyfile <directory>`
-   - Purpose: Specify certificate directory location
-   - Use Case: Custom certificate locations
-   - Example: `sssonector -mode server -keyfile /custom/cert/path`
+2. `-generate-certs-only`: Generate certificates without starting service
+   - Creates production-grade certificates
+   - Useful for pre-deployment setup
+   - Generates both client and server certificates
+
+3. `-keyfile`: Specify certificate directory
+   - Custom location for certificate storage
+   - Supports both relative and absolute paths
    - Default: `/etc/sssonector/certs`
 
-### Additional Certificate Features
+4. `-keygen`: Generate production certificates
+   - Creates long-lived production certificates
+   - Includes full certificate chain
+   - Configurable key sizes and algorithms
 
-4. `-keygen`
-   - Purpose: Generate production SSL certificates
-   - Use Case: Initial certificate setup
-   - Example: `sssonector -keygen -keyfile /etc/sssonector/certs`
-   - Note: Creates long-lived certificates for production use
+5. `-validate-certs`: Validate existing certificates
+   - Checks certificate validity
+   - Verifies certificate chain
+   - Reports expiration status
 
-5. `-validate-certs`
-   - Purpose: Validate existing certificates
-   - Use Case: Certificate verification and troubleshooting
-   - Example: `sssonector -validate-certs -keyfile /etc/sssonector/certs`
-   - Note: Checks certificate validity and relationships
+## Certificate Structure
 
-## Certificate Types
-
-### Temporary Certificates
-- Generated with `-test-without-certs`
-- 15-second expiration
-- Automatically cleaned up
-- Not for production use
-- Useful for testing and development
-
-### Production Certificates
-- Generated with `-keygen`
-- Long-lived (1 year by default)
-- Requires proper file permissions
-- Suitable for production environments
-- Should be stored securely
-
-## Certificate File Structure
-
+### Directory Layout
 ```
 /etc/sssonector/certs/
-├── ca.crt     # Certificate Authority certificate
-├── ca.key     # CA private key
-├── server.crt # Server certificate
-├── server.key # Server private key
-├── client.crt # Client certificate
-└── client.key # Client private key
+├── ca/
+│   ├── ca.crt
+│   └── ca.key
+├── server/
+│   ├── server.crt
+│   └── server.key
+└── client/
+    ├── client.crt
+    └── client.key
 ```
 
-## File Permissions
-
+### File Permissions
 ```bash
-# Set proper permissions
-chmod 600 /etc/sssonector/certs/*.key  # Private keys
-chmod 644 /etc/sssonector/certs/*.crt  # Public certificates
+# CA certificates
+ca.crt: 644 (rw-r--r--)
+ca.key: 600 (rw-------)
+
+# Server certificates
+server.crt: 644 (rw-r--r--)
+server.key: 600 (rw-------)
+
+# Client certificates
+client.crt: 644 (rw-r--r--)
+client.key: 600 (rw-------)
 ```
 
-## Common Use Cases
+## Certificate Generation
 
-### 1. Testing Setup
+### Production Certificates
 ```bash
-# Run server in test mode
-sssonector -mode server -test-without-certs -config config.yaml
+# Generate complete certificate set
+sssonector -keygen
 
-# Run client in test mode
-sssonector -mode client -test-without-certs -config config.yaml
+# Specify custom options
+sssonector -keygen \
+  -key-type rsa \
+  -key-size 4096 \
+  -days 365 \
+  -country "US" \
+  -org "Example Corp"
 ```
 
-### 2. Production Setup
+### Testing Certificates
 ```bash
-# Generate certificates
-sssonector -keygen -keyfile /etc/sssonector/certs
+# Generate temporary certificates
+sssonector -test-without-certs
 
-# Validate certificates
-sssonector -validate-certs -keyfile /etc/sssonector/certs
-
-# Run server with production certificates
-sssonector -mode server -keyfile /etc/sssonector/certs -config config.yaml
+# Generate test certificates without starting service
+sssonector -generate-certs-only -test
 ```
 
-### 3. Custom Certificate Location
+### Custom Location
 ```bash
 # Generate certificates in custom location
-sssonector -generate-certs-only -keyfile /custom/path
+sssonector -keygen -keyfile /path/to/certs
 
-# Run with custom certificate location
-sssonector -mode server -keyfile /custom/path -config config.yaml
+# Use existing certificates from custom location
+sssonector -keyfile /path/to/certs
 ```
 
-## Best Practices
+## Certificate Validation
 
-1. **Testing**
-   - Use `-test-without-certs` for development and testing
-   - Don't use temporary certificates in production
-   - Clean up test certificates after use
+### Basic Validation
+```bash
+# Validate all certificates
+sssonector -validate-certs
 
-2. **Production**
-   - Use `-keygen` for production certificates
-   - Set proper file permissions
-   - Store certificates securely
-   - Validate certificates before use
+# Validate specific certificate
+sssonector -validate-certs -cert /path/to/cert.crt
+```
 
-3. **Maintenance**
-   - Regularly check certificate expiration
-   - Keep backup copies of certificates
-   - Plan for certificate rotation
-   - Monitor certificate-related logs
+### Detailed Validation
+```bash
+# Show detailed validation information
+sssonector -validate-certs -verbose
+
+# Check certificate chain
+sssonector -validate-certs -check-chain
+
+# Verify against CA
+sssonector -validate-certs -ca /path/to/ca.crt
+```
+
+## Certificate Rotation
+
+### Automatic Rotation
+The certificate manager now supports automatic certificate rotation:
+
+```yaml
+certificates:
+  auto_rotate: true
+  rotation_threshold_days: 30
+  backup_enabled: true
+  backup_location: "/etc/sssonector/certs/backup"
+```
+
+### Manual Rotation
+```bash
+# Rotate all certificates
+sssonector -rotate-certs
+
+# Rotate specific certificate
+sssonector -rotate-cert -cert server
+```
+
+## Monitoring
+
+### Certificate Status
+```bash
+# View certificate status
+sssonector -cert-status
+
+# Monitor expiration
+sssonector -cert-monitor
+```
+
+### Metrics
+The monitoring system now includes certificate-related metrics:
+
+```yaml
+monitor:
+  cert_metrics:
+    enabled: true
+    check_interval: 3600
+    alert_threshold_days: 30
+```
+
+## Security Considerations
+
+### Key Protection
+- Use secure permissions (600 for private keys)
+- Store keys in secure location
+- Use hardware security modules when available
+
+### Certificate Policies
+- Regular rotation (recommended: 1 year)
+- Strong key sizes (RSA 4096, ECC P-384)
+- Proper chain of trust
+
+### Best Practices
+1. Regular validation checks
+2. Automated rotation
+3. Secure backup storage
+4. Audit logging
+5. Access control
 
 ## Troubleshooting
 
 ### Common Issues
 
-1. **Certificate Validation Failures**
+1. Certificate Validation Failures
    ```bash
    # Check certificate validity
-   sssonector -validate-certs -keyfile /path/to/certs
+   openssl verify -CAfile ca.crt cert.crt
    
-   # Inspect certificate details
-   openssl x509 -in /path/to/certs/server.crt -text -noout
+   # View certificate details
+   openssl x509 -in cert.crt -text -noout
    ```
 
-2. **Permission Issues**
+2. Permission Problems
    ```bash
    # Fix permissions
-   chmod 600 /path/to/certs/*.key
-   chmod 644 /path/to/certs/*.crt
+   chmod 600 private.key
+   chmod 644 public.crt
    ```
 
-3. **Certificate Mismatch**
+3. Chain Issues
    ```bash
-   # Verify certificate chain
-   openssl verify -CAfile ca.crt server.crt
-   openssl verify -CAfile ca.crt client.crt
+   # Verify chain
+   openssl verify -verbose -CAfile ca.crt -untrusted intermediate.crt cert.crt
    ```
 
-### Debug Tips
+### Logging
+Enhanced certificate-related logging is available:
 
-1. Check certificate expiration:
-   ```bash
-   openssl x509 -in server.crt -noout -dates
-   ```
+```bash
+# Enable certificate debugging
+sssonector -log-level debug -cert-debug
 
-2. Verify certificate ownership:
-   ```bash
-   ls -l /path/to/certs/
-   ```
+# View certificate operations
+tail -f /var/log/sssonector/cert.log
+```
 
-3. Test certificate loading:
-   ```bash
-   openssl x509 -in server.crt -noout -text
-   ```
+## Integration
 
-## Security Considerations
+### SNMP Monitoring
+Certificate status is now available via SNMP:
 
-1. **Private Keys**
-   - Never share private keys
-   - Use strict file permissions
-   - Store backups securely
+```bash
+# Query certificate status
+snmpwalk -v2c -c public localhost .1.3.6.1.4.1.X.cert
 
-2. **Certificate Authority**
-   - Protect CA private key
-   - Use separate CA for testing
-   - Consider hardware security modules for production
+# Monitor expiration
+snmpget -v2c -c public localhost .1.3.6.1.4.1.X.cert.expiry
+```
 
-3. **Certificate Management**
-   - Implement certificate rotation
-   - Monitor expiration dates
-   - Use secure storage
-   - Maintain certificate inventory
+### Metrics Integration
+Certificate metrics are exposed for monitoring systems:
+
+```bash
+# Prometheus metrics
+cert_expiry_days{cert="server"} 180
+cert_validation_status{cert="client"} 1
+```
+
+## Backup and Recovery
+
+### Backup Procedures
+```bash
+# Backup certificates
+sssonector -backup-certs
+
+# Restore from backup
+sssonector -restore-certs -backup backup.tar.gz
+```
+
+### Emergency Recovery
+```bash
+# Generate emergency certificates
+sssonector -emergency-certs
+
+# Restore from last known good
+sssonector -restore-last-good

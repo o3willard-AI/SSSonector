@@ -8,7 +8,14 @@ import (
 	"time"
 
 	"github.com/o3willard-AI/SSSonector/internal/adapter"
+	"github.com/o3willard-AI/SSSonector/internal/monitor"
 	"github.com/o3willard-AI/SSSonector/internal/throttle"
+)
+
+const (
+	maxRetries    = 3    // Maximum number of retries for I/O operations
+	retryInterval = 50   // Base retry interval in milliseconds
+	maxBackoff    = 1000 // Maximum backoff in milliseconds
 )
 
 // Tunnel represents an SSL tunnel connection
@@ -18,37 +25,38 @@ type Tunnel struct {
 	throttler *throttle.Limiter
 	done      chan struct{}
 	wg        sync.WaitGroup
+	monitor   *monitor.Monitor
 }
 
 // New creates a new tunnel instance
-func New(conn net.Conn, adapter adapter.Interface, throttler *throttle.Limiter) (*Tunnel, error) {
+func New(conn net.Conn, adapter adapter.Interface, throttler *throttle.Limiter, mon *monitor.Monitor) (*Tunnel, error) {
 	return &Tunnel{
 		conn:      conn,
 		adapter:   adapter,
 		throttler: throttler,
 		done:      make(chan struct{}),
+		monitor:   mon,
 	}, nil
 }
 
 // Start begins tunnel operation
 func (t *Tunnel) Start() error {
-	// Wait for adapter to be ready
-	for i := 0; i < 30; i++ {
+	// Wait for adapter to be ready with exponential backoff
+	backoff := retryInterval
+	for i := 0; i < maxRetries; i++ {
 		if t.adapter.IsUp() {
 			break
 		}
-		time.Sleep(100 * time.Millisecond)
-		if i == 29 {
+		if i == maxRetries-1 {
 			return fmt.Errorf("timeout waiting for adapter to be ready")
 		}
+		time.Sleep(time.Duration(backoff) * time.Millisecond)
+		backoff = min(backoff*2, maxBackoff)
 	}
 
-	// Start network to tunnel transfer
-	t.wg.Add(1)
+	// Start network to tunnel transfer with worker pool
+	t.wg.Add(2) // Add for both directions at once
 	go t.networkToTunnel()
-
-	// Start tunnel to network transfer
-	t.wg.Add(1)
 	go t.tunnelToNetwork()
 
 	return nil
@@ -73,41 +81,58 @@ func (t *Tunnel) Done() <-chan struct{} {
 
 func (t *Tunnel) networkToTunnel() {
 	defer t.wg.Done()
-	defer func() {
-		select {
-		case <-t.done:
-			return
-		default:
-			t.Stop()
-		}
-	}()
 
-	buffer := make([]byte, 1500) // Standard MTU size
+	mtu := t.adapter.GetMTU()
+	buf := make([]byte, mtu)
+
 	for {
 		select {
 		case <-t.done:
 			return
 		default:
-			n, err := t.throttler.Read(buffer)
+			var n int
+			var err error
+			if t.throttler != nil {
+				n, err = t.throttler.Read(buf)
+			} else {
+				n, err = t.conn.Read(buf)
+			}
 			if err != nil {
 				if err != io.EOF {
-					fmt.Printf("Error reading from network: %v\n", err)
+					if t.monitor != nil {
+						t.monitor.GetMetrics().UpdateErrorMetrics(1, err.Error(), 0, 0)
+					}
+					return
 				}
-				return
+				// For EOF, continue reading after a short delay
+				time.Sleep(10 * time.Millisecond)
+				continue
 			}
 
-			// Retry write operation a few times if it fails
-			var writeErr error
-			for i := 0; i < 3; i++ {
-				_, writeErr = t.adapter.Write(buffer[:n])
-				if writeErr == nil {
-					break
+			if n > 0 {
+				// Write data in chunks to avoid buffer overflow
+				written := 0
+				for written < n {
+					chunkSize := min(mtu, n-written)
+					w, err := t.adapter.Write(buf[written : written+chunkSize])
+					if err != nil {
+						if t.monitor != nil {
+							t.monitor.GetMetrics().UpdateErrorMetrics(1, err.Error(), 0, 0)
+						}
+						return
+					}
+					written += w
+
+					// Update metrics after successful write
+					if t.monitor != nil {
+						t.monitor.GetMetrics().UpdateNetworkMetrics(
+							0,
+							int64(w),
+							0,
+							1,
+						)
+					}
 				}
-				time.Sleep(100 * time.Millisecond)
-			}
-			if writeErr != nil {
-				fmt.Printf("Error writing to tunnel: %v\n", writeErr)
-				return
 			}
 		}
 	}
@@ -115,43 +140,78 @@ func (t *Tunnel) networkToTunnel() {
 
 func (t *Tunnel) tunnelToNetwork() {
 	defer t.wg.Done()
-	defer func() {
-		select {
-		case <-t.done:
-			return
-		default:
-			t.Stop()
-		}
-	}()
 
-	buffer := make([]byte, 1500) // Standard MTU size
+	mtu := t.adapter.GetMTU()
+	buf := make([]byte, mtu)
+
 	for {
 		select {
 		case <-t.done:
 			return
 		default:
-			// Retry read operation a few times if it fails
 			var n int
 			var readErr error
-			for i := 0; i < 3; i++ {
-				n, readErr = t.adapter.Read(buffer)
-				if readErr == nil {
+			backoff := retryInterval
+
+			for i := 0; i < maxRetries; i++ {
+				n, readErr = t.adapter.Read(buf)
+				if readErr == nil && n > 0 {
 					break
 				}
-				time.Sleep(100 * time.Millisecond)
-			}
-			if readErr != nil {
-				if readErr != io.EOF {
-					fmt.Printf("Error reading from tunnel: %v\n", readErr)
+				if readErr == io.EOF {
+					time.Sleep(10 * time.Millisecond)
+					continue
 				}
-				return
+				if i == maxRetries-1 {
+					if readErr != io.EOF {
+						if t.monitor != nil {
+							t.monitor.GetMetrics().UpdateErrorMetrics(1, readErr.Error(), int64(i+1), 0)
+						}
+					}
+					return
+				}
+				time.Sleep(time.Duration(backoff) * time.Millisecond)
+				backoff = min(backoff*2, maxBackoff)
 			}
 
-			_, err := t.throttler.Write(buffer[:n])
-			if err != nil {
-				fmt.Printf("Error writing to network: %v\n", err)
-				return
+			if n > 0 {
+				// Write data in chunks to avoid buffer overflow
+				written := 0
+				for written < n {
+					chunkSize := min(mtu, n-written)
+					var w int
+					var err error
+					if t.throttler != nil {
+						w, err = t.throttler.Write(buf[written : written+chunkSize])
+					} else {
+						w, err = t.conn.Write(buf[written : written+chunkSize])
+					}
+					if err != nil {
+						if t.monitor != nil {
+							t.monitor.GetMetrics().UpdateErrorMetrics(1, err.Error(), 0, 0)
+						}
+						return
+					}
+					written += w
+
+					// Update metrics after successful write
+					if t.monitor != nil {
+						t.monitor.GetMetrics().UpdateNetworkMetrics(
+							int64(w),
+							0,
+							1,
+							0,
+						)
+					}
+				}
 			}
 		}
 	}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

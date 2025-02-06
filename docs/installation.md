@@ -3,216 +3,243 @@
 ## Prerequisites
 
 ### System Requirements
-- Linux (Ubuntu 24.04 or later recommended)
 - Go 1.21 or later
-- iproute2 package
 - TUN/TAP kernel module support
+- iproute2 package (Linux only)
+- Administrative privileges for network interface creation
 
-### User Setup
-1. Add your user to the `tun` group:
-   ```bash
-   sudo groupadd -f tun
-   sudo usermod -aG tun $USER
-   ```
-   Note: You'll need to log out and back in for group changes to take effect.
+### Platform-specific Requirements
 
-2. Load the TUN kernel module:
-   ```bash
-   sudo modprobe tun
-   ```
+#### Linux
+- Ubuntu 20.04+, CentOS 7+, or RHEL 8+
+- `sudo` privileges
+- Development tools: `build-essential`
+- TUN/TAP kernel module loaded
 
-3. Set up TUN device:
-   ```bash
-   sudo mkdir -p /dev/net
-   sudo mknod /dev/net/tun c 10 200
-   sudo chmod 666 /dev/net/tun
-   ```
+#### macOS
+- macOS 10.15 (Catalina) or later
+- Xcode Command Line Tools
+- Network Extension entitlements
+
+#### Windows
+- Windows 10 or Server 2016+
+- TAP-Windows Adapter V9
+- Administrator privileges
+- Visual Studio Build Tools (optional)
 
 ## Installation
 
-### From Binary
-1. Download the latest release from the releases page
-2. Extract the archive:
+### From Binary Releases
+1. Download the latest release for your platform from the releases page
+2. Extract the archive to your desired location
+3. Run the installation script:
    ```bash
-   tar xzf sssonector-v1.0.0.tar.gz
-   ```
-3. Install the binary:
-   ```bash
-   sudo cp sssonector /usr/local/bin/
-   sudo chmod +x /usr/local/bin/sssonector
+   # Linux/macOS
+   sudo ./install.sh
+
+   # Windows (Run as Administrator)
+   install.bat
    ```
 
 ### From Source
+
 1. Clone the repository:
    ```bash
    git clone https://github.com/o3willard-AI/SSSonector.git
    cd SSSonector
    ```
 
-2. Build the binary:
+2. Build the project:
    ```bash
    make build
    ```
 
-3. Install:
+3. Install the binary:
    ```bash
-   sudo cp build/sssonector /usr/local/bin/
-   sudo chmod +x /usr/local/bin/sssonector
+   sudo make install
    ```
 
 ## Configuration
 
 ### Certificate Setup
-1. For production use, generate permanent certificates:
-   ```bash
-   mkdir -p /etc/sssonector/certs
-   sssonector -mode server -generate-certs-only -keyfile /etc/sssonector/certs
+
+SSSonector provides several certificate management options through command-line flags:
+
+```bash
+# Generate production certificates
+sssonector -keygen
+
+# Run with temporary certificates (testing only)
+sssonector -test-without-certs
+
+# Generate certificates without starting service
+sssonector -generate-certs-only
+
+# Specify custom certificate directory
+sssonector -keyfile /path/to/certs
+
+# Validate existing certificates
+sssonector -validate-certs
+```
+
+### Performance Tuning
+
+Recent optimizations have improved data transfer reliability and performance. Consider these settings:
+
+1. Buffer Size Configuration:
+   ```yaml
+   buffer:
+     read_size: 65536    # Optimized for large transfers
+     write_size: 65536   # Matched with read size
+     pool_size: 1024     # Increased for better performance
    ```
 
-2. Set proper permissions:
-   ```bash
-   chmod 600 /etc/sssonector/certs/*.key
-   chmod 644 /etc/sssonector/certs/*.crt
+2. Rate Limiting (optional):
+   ```yaml
+   throttle:
+     enabled: true
+     rate_mbps: 100      # Adjust based on needs
+     burst_size: 1048576 # Optimized for bursty traffic
    ```
 
-### Configuration File
-Create a configuration file at `/etc/sssonector/config.yaml`:
+3. Retry Settings:
+   ```yaml
+   retry:
+     max_attempts: 3     # Number of retry attempts
+     base_delay_ms: 50   # Base delay between retries
+     max_delay_ms: 1000  # Maximum backoff delay
+   ```
+
+### Monitoring Configuration
+
+Enhanced monitoring capabilities are now available:
 
 ```yaml
-mode: "server"  # or "client"
-
-network:
-  interface: "tun0"
-  address: "10.0.0.1/24"  # Use "10.0.0.2/24" for clients
-  mtu: 1500
-
-tunnel:
-  cert_file: "/etc/sssonector/certs/server.crt"  # Use client.crt for clients
-  key_file: "/etc/sssonector/certs/server.key"   # Use client.key for clients
-  ca_file: "/etc/sssonector/certs/ca.crt"
-  listen_address: "0.0.0.0"
-  listen_port: 8443
-  server_address: "your.server.address"  # Only needed for clients
-  server_port: 8443                      # Only needed for clients
-  max_clients: 10
-  upload_kbps: 10240    # 10 Mbps
-  download_kbps: 10240  # 10 Mbps
-
 monitor:
-  log_file: "/var/log/sssonector.log"
-  snmp_enabled: false
-  snmp_port: 161
-  snmp_community: "public"
+  enabled: true
+  metrics:
+    interval_seconds: 10
+    detailed_logging: true
+  snmp:
+    enabled: true
+    port: 161
+    community: "public"
+  error_tracking:
+    enabled: true
+    detailed: true
 ```
 
-## Running
+## Post-Installation
 
-### Server Mode
+### Verify Installation
 ```bash
-sudo sssonector -mode server -config /etc/sssonector/config.yaml
+# Check version and build info
+sssonector -version
+
+# Validate configuration
+sssonector -validate-config
+
+# Test certificate setup
+sssonector -validate-certs
 ```
 
-### Client Mode
+### Start the Service
+
+#### Linux (systemd)
 ```bash
-sudo sssonector -mode client -config /etc/sssonector/config.yaml
+sudo systemctl start sssonector
+sudo systemctl enable sssonector  # Start on boot
+```
+
+#### macOS
+```bash
+sudo launchctl load /Library/LaunchDaemons/com.sssonector.plist
+```
+
+#### Windows
+```powershell
+Start-Service SSonector
+Set-Service SSonector -StartupType Automatic
+```
+
+### Verify Operation
+```bash
+# Check service status
+sssonector -status
+
+# View metrics
+sssonector -metrics
+
+# Test connection
+sssonector -test
 ```
 
 ## Troubleshooting
 
-### TUN Interface Issues
-1. Verify TUN module is loaded:
-   ```bash
-   lsmod | grep tun
-   ```
+### Common Issues
 
-2. Check TUN device permissions:
-   ```bash
-   ls -l /dev/net/tun
-   ```
+1. Connection Drops
+   - Check network stability
+   - Verify certificate validity
+   - Review error logs for retry patterns
 
-3. Verify user is in tun group:
-   ```bash
-   groups $USER | grep tun
-   ```
-
-### Process Cleanup
-If the process doesn't exit cleanly:
-```bash
-sudo pkill -9 -f sssonector
-```
-
-### Certificate Issues
-1. Verify certificate permissions:
-   ```bash
-   ls -l /etc/sssonector/certs/
-   ```
-
-2. Check certificate expiration:
-   ```bash
-   openssl x509 -in /etc/sssonector/certs/server.crt -text -noout | grep "Not After"
-   ```
-
-### Network Issues
-1. Check interface status:
-   ```bash
-   ip addr show tun0
-   ```
-
-2. Verify routing:
-   ```bash
-   ip route show
-   ```
-
-3. Test connectivity:
-   ```bash
-   ping 10.0.0.1  # From client to server
-   ```
-
-## Monitoring
-
-### Logs
-Monitor the log file for issues:
-```bash
-tail -f /var/log/sssonector.log
-```
-
-### Process Status
-Check process status:
-```bash
-ps aux | grep sssonector
-```
-
-### Network Statistics
-View interface statistics:
-```bash
-ip -s link show tun0
-```
-
-## Best Practices
-
-1. **Security**
-   - Keep certificates in a secure location
-   - Use proper file permissions
-   - Regularly rotate certificates
-   - Monitor logs for unauthorized access attempts
-
-2. **Performance**
-   - Adjust MTU based on network conditions
-   - Monitor bandwidth usage
-   - Configure rate limits appropriately
-
-3. **Maintenance**
-   - Regularly check for updates
+2. Performance Issues
+   - Adjust buffer sizes
+   - Check rate limiting configuration
    - Monitor system resources
-   - Keep logs rotated
-   - Clean up temporary files
 
-## Development Mode
+3. Certificate Problems
+   - Verify certificate paths
+   - Check certificate expiration
+   - Validate certificate chain
 
-For testing and development, temporary certificates can be used:
+### Logging
 
+Enhanced logging is now available:
 ```bash
-sudo sssonector -mode server -test-without-certs -config config.yaml
+# Enable detailed logging
+sssonector -log-level debug
+
+# View performance metrics
+sssonector -metrics-detail
+
+# Monitor SNMP data
+snmpwalk -v2c -c public localhost .1.3.6.1.4.1.X
 ```
 
-Note: Temporary certificates expire after 15 seconds and should never be used in production.
+## Upgrading
+
+### From Previous Versions
+
+1. Backup configuration:
+   ```bash
+   cp /etc/sssonector/config.yaml /etc/sssonector/config.yaml.bak
+   ```
+
+2. Update the software:
+   ```bash
+   # Using package manager
+   sudo apt-get update && sudo apt-get upgrade sssonector
+
+   # Or from source
+   git pull
+   make clean && make build
+   sudo make install
+   ```
+
+3. Update configuration:
+   ```bash
+   sssonector -update-config
+   ```
+
+4. Restart service:
+   ```bash
+   sudo systemctl restart sssonector
+   ```
+
+## Support
+
+For additional help:
+- Documentation: https://docs.sssonector.io
+- Issues: https://github.com/o3willard-AI/SSSonector/issues
+- Community: https://community.sssonector.io

@@ -1,72 +1,38 @@
 # Release Notes
 
-## Version 1.1.0 (2025-02-05)
+## v1.1.0 (2025-02-06)
 
-### New Features
+### Performance & Reliability Improvements
+- Enhanced tunnel data transfer reliability with improved EOF handling
+- Optimized buffer management for better performance with large packets
+- Added retry mechanism for network operations with exponential backoff
+- Improved handling of temporary disconnections
+- Enhanced metrics collection accuracy
 
-#### Certificate Management
-- Added built-in certificate generation with `-keygen` flag
-- Implemented automatic certificate location and validation
-- Added test mode with temporary certificates (`-test-without-certs`)
-- Added flexible certificate path configuration with `-keyfile` flag
-- Added comprehensive certificate validation and verification
-- Added detailed error messages for certificate issues
+### Tunnel Improvements
+- Added support for handling packets of varying sizes efficiently
+- Implemented chunked data transfer to prevent buffer overflow
+- Enhanced error recovery and connection stability
+- Improved MTU handling and packet fragmentation
+- Added better support for high-throughput scenarios
 
-#### Configuration
-- Added YAML configuration support
-- Added example server and client configurations
-- Added configuration validation
-- Added support for overriding certificate paths
-
-#### Documentation
-- Added detailed certificate management documentation
-- Updated installation guides
-- Added troubleshooting guide
-- Improved configuration documentation
-
-### Improvements
-- Enhanced error handling for certificate operations
-- Improved certificate validation checks
-- Added automatic log directory creation
-- Added certificate file permission checks
-- Added certificate expiration monitoring
+### Monitoring Enhancements
+- Added detailed metrics for bidirectional data transfer
+- Improved accuracy of error tracking and reporting
+- Enhanced SNMP integration for better observability
+- Added granular performance metrics collection
 
 ### Bug Fixes
-- Fixed certificate path handling on Windows
-- Fixed permission issues with private keys
-- Fixed certificate validation error messages
-- Fixed configuration file loading errors
+- Fixed data loss issues during network interruptions
+- Resolved connection stalling under high load
+- Fixed metrics reporting accuracy issues
+- Improved cleanup of resources on connection termination
 
-## Version 1.0.0 (2025-01-15)
+### Documentation
+- Updated installation guides with new configuration options
+- Added troubleshooting section for common connectivity issues
+- Enhanced monitoring documentation with new metrics details
+- Updated cross-platform compatibility notes
 
-### Initial Release
-- Basic SSL tunneling functionality
-- Server and client modes
-- Rate limiting support
-- SNMP monitoring
-- Cross-platform support
-- Basic configuration options
-
-### Known Issues
-- Manual certificate management required
-- Limited error reporting
-- Basic configuration validation
-- No test mode available
-
-## Upcoming Features
-
-### Version 1.2.0 (Planned)
-- Certificate rotation automation
-- Certificate expiration notifications
-- Certificate backup and restore
-- Enhanced test mode features
-- Improved monitoring capabilities
-- Performance optimizations
-
-### Version 1.3.0 (Planned)
-- Web-based certificate management
-- Certificate revocation support
-- Enhanced security features
-- Performance monitoring
-- Advanced rate limiting options
-- Clustering support
+## v1.0.0 (Initial Release)
+[Previous release notes...]

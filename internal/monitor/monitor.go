@@ -3,6 +3,7 @@ package monitor
 import (
 	"fmt"
 	"os"
+	"runtime"
 	"sync"
 	"syscall"
 	"time"
@@ -76,6 +77,10 @@ func (m *Monitor) Start() error {
 		go m.monitorCertExpiration()
 	}
 
+	// Start system metrics collection
+	m.shutdownWg.Add(1)
+	go m.collectSystemMetrics()
+
 	return nil
 }
 
@@ -121,13 +126,9 @@ func (m *Monitor) UpdateMetrics(bytesIn, bytesOut, packetsIn, packetsOut, errors
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.metrics.BytesIn = bytesIn
-	m.metrics.BytesOut = bytesOut
-	m.metrics.PacketsIn = packetsIn
-	m.metrics.PacketsOut = packetsOut
-	m.metrics.Errors = errors
-	m.metrics.Connections = connections
-	m.metrics.Uptime = int64(time.Since(m.startTime).Seconds())
+	m.metrics.UpdateNetworkMetrics(bytesIn, bytesOut, packetsIn, packetsOut)
+	m.metrics.UpdateErrorMetrics(errors, "", 0, 0) // No retry/drop info yet
+	m.metrics.UpdateConnectionMetrics(int32(connections), int32(connections), 0, 0)
 }
 
 // GetMetrics returns current metrics
@@ -155,5 +156,44 @@ func (m *Monitor) monitorCertExpiration() {
 		}
 	case <-m.shutdownCh:
 		return
+	}
+}
+
+// collectSystemMetrics periodically collects system-wide metrics
+func (m *Monitor) collectSystemMetrics() {
+	defer m.shutdownWg.Done()
+
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+
+	var memStats runtime.MemStats
+	for {
+		select {
+		case <-m.shutdownCh:
+			return
+		case <-ticker.C:
+			// Update memory stats
+			runtime.ReadMemStats(&memStats)
+
+			// Get number of goroutines
+			numGoroutines := runtime.NumGoroutine()
+
+			m.mu.Lock()
+			m.metrics.UpdateResourceMetrics(
+				0, // CPU usage not implemented yet
+				int64(memStats.Alloc),
+				int64(memStats.HeapAlloc),
+				0, // Queue length from tunnel
+				int64(numGoroutines),
+			)
+
+			// Update system metrics
+			m.metrics.UpdateSystemMetrics(
+				0, // System load not implemented yet
+				0, // Disk I/O not implemented yet
+				0, // Network I/O not implemented yet
+			)
+			m.mu.Unlock()
+		}
 	}
 }

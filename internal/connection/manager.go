@@ -130,25 +130,48 @@ func (m *Manager) Connect(network, address string) (net.Conn, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), m.config.ConnectTimeout)
 	defer cancel()
 
-	var lastErr error
-	for attempt := 0; attempt <= m.config.RetryAttempts; attempt++ {
-		if attempt > 0 {
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(m.config.RetryInterval):
+	resultCh := make(chan net.Conn, 1)
+	errCh := make(chan error, 1)
+
+	go func() {
+		for attempt := 0; attempt <= m.config.RetryAttempts; attempt++ {
+			if attempt > 0 {
+				select {
+				case <-ctx.Done():
+					errCh <- ctx.Err()
+					return
+				case <-time.After(m.config.RetryInterval):
+				}
+			}
+
+			dialer := net.Dialer{Timeout: m.config.ConnectTimeout / time.Duration(m.config.RetryAttempts+1)}
+			conn, err := dialer.DialContext(ctx, network, address)
+			if err == nil {
+				resultCh <- conn
+				return
+			}
+
+			m.logger.Debug("Connection attempt failed",
+				zap.String("network", network),
+				zap.String("address", address),
+				zap.Int("attempt", attempt+1),
+				zap.Error(err),
+			)
+
+			if attempt == m.config.RetryAttempts {
+				errCh <- err
 			}
 		}
+	}()
 
-		dialer := net.Dialer{Timeout: m.config.ConnectTimeout}
-		conn, err := dialer.DialContext(ctx, network, address)
-		if err == nil {
-			return conn, nil
-		}
-		lastErr = err
+	select {
+	case conn := <-resultCh:
+		return conn, nil
+	case err := <-errCh:
+		return nil, err
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
-
-	return nil, lastErr
 }
 
 // UpdateStats updates connection statistics

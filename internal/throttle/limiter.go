@@ -36,16 +36,12 @@ func (l *Limiter) Read(p []byte) (n int, err error) {
 		return l.reader.Read(p)
 	}
 
-	n, err = l.reader.Read(p)
-	if err != nil {
-		return n, err
+	// Wait before reading to ensure we don't exceed the rate limit
+	if err := l.inLimit.WaitN(context.Background(), len(p)); err != nil {
+		return 0, err
 	}
 
-	if err := l.inLimit.WaitN(context.Background(), n); err != nil {
-		return n, err
-	}
-
-	return n, nil
+	return l.reader.Read(p)
 }
 
 // Write implements io.Writer with upload throttling
@@ -57,6 +53,7 @@ func (l *Limiter) Write(p []byte) (n int, err error) {
 		return l.writer.Write(p)
 	}
 
+	// Wait before writing to ensure we don't exceed the rate limit
 	if err := l.outLimit.WaitN(context.Background(), len(p)); err != nil {
 		return 0, err
 	}
