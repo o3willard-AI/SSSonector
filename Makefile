@@ -3,10 +3,15 @@
 all: build
 
 build:
-	go mod download
-	go mod tidy
-	mkdir -p build
-	go build -o build/sssonector ./cmd/tunnel
+	export GOPROXY=https://proxy.golang.org,direct && \
+	go get gopkg.in/yaml.v2@v2.4.0 && \
+	go get github.com/sirupsen/logrus@v1.9.3 && \
+	go get golang.org/x/crypto@v0.17.0 && \
+	go get golang.org/x/sys@v0.15.0 && \
+	go mod download && \
+	go mod tidy && \
+	mkdir -p build && \
+	go build -o build/sssonector ./cmd/tunnel && \
 	chmod 755 build/sssonector
 
 clean:

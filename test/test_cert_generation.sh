@@ -18,92 +18,22 @@ ensure_binary() {
     local system=$1
     log "Building and installing sssonector on $system..."
     
-    # Clean up any existing repository
-    ssh "$system" "rm -rf /tmp/SSSonector"
-    
-    # Clone and build
-    ssh "$system" "cd /tmp && git clone https://github.com/o3willard-AI/SSSonector.git"
+    # Build locally
+    make clean && make build
     if [ $? -ne 0 ]; then
-        log "Failed to clone repository"
+        log "Failed to build binary locally"
         return 1
     fi
     
-    ssh "$system" "cd /tmp/SSSonector && git checkout main && git pull"
+    # Copy and install binary
+    scp build/sssonector "$system:/tmp/sssonector"
     if [ $? -ne 0 ]; then
-        log "Failed to update repository"
-        return 1
-    fi
-    
-    # Create go.mod with dependencies
-    ssh "$system" "cd /tmp/SSSonector && cat > go.mod << 'EOL'
-module github.com/o3willard-AI/SSSonector
-
-go 1.21
-
-require (
-    gopkg.in/yaml.v2 v2.4.0
-    github.com/sirupsen/logrus v1.9.3
-    golang.org/x/crypto v0.17.0
-    golang.org/x/sys v0.15.0
-)
-EOL"
-    if [ $? -ne 0 ]; then
-        log "Failed to create go.mod"
-        return 1
-    fi
-    
-    # Install dependencies
-    ssh "$system" "cd /tmp/SSSonector && GOPROXY=direct go get gopkg.in/yaml.v2@v2.4.0"
-    if [ $? -ne 0 ]; then
-        log "Failed to get yaml.v2"
-        return 1
-    fi
-    
-    ssh "$system" "cd /tmp/SSSonector && GOPROXY=direct go get github.com/sirupsen/logrus@v1.9.3"
-    if [ $? -ne 0 ]; then
-        log "Failed to get logrus"
-        return 1
-    fi
-    
-    ssh "$system" "cd /tmp/SSSonector && GOPROXY=direct go get golang.org/x/crypto@v0.17.0"
-    if [ $? -ne 0 ]; then
-        log "Failed to get crypto"
-        return 1
-    fi
-    
-    ssh "$system" "cd /tmp/SSSonector && GOPROXY=direct go get golang.org/x/sys@v0.15.0"
-    if [ $? -ne 0 ]; then
-        log "Failed to get sys"
-        return 1
-    fi
-    
-    # Download dependencies and build
-    ssh "$system" "cd /tmp/SSSonector && GOPROXY=direct go mod download"
-    if [ $? -ne 0 ]; then
-        log "Failed to download dependencies"
-        return 1
-    fi
-    
-    ssh "$system" "cd /tmp/SSSonector && GOPROXY=direct go mod tidy"
-    if [ $? -ne 0 ]; then
-        log "Failed to tidy dependencies"
-        return 1
-    fi
-    
-    ssh "$system" "cd /tmp/SSSonector && make clean"
-    if [ $? -ne 0 ]; then
-        log "Failed to clean build"
-        return 1
-    fi
-    
-    ssh "$system" "cd /tmp/SSSonector && GOPROXY=direct make build"
-    if [ $? -ne 0 ]; then
-        log "Failed to build binary"
+        log "Failed to copy binary"
         return 1
     fi
     
     # Install binary
-    ssh "$system" "cd /tmp/SSSonector && sudo cp bin/sssonector /usr/local/bin/ && sudo chmod +x /usr/local/bin/sssonector"
+    ssh "$system" "sudo cp /tmp/sssonector /usr/local/bin/ && sudo chmod +x /usr/local/bin/sssonector"
     if [ $? -ne 0 ]; then
         log "Failed to install binary"
         return 1

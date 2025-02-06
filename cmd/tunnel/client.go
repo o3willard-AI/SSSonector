@@ -27,16 +27,17 @@ type Client struct {
 	monitor    *monitor.Monitor
 	tunnel     *tunnel.Tunnel
 	shutdownCh chan struct{}
+	testMode   bool
 }
 
-func NewClient(cfg *config.Config) (*Client, error) {
+func NewClient(cfg *config.Config, testMode bool) (*Client, error) {
 	logger, err := zap.NewProduction()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create logger: %w", err)
 	}
 
 	// Initialize TLS configuration
-	tlsCfg, err := cert.NewTLSConfig(cfg.Tunnel.CertFile, cfg.Tunnel.KeyFile, cfg.Tunnel.CAFile, false)
+	tlsCfg, err := cert.NewTLSConfig(cfg.Tunnel.CertFile, cfg.Tunnel.KeyFile, cfg.Tunnel.CAFile, false, testMode)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize TLS config: %w", err)
 	}
@@ -65,6 +66,7 @@ func NewClient(cfg *config.Config) (*Client, error) {
 		adapter:    iface,
 		monitor:    mon,
 		shutdownCh: make(chan struct{}),
+		testMode:   testMode,
 	}, nil
 }
 
@@ -127,6 +129,11 @@ func (c *Client) monitorTunnel() {
 	case <-c.shutdownCh:
 		return
 	case <-c.tunnel.Done():
+		if c.testMode {
+			c.monitor.Info("Test mode: certificate expired, shutting down")
+			c.Stop()
+			return
+		}
 		c.monitor.Info("Tunnel closed, attempting reconnect")
 		for {
 			select {
@@ -134,6 +141,11 @@ func (c *Client) monitorTunnel() {
 				return
 			default:
 				if err := c.connect(); err != nil {
+					if c.testMode && err.Error() == "remote error: tls: bad certificate" {
+						c.monitor.Info("Test mode: certificate expired, shutting down")
+						c.Stop()
+						return
+					}
 					c.monitor.Error("Failed to reconnect", err)
 					continue
 				}

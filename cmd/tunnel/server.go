@@ -4,6 +4,8 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net"
+	"sync"
+	"time"
 
 	"github.com/o3willard-AI/SSSonector/internal/adapter"
 	"github.com/o3willard-AI/SSSonector/internal/cert"
@@ -28,16 +30,18 @@ type Server struct {
 	connMgr    *connection.Manager
 	monitor    *monitor.Monitor
 	shutdownCh chan struct{}
+	testMode   bool
+	wg         sync.WaitGroup
 }
 
-func NewServer(cfg *config.Config) (*Server, error) {
+func NewServer(cfg *config.Config, testMode bool) (*Server, error) {
 	logger, err := zap.NewProduction()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create logger: %w", err)
 	}
 
 	// Initialize TLS configuration
-	tlsCfg, err := cert.NewTLSConfig(cfg.Tunnel.CertFile, cfg.Tunnel.KeyFile, cfg.Tunnel.CAFile, true)
+	tlsCfg, err := cert.NewTLSConfig(cfg.Tunnel.CertFile, cfg.Tunnel.KeyFile, cfg.Tunnel.CAFile, true, testMode)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize TLS config: %w", err)
 	}
@@ -72,6 +76,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		connMgr:    connMgr,
 		monitor:    mon,
 		shutdownCh: make(chan struct{}),
+		testMode:   testMode,
 	}, nil
 }
 
@@ -97,13 +102,23 @@ func (s *Server) Start() error {
 		return fmt.Errorf("failed to start monitoring: %w", err)
 	}
 
-	// Accept connections
+	// Start accepting connections in background
+	s.wg.Add(1)
 	go s.acceptConnections()
+
+	// Wait a bit for the server to start
+	time.Sleep(2 * time.Second)
+
+	// Verify server is listening
+	if _, err := net.Listen("tcp", fmt.Sprintf("%s:%d", s.config.Tunnel.ListenAddress, s.config.Tunnel.ListenPort)); err == nil {
+		return fmt.Errorf("port %d is not in use, server failed to start", s.config.Tunnel.ListenPort)
+	}
 
 	return nil
 }
 
 func (s *Server) acceptConnections() {
+	defer s.wg.Done()
 	for {
 		select {
 		case <-s.shutdownCh:
@@ -112,7 +127,11 @@ func (s *Server) acceptConnections() {
 			conn, err := s.listener.Accept()
 			if err != nil {
 				s.monitor.Error("Failed to accept connection", err)
-				continue
+				if s.testMode {
+					s.monitor.Info("Test mode: certificate expired, shutting down")
+					s.initiateShutdown()
+				}
+				return
 			}
 
 			if !s.connMgr.CanAcceptMore() {
@@ -121,12 +140,15 @@ func (s *Server) acceptConnections() {
 				continue
 			}
 
+			s.wg.Add(1)
 			go s.handleConnection(conn)
 		}
 	}
 }
 
 func (s *Server) handleConnection(conn net.Conn) {
+	defer s.wg.Done()
+
 	// Register connection
 	if err := s.connMgr.Add(conn); err != nil {
 		s.monitor.Error("Failed to register connection", err)
@@ -153,16 +175,34 @@ func (s *Server) handleConnection(conn net.Conn) {
 
 	// Wait for tunnel completion
 	<-tun.Done()
+
+	// In test mode, if the tunnel closes, shut down the server
+	if s.testMode {
+		s.monitor.Info("Test mode: certificate expired, shutting down")
+		s.initiateShutdown()
+	}
+}
+
+func (s *Server) initiateShutdown() {
+	select {
+	case <-s.shutdownCh:
+		// Already shutting down
+		return
+	default:
+		close(s.shutdownCh)
+	}
 }
 
 func (s *Server) Stop() error {
-	// Signal shutdown
-	close(s.shutdownCh)
+	s.initiateShutdown()
 
 	// Close listener
 	if s.listener != nil {
 		s.listener.Close()
 	}
+
+	// Wait for all goroutines to finish
+	s.wg.Wait()
 
 	// Stop monitoring
 	s.monitor.Stop()

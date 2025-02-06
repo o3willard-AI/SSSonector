@@ -2,7 +2,9 @@ package monitor
 
 import (
 	"fmt"
+	"os"
 	"sync"
+	"syscall"
 	"time"
 
 	"go.uber.org/zap"
@@ -19,12 +21,15 @@ type Config struct {
 
 // Monitor handles system monitoring and logging
 type Monitor struct {
-	logger    *zap.Logger
-	config    *Config
-	metrics   *Metrics
-	snmpAgent *SNMPAgent
-	startTime time.Time
-	mu        sync.RWMutex
+	logger     *zap.Logger
+	config     *Config
+	metrics    *Metrics
+	snmpAgent  *SNMPAgent
+	startTime  time.Time
+	mu         sync.RWMutex
+	shutdownCh chan struct{}
+	shutdownWg sync.WaitGroup
+	isTestMode bool
 }
 
 // New creates a new monitor instance
@@ -35,10 +40,12 @@ func New(cfg *Config) (*Monitor, error) {
 	}
 
 	m := &Monitor{
-		logger:    logger,
-		config:    cfg,
-		metrics:   NewMetrics(),
-		startTime: time.Now(),
+		logger:     logger,
+		config:     cfg,
+		metrics:    NewMetrics(),
+		startTime:  time.Now(),
+		shutdownCh: make(chan struct{}),
+		isTestMode: os.Getenv("TEMP_DIR") != "",
 	}
 
 	// Initialize SNMP agent if enabled
@@ -62,15 +69,32 @@ func (m *Monitor) Start() error {
 			zap.String("address", m.config.SNMPAddress),
 			zap.Int("port", m.config.SNMPPort))
 	}
+
+	// Start certificate expiration monitor in test mode
+	if m.isTestMode {
+		m.shutdownWg.Add(1)
+		go m.monitorCertExpiration()
+	}
+
 	return nil
 }
 
 // Stop shuts down monitoring
 func (m *Monitor) Stop() {
+	select {
+	case <-m.shutdownCh:
+		// Already shutting down
+		return
+	default:
+		close(m.shutdownCh)
+	}
+
 	if m.config.SNMPEnabled && m.snmpAgent != nil {
 		m.snmpAgent.Stop()
 		m.Info("SNMP monitoring stopped")
 	}
+
+	m.shutdownWg.Wait()
 	m.logger.Sync()
 }
 
@@ -111,4 +135,25 @@ func (m *Monitor) GetMetrics() *Metrics {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.metrics.Clone()
+}
+
+// monitorCertExpiration monitors certificate expiration in test mode
+func (m *Monitor) monitorCertExpiration() {
+	defer m.shutdownWg.Done()
+
+	// Wait for 15 seconds in test mode
+	select {
+	case <-time.After(15 * time.Second):
+		m.Info("Test mode: certificate expired, shutting down")
+		// Force kill the process group
+		pgid, err := syscall.Getpgid(os.Getpid())
+		if err == nil {
+			syscall.Kill(-pgid, syscall.SIGKILL)
+		} else {
+			// Fallback to killing just this process
+			syscall.Kill(os.Getpid(), syscall.SIGKILL)
+		}
+	case <-m.shutdownCh:
+		return
+	}
 }

@@ -8,6 +8,12 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
+// expandEnvVars replaces ${var} or $var in the string according to the values
+// of the current environment variables.
+func expandEnvVars(s string) string {
+	return os.ExpandEnv(s)
+}
+
 // LoadConfig loads and validates the configuration from a YAML file
 func LoadConfig(path string) (*Config, error) {
 	// Read configuration file
@@ -21,6 +27,11 @@ func LoadConfig(path string) (*Config, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse config file: %v", err)
 	}
+
+	// Expand environment variables in certificate paths
+	cfg.Tunnel.CertFile = expandEnvVars(cfg.Tunnel.CertFile)
+	cfg.Tunnel.KeyFile = expandEnvVars(cfg.Tunnel.KeyFile)
+	cfg.Tunnel.CAFile = expandEnvVars(cfg.Tunnel.CAFile)
 
 	// Validate configuration
 	if err := validateConfig(&cfg); err != nil {

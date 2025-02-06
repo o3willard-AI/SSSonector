@@ -40,8 +40,8 @@ for script in "${TEST_SCRIPTS[@]}"; do
     
     log "Running $script..." "$YELLOW"
     
-    # Execute test script
-    if ./"$script" > "$LOG_DIR/${script%.sh}.log" 2>&1; then
+    # Execute test script from test directory
+    if ./test/"$script" > "$LOG_DIR/${script%.sh}.log" 2>&1; then
         log "✓ $script passed" "$GREEN"
         passed_tests=$((passed_tests + 1))
     else
