@@ -1,146 +1,218 @@
 # SSSonector Installation Guide
 
-This guide covers the installation and initial setup of SSSonector.
-
 ## Prerequisites
 
-- Linux, Windows, or macOS
-- Administrator/root access for installation
-- Go 1.22 or later (for building from source)
+### System Requirements
+- Linux (Ubuntu 24.04 or later recommended)
+- Go 1.21 or later
+- iproute2 package
+- TUN/TAP kernel module support
 
-## Installation Methods
+### User Setup
+1. Add your user to the `tun` group:
+   ```bash
+   sudo groupadd -f tun
+   sudo usermod -aG tun $USER
+   ```
+   Note: You'll need to log out and back in for group changes to take effect.
 
-### 1. Pre-built Packages
+2. Load the TUN kernel module:
+   ```bash
+   sudo modprobe tun
+   ```
 
-#### Debian/Ubuntu
-```bash
-# Download the package
-wget https://github.com/o3willard-AI/SSSonector/releases/download/v1.1.0/sssonector_1.0.0_amd64.deb
+3. Set up TUN device:
+   ```bash
+   sudo mkdir -p /dev/net
+   sudo mknod /dev/net/tun c 10 200
+   sudo chmod 666 /dev/net/tun
+   ```
 
-# Install the package
-sudo dpkg -i sssonector_1.0.0_amd64.deb
-```
+## Installation
 
-#### Windows
-1. Download `sssonector-1.0.0-setup.exe` from the [releases page](https://github.com/o3willard-AI/SSSonector/releases)
-2. Run the installer
-3. Follow the installation wizard
+### From Binary
+1. Download the latest release from the releases page
+2. Extract the archive:
+   ```bash
+   tar xzf sssonector-v1.0.0.tar.gz
+   ```
+3. Install the binary:
+   ```bash
+   sudo cp sssonector /usr/local/bin/
+   sudo chmod +x /usr/local/bin/sssonector
+   ```
 
-#### Source Archives
-- Download `sssonector-1.0.0.tar.gz` or `sssonector-1.0.0.zip`
-- Extract and follow the build instructions below
+### From Source
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/o3willard-AI/SSSonector.git
+   cd SSSonector
+   ```
 
-## Initial Setup
+2. Build the binary:
+   ```bash
+   make build
+   ```
 
-### 1. Certificate Generation
-SSSonector now includes built-in certificate generation:
+3. Install:
+   ```bash
+   sudo cp build/sssonector /usr/local/bin/
+   sudo chmod +x /usr/local/bin/sssonector
+   ```
 
-```bash
-# Generate certificates in the current directory
-sssonector -keygen
+## Configuration
 
-# Generate certificates in a specific directory
-sssonector -keygen -keyfile /path/to/certs
-```
+### Certificate Setup
+1. For production use, generate permanent certificates:
+   ```bash
+   mkdir -p /etc/sssonector/certs
+   sssonector -mode server -generate-certs-only -keyfile /etc/sssonector/certs
+   ```
 
-This will create:
-- `ca.crt`: CA certificate
-- `ca.key`: CA private key
-- `server.crt`: Server certificate
-- `server.key`: Server private key
-- `client.crt`: Client certificate
-- `client.key`: Client private key
+2. Set proper permissions:
+   ```bash
+   chmod 600 /etc/sssonector/certs/*.key
+   chmod 644 /etc/sssonector/certs/*.crt
+   ```
 
-### 2. Configuration
+### Configuration File
+Create a configuration file at `/etc/sssonector/config.yaml`:
 
-Create configuration files in `/etc/sssonector/`:
-
-#### Server Configuration
 ```yaml
-mode: "server"
+mode: "server"  # or "client"
+
 network:
   interface: "tun0"
-  address: "10.0.0.1/24"
+  address: "10.0.0.1/24"  # Use "10.0.0.2/24" for clients
   mtu: 1500
+
 tunnel:
-  cert_file: "/etc/sssonector/certs/server.crt"
-  key_file: "/etc/sssonector/certs/server.key"
+  cert_file: "/etc/sssonector/certs/server.crt"  # Use client.crt for clients
+  key_file: "/etc/sssonector/certs/server.key"   # Use client.key for clients
   ca_file: "/etc/sssonector/certs/ca.crt"
   listen_address: "0.0.0.0"
   listen_port: 8443
+  server_address: "your.server.address"  # Only needed for clients
+  server_port: 8443                      # Only needed for clients
   max_clients: 10
+  upload_kbps: 10240    # 10 Mbps
+  download_kbps: 10240  # 10 Mbps
+
+monitor:
+  log_file: "/var/log/sssonector.log"
+  snmp_enabled: false
+  snmp_port: 161
+  snmp_community: "public"
 ```
 
-#### Client Configuration
-```yaml
-mode: "client"
-network:
-  interface: "tun0"
-  address: "10.0.0.2/24"
-  mtu: 1500
-tunnel:
-  cert_file: "/etc/sssonector/certs/client.crt"
-  key_file: "/etc/sssonector/certs/client.key"
-  ca_file: "/etc/sssonector/certs/ca.crt"
-  server_address: "server.example.com"
-  server_port: 8443
-```
+## Running
 
-### 3. Testing the Installation
-
-SSSonector includes a test mode for quick connectivity verification:
-
+### Server Mode
 ```bash
-# On the server
-sssonector -mode server -test-without-certs
-
-# On the client
-sssonector -mode client -test-without-certs
+sudo sssonector -mode server -config /etc/sssonector/config.yaml
 ```
 
-This creates temporary 15-second certificates for testing.
-
-## Building from Source
-
-1. Clone the repository:
+### Client Mode
 ```bash
-git clone https://github.com/o3willard-AI/SSSonector.git
-cd SSSonector
-```
-
-2. Build the project:
-```bash
-make
-```
-
-3. Install:
-```bash
-sudo make install
+sudo sssonector -mode client -config /etc/sssonector/config.yaml
 ```
 
 ## Troubleshooting
 
+### TUN Interface Issues
+1. Verify TUN module is loaded:
+   ```bash
+   lsmod | grep tun
+   ```
+
+2. Check TUN device permissions:
+   ```bash
+   ls -l /dev/net/tun
+   ```
+
+3. Verify user is in tun group:
+   ```bash
+   groups $USER | grep tun
+   ```
+
+### Process Cleanup
+If the process doesn't exit cleanly:
+```bash
+sudo pkill -9 -f sssonector
+```
+
 ### Certificate Issues
-- Use `-keyfile` to specify certificate location
-- Check file permissions (private keys should be 600)
-- Use test mode (`-test-without-certs`) to verify basic connectivity
-- See [Certificate Management](certificate_management.md) for detailed guidance
+1. Verify certificate permissions:
+   ```bash
+   ls -l /etc/sssonector/certs/
+   ```
+
+2. Check certificate expiration:
+   ```bash
+   openssl x509 -in /etc/sssonector/certs/server.crt -text -noout | grep "Not After"
+   ```
 
 ### Network Issues
-- Verify server is accessible
-- Check firewall rules
-- Ensure TUN/TAP interface is available
-- Verify port 8443 is open
+1. Check interface status:
+   ```bash
+   ip addr show tun0
+   ```
 
-## Next Steps
+2. Verify routing:
+   ```bash
+   ip route show
+   ```
 
-- Review [Certificate Management](certificate_management.md) for detailed certificate handling
-- Configure monitoring (optional)
-- Set up rate limiting (optional)
-- Configure automatic startup
+3. Test connectivity:
+   ```bash
+   ping 10.0.0.1  # From client to server
+   ```
 
-## Support
+## Monitoring
 
-For issues and questions:
-- GitHub Issues: [SSSonector Issues](https://github.com/o3willard-AI/SSSonector/issues)
-- Documentation: See [docs/](../docs/) directory
+### Logs
+Monitor the log file for issues:
+```bash
+tail -f /var/log/sssonector.log
+```
+
+### Process Status
+Check process status:
+```bash
+ps aux | grep sssonector
+```
+
+### Network Statistics
+View interface statistics:
+```bash
+ip -s link show tun0
+```
+
+## Best Practices
+
+1. **Security**
+   - Keep certificates in a secure location
+   - Use proper file permissions
+   - Regularly rotate certificates
+   - Monitor logs for unauthorized access attempts
+
+2. **Performance**
+   - Adjust MTU based on network conditions
+   - Monitor bandwidth usage
+   - Configure rate limits appropriately
+
+3. **Maintenance**
+   - Regularly check for updates
+   - Monitor system resources
+   - Keep logs rotated
+   - Clean up temporary files
+
+## Development Mode
+
+For testing and development, temporary certificates can be used:
+
+```bash
+sudo sssonector -mode server -test-without-certs -config config.yaml
+```
+
+Note: Temporary certificates expire after 15 seconds and should never be used in production.
