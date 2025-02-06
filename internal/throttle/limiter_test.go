@@ -2,7 +2,6 @@ package throttle
 
 import (
 	"bytes"
-	"context"
 	"io"
 	"testing"
 	"time"
@@ -12,37 +11,37 @@ func TestTokenBucket(t *testing.T) {
 	t.Run("respects rate limit", func(t *testing.T) {
 		rateKbps := float64(100) // 100 KB/s
 		burstKb := float64(100)  // 100 KB burst
-		bucket := NewTokenBucket(rateKbps, burstKb)
+		bucket := NewTokenBucket(rateKbps*1024, burstKb*1024)
 
 		// Try to take more tokens than burst size
-		wait := bucket.Take(150 * 1024) // 150 KB
-		if wait == 0 {
-			t.Error("expected wait time for exceeding burst size")
+		success := bucket.Take(150 * 1024) // 150 KB
+		if success {
+			t.Error("expected failure when exceeding burst size")
 		}
 
-		// Expected wait time for 50 KB at 100 KB/s = 0.5s
-		expectedWait := time.Duration(0.5 * float64(time.Second))
-		if wait < time.Duration(float64(expectedWait)*0.9) || wait > time.Duration(float64(expectedWait)*1.1) {
-			t.Errorf("expected wait time around %v, got %v", expectedWait, wait)
+		// Should succeed with burst size
+		success = bucket.Take(100 * 1024)
+		if !success {
+			t.Error("expected success with burst size")
 		}
 	})
 
 	t.Run("allows burst", func(t *testing.T) {
 		rateKbps := float64(100) // 100 KB/s
 		burstKb := float64(100)  // 100 KB burst
-		bucket := NewTokenBucket(rateKbps, burstKb)
+		bucket := NewTokenBucket(rateKbps*1024, burstKb*1024)
 
 		// Should allow full burst size immediately
-		wait := bucket.Take(100 * 1024)
-		if wait != 0 {
-			t.Errorf("expected no wait for burst size, got %v", wait)
+		success := bucket.Take(100 * 1024)
+		if !success {
+			t.Error("expected success for burst size")
 		}
 	})
 
 	t.Run("refills over time", func(t *testing.T) {
 		rateKbps := float64(100) // 100 KB/s
 		burstKb := float64(100)  // 100 KB burst
-		bucket := NewTokenBucket(rateKbps, burstKb)
+		bucket := NewTokenBucket(rateKbps*1024, burstKb*1024)
 
 		// Take all tokens
 		bucket.Take(100 * 1024)
@@ -51,9 +50,9 @@ func TestTokenBucket(t *testing.T) {
 		time.Sleep(500 * time.Millisecond)
 
 		// Should have ~50 KB available
-		wait := bucket.Take(50 * 1024)
-		if wait != 0 {
-			t.Errorf("expected no wait after refill, got %v", wait)
+		success := bucket.Take(50 * 1024)
+		if !success {
+			t.Error("expected success after refill")
 		}
 	})
 }
@@ -64,8 +63,7 @@ func TestRateLimitedReader(t *testing.T) {
 		reader := bytes.NewReader(data)
 		rateKbps := float64(100) // 100 KB/s
 
-		ctx := context.Background()
-		limited := NewRateLimitedReader(ctx, reader, rateKbps)
+		limited := NewRateLimitedReader(reader, rateKbps*1024)
 
 		start := time.Now()
 
@@ -80,33 +78,11 @@ func TestRateLimitedReader(t *testing.T) {
 		}
 
 		elapsed := time.Since(start)
-		expectedDuration := time.Duration(float64(len(data)) / 1024 / rateKbps * float64(time.Second))
+		expectedDuration := time.Duration(float64(len(data)) / (rateKbps * 1024) * float64(time.Second))
 
 		// Allow 10% margin for timing variations
 		if elapsed < time.Duration(float64(expectedDuration)*0.9) || elapsed > time.Duration(float64(expectedDuration)*1.1) {
 			t.Errorf("expected duration around %v, got %v", expectedDuration, elapsed)
-		}
-	})
-
-	t.Run("respects context cancellation", func(t *testing.T) {
-		data := make([]byte, 100*1024) // 100 KB
-		reader := bytes.NewReader(data)
-		rateKbps := float64(10) // 10 KB/s
-
-		ctx, cancel := context.WithCancel(context.Background())
-		limited := NewRateLimitedReader(ctx, reader, rateKbps)
-
-		// Cancel context after a short delay
-		go func() {
-			time.Sleep(100 * time.Millisecond)
-			cancel()
-		}()
-
-		// Try to read all data
-		buf := make([]byte, len(data))
-		_, err := io.ReadFull(limited, buf)
-		if err != context.Canceled {
-			t.Errorf("expected context.Canceled error, got %v", err)
 		}
 	})
 }
@@ -117,8 +93,7 @@ func TestRateLimitedWriter(t *testing.T) {
 		data := make([]byte, 200*1024) // 200 KB
 		rateKbps := float64(100)       // 100 KB/s
 
-		ctx := context.Background()
-		limited := NewRateLimitedWriter(ctx, &buf, rateKbps)
+		limited := NewRateLimitedWriter(&buf, rateKbps*1024)
 
 		start := time.Now()
 
@@ -132,32 +107,11 @@ func TestRateLimitedWriter(t *testing.T) {
 		}
 
 		elapsed := time.Since(start)
-		expectedDuration := time.Duration(float64(len(data)) / 1024 / rateKbps * float64(time.Second))
+		expectedDuration := time.Duration(float64(len(data)) / (rateKbps * 1024) * float64(time.Second))
 
 		// Allow 10% margin for timing variations
 		if elapsed < time.Duration(float64(expectedDuration)*0.9) || elapsed > time.Duration(float64(expectedDuration)*1.1) {
 			t.Errorf("expected duration around %v, got %v", expectedDuration, elapsed)
-		}
-	})
-
-	t.Run("respects context cancellation", func(t *testing.T) {
-		var buf bytes.Buffer
-		data := make([]byte, 100*1024) // 100 KB
-		rateKbps := float64(10)        // 10 KB/s
-
-		ctx, cancel := context.WithCancel(context.Background())
-		limited := NewRateLimitedWriter(ctx, &buf, rateKbps)
-
-		// Cancel context after a short delay
-		go func() {
-			time.Sleep(100 * time.Millisecond)
-			cancel()
-		}()
-
-		// Try to write all data
-		_, err := limited.Write(data)
-		if err != context.Canceled {
-			t.Errorf("expected context.Canceled error, got %v", err)
 		}
 	})
 }

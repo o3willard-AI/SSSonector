@@ -8,6 +8,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"math/big"
+	"net"
 	"os"
 	"path/filepath"
 	"time"
@@ -105,6 +106,14 @@ func GenerateTemporaryCertificates(certDir string) error {
 		return fmt.Errorf("failed to generate temporary client certificate: %v", err)
 	}
 
+	// Verify certificates were created
+	files := []string{"ca.crt", "ca.key", "server.crt", "server.key", "client.crt", "client.key"}
+	for _, file := range files {
+		if _, err := os.Stat(filepath.Join(certDir, file)); os.IsNotExist(err) {
+			return fmt.Errorf("failed to verify certificate file %s: %v", file, err)
+		}
+	}
+
 	return nil
 }
 
@@ -128,6 +137,21 @@ func generateEndEntityCert(certDir, name string, ca *x509.Certificate, caKey *rs
 		BasicConstraintsValid: true,
 	}
 
+	// Add IP SANs for server and client certificates
+	if name == "server" {
+		template.IPAddresses = []net.IP{
+			net.ParseIP("127.0.0.1"),      // localhost
+			net.ParseIP("192.168.50.210"), // server IP
+			net.ParseIP("192.168.50.211"), // client IP
+		}
+	} else if name == "client" {
+		template.IPAddresses = []net.IP{
+			net.ParseIP("127.0.0.1"),      // localhost
+			net.ParseIP("192.168.50.210"), // server IP
+			net.ParseIP("192.168.50.211"), // client IP
+		}
+	}
+
 	certBytes, err := x509.CreateCertificate(rand.Reader, template, ca, &key.PublicKey, caKey)
 	if err != nil {
 		return fmt.Errorf("failed to create %s certificate: %v", name, err)
@@ -138,6 +162,11 @@ func generateEndEntityCert(certDir, name string, ca *x509.Certificate, caKey *rs
 
 // saveCertAndKey saves a certificate and private key to disk
 func saveCertAndKey(certDir, name string, certBytes []byte, key *rsa.PrivateKey) error {
+	// Create directory if it doesn't exist
+	if err := os.MkdirAll(certDir, 0755); err != nil {
+		return fmt.Errorf("failed to create certificate directory %s: %v", certDir, err)
+	}
+
 	// Save certificate
 	certFile := filepath.Join(certDir, name+".crt")
 	certOut, err := os.OpenFile(certFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
@@ -148,6 +177,11 @@ func saveCertAndKey(certDir, name string, certBytes []byte, key *rsa.PrivateKey)
 
 	if err := pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: certBytes}); err != nil {
 		return fmt.Errorf("failed to write certificate to %s: %v", certFile, err)
+	}
+
+	// Verify certificate was written
+	if fi, err := os.Stat(certFile); err != nil || fi.Size() == 0 {
+		return fmt.Errorf("failed to verify certificate file %s was written correctly", certFile)
 	}
 
 	// Save private key
@@ -161,6 +195,11 @@ func saveCertAndKey(certDir, name string, certBytes []byte, key *rsa.PrivateKey)
 	privBytes := x509.MarshalPKCS1PrivateKey(key)
 	if err := pem.Encode(keyOut, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: privBytes}); err != nil {
 		return fmt.Errorf("failed to write private key to %s: %v", keyFile, err)
+	}
+
+	// Verify key was written
+	if fi, err := os.Stat(keyFile); err != nil || fi.Size() == 0 {
+		return fmt.Errorf("failed to verify key file %s was written correctly", keyFile)
 	}
 
 	return nil

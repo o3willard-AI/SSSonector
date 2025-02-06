@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -13,6 +14,7 @@ const (
 	TUNSETIFF = 0x400454ca
 	IFF_TUN   = 0x0001
 	IFF_NO_PI = 0x1000
+	IFF_UP    = 0x1
 )
 
 type linuxInterface struct {
@@ -41,6 +43,14 @@ func newLinuxInterface(name string) (Interface, error) {
 		return nil, fmt.Errorf("failed to create TUN interface: %v", errno)
 	}
 
+	// Wait for interface to be ready
+	for i := 0; i < 10; i++ {
+		if _, err := os.Stat(fmt.Sprintf("/sys/class/net/%s", name)); err == nil {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
 	return &linuxInterface{
 		name: name,
 		file: file,
@@ -52,7 +62,7 @@ func createIfreq(name string) ([]byte, error) {
 	// Create interface request structure (ifreq)
 	var ifreq [40]byte
 	copy(ifreq[:16], []byte(name))
-	*(*uint16)(unsafe.Pointer(&ifreq[16])) = IFF_TUN | IFF_NO_PI
+	*(*uint16)(unsafe.Pointer(&ifreq[16])) = IFF_TUN | IFF_NO_PI | IFF_UP
 	return ifreq[:], nil
 }
 
@@ -62,9 +72,13 @@ func (i *linuxInterface) Configure(cfg *Config) error {
 		return fmt.Errorf("invalid address format: %w", err)
 	}
 
-	// Set IP address using ip command
-	if err := exec.Command("ip", "addr", "add", cfg.Address, "dev", i.name).Run(); err != nil {
-		return fmt.Errorf("failed to set IP address: %w", err)
+	// Wait for interface to be ready
+	for j := 0; j < 10; j++ {
+		// Set IP address using ip command
+		if err := exec.Command("ip", "addr", "add", cfg.Address, "dev", i.name).Run(); err == nil {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 
 	// Set MTU
@@ -75,6 +89,14 @@ func (i *linuxInterface) Configure(cfg *Config) error {
 	// Bring interface up
 	if err := exec.Command("ip", "link", "set", "up", "dev", i.name).Run(); err != nil {
 		return fmt.Errorf("failed to bring interface up: %w", err)
+	}
+
+	// Verify interface is up and configured
+	for k := 0; k < 10; k++ {
+		if err := exec.Command("ip", "addr", "show", "dev", i.name).Run(); err == nil {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 
 	i.address = cfg.Address

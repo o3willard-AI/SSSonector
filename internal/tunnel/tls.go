@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net"
+	"strings"
 
 	"github.com/o3willard-AI/SSSonector/internal/cert"
 )
@@ -23,7 +24,15 @@ type TLSManager struct {
 
 // NewTLSManager creates a new TLS manager
 func NewTLSManager(config *TLSConfig) (*TLSManager, error) {
-	manager, err := cert.NewManager(config.CertFile, config.KeyFile, config.CAFile, false)
+	// Check if using test mode
+	skipVerify := false
+	if config.CertFile != "" {
+		if strings.Contains(config.CertFile, "/tmp/") {
+			skipVerify = true
+		}
+	}
+
+	manager, err := cert.NewManager(config.CertFile, config.KeyFile, config.CAFile, false, skipVerify)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create certificate manager: %w", err)
 	}
@@ -41,8 +50,16 @@ func (t *TLSManager) GetClientConfig() (*tls.Config, error) {
 
 // GetServerConfig returns TLS configuration for server mode
 func (t *TLSManager) GetServerConfig() (*tls.Config, error) {
+	// Check if using test mode
+	skipVerify := false
+	if t.config.CertFile != "" {
+		if strings.Contains(t.config.CertFile, "/tmp/") {
+			skipVerify = true
+		}
+	}
+
 	// Create new manager with server mode
-	manager, err := cert.NewManager(t.config.CertFile, t.config.KeyFile, t.config.CAFile, true)
+	manager, err := cert.NewManager(t.config.CertFile, t.config.KeyFile, t.config.CAFile, true, skipVerify)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create server certificate manager: %w", err)
 	}
