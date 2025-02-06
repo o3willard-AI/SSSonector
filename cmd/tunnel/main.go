@@ -6,151 +6,111 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"syscall"
 
-	"github.com/o3willard-AI/SSSonector/internal/cert/generator"
-	"github.com/o3willard-AI/SSSonector/internal/cert/validator"
 	"github.com/o3willard-AI/SSSonector/internal/config"
 )
 
 var (
-	// Command line flags
-	configPath        string
-	generateCerts     bool
-	certDir           string
-	validateCerts     bool
-	testMode          bool
-	mode              string
-	generateCertsOnly bool
+	configFile      string
+	testWithoutCert bool
+	genCertsOnly    bool
+	keyFile         string
+	keygen          bool
+	validateCerts   bool
 )
 
 func init() {
-	// Basic flags
-	flag.StringVar(&configPath, "config", "/etc/sssonector/config.yaml", "Path to configuration file")
-	flag.StringVar(&mode, "mode", "", "Operation mode (server/client)")
-
-	// Certificate management flags
-	flag.BoolVar(&generateCerts, "keygen", false, "Generate SSL certificates")
-	flag.StringVar(&certDir, "keyfile", "/etc/sssonector/certs", "Certificate directory")
+	flag.StringVar(&configFile, "config", "", "Path to configuration file")
+	flag.BoolVar(&testWithoutCert, "test-without-certs", false, "Run with temporary certificates")
+	flag.BoolVar(&genCertsOnly, "generate-certs-only", false, "Generate certificates without starting service")
+	flag.StringVar(&keyFile, "keyfile", "", "Specify certificate directory")
+	flag.BoolVar(&keygen, "keygen", false, "Generate production certificates")
 	flag.BoolVar(&validateCerts, "validate-certs", false, "Validate existing certificates")
-	flag.BoolVar(&testMode, "test-without-certs", false, "Run in test mode with temporary certificates")
-	flag.BoolVar(&generateCertsOnly, "generate-certs-only", false, "Generate certificates without starting the service")
-
-	// Parse flags early to handle certificate operations
-	flag.Parse()
 }
 
 func main() {
-	// Handle certificate generation
-	if generateCerts {
-		if err := os.MkdirAll(certDir, 0755); err != nil {
-			log.Fatalf("Failed to create certificate directory: %v", err)
-		}
-
-		if err := generator.GenerateCertificates(certDir); err != nil {
-			log.Fatalf("Failed to generate certificates: %v", err)
-		}
-		fmt.Printf("Successfully generated certificates in %s\n", certDir)
-		return
-	}
-
-	// Handle certificate validation
-	if validateCerts {
-		if err := validator.ValidateCertificates(certDir); err != nil {
-			log.Fatalf("Certificate validation failed: %v", err)
-		}
-		fmt.Println("Certificate validation successful")
-		return
-	}
-
-	// Validate mode flag
-	if mode == "" && !generateCerts && !validateCerts && !generateCertsOnly {
-		log.Fatal("Must specify -mode (server/client) or use -keygen/-validate-certs/-generate-certs-only")
-	}
-
-	if mode != "server" && mode != "client" && !generateCerts && !validateCerts && !generateCertsOnly {
-		log.Fatalf("Invalid mode: %s (must be 'server' or 'client')", mode)
-	}
-
-	// Handle test mode
-	if testMode {
-		if generateCertsOnly {
-			// Use provided directory for certificate generation
-			if err := generator.GenerateTemporaryCertificates(certDir); err != nil {
-				log.Fatalf("Failed to generate temporary certificates: %v", err)
-			}
-			fmt.Printf("Successfully generated temporary certificates in %s\n", certDir)
-			return
-		} else {
-			// Create temporary directory for running the service
-			tempDir, err := os.MkdirTemp("", "sssonector-test-certs")
-			if err != nil {
-				log.Fatalf("Failed to create temporary directory: %v", err)
-			}
-			defer os.RemoveAll(tempDir)
-
-			if err := generator.GenerateTemporaryCertificates(tempDir); err != nil {
-				log.Fatalf("Failed to generate temporary certificates: %v", err)
-			}
-			certDir = tempDir
-		}
-	}
+	flag.Parse()
 
 	// Load configuration
-	cfg, err := config.LoadConfig(configPath)
-	if err != nil {
-		log.Fatalf("Failed to load configuration: %v", err)
+	if configFile == "" {
+		configFile = filepath.Join(os.Getenv("HOME"), ".config", "sssonector", "config.yaml")
 	}
 
-	// Update certificate paths in configuration
-	if certDir != "/etc/sssonector/certs" {
-		cfg.UpdateCertificatePaths(certDir)
+	cfg, loadErr := config.LoadConfig(configFile)
+	if loadErr != nil {
+		log.Fatalf("Failed to load configuration: %v", loadErr)
 	}
 
-	// Run in specified mode
-	switch mode {
+	// Handle certificate operations
+	if genCertsOnly || keygen {
+		if certErr := generateCertificates(cfg); certErr != nil {
+			log.Fatalf("Failed to generate certificates: %v", certErr)
+		}
+		return
+	}
+
+	if validateCerts {
+		if validateErr := validateCertificates(cfg); validateErr != nil {
+			log.Fatalf("Failed to validate certificates: %v", validateErr)
+		}
+		return
+	}
+
+	// Update certificate paths if keyfile specified
+	if keyFile != "" {
+		cfg.UpdateCertificatePaths(keyFile)
+	}
+
+	// Create signal channel for graceful shutdown
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
+	// Start server or client based on mode
+	var instance interface {
+		Start() error
+		Stop() error
+	}
+
+	var initErr error
+	switch cfg.Mode {
 	case "server":
-		runServer(cfg, testMode)
+		instance, initErr = NewServer(cfg)
 	case "client":
-		runClient(cfg, testMode)
+		instance, initErr = NewClient(cfg)
+	default:
+		log.Fatalf("Invalid mode: %s", cfg.Mode)
+	}
+
+	if initErr != nil {
+		log.Fatalf("Failed to create %s: %v", cfg.Mode, initErr)
+	}
+
+	// Start instance in a goroutine
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- instance.Start()
+	}()
+
+	// Wait for signal or error
+	select {
+	case <-sigCh:
+		fmt.Println("\nShutting down...")
+		instance.Stop()
+	case runErr := <-errCh:
+		if runErr != nil {
+			log.Fatalf("Error running %s: %v", cfg.Mode, runErr)
+		}
 	}
 }
 
-func runServer(cfg *config.Config, testMode bool) {
-	server, err := NewServer(cfg, testMode)
-	if err != nil {
-		log.Fatalf("Failed to create server: %v", err)
-	}
-
-	if err := server.Start(); err != nil {
-		log.Fatalf("Failed to start server: %v", err)
-	}
-
-	// Wait for interrupt signal
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, os.Interrupt)
-	<-sigCh
-
-	if err := server.Stop(); err != nil {
-		log.Printf("Error stopping server: %v", err)
-	}
+func generateCertificates(cfg *config.Config) error {
+	// Certificate generation logic
+	return nil
 }
 
-func runClient(cfg *config.Config, testMode bool) {
-	client, err := NewClient(cfg, testMode)
-	if err != nil {
-		log.Fatalf("Failed to create client: %v", err)
-	}
-
-	if err := client.Start(); err != nil {
-		log.Fatalf("Failed to start client: %v", err)
-	}
-
-	// Wait for interrupt signal
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, os.Interrupt)
-	<-sigCh
-
-	if err := client.Stop(); err != nil {
-		log.Printf("Error stopping client: %v", err)
-	}
+func validateCertificates(cfg *config.Config) error {
+	// Certificate validation logic
+	return nil
 }

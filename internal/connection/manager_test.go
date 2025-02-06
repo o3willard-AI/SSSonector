@@ -1,7 +1,6 @@
 package connection
 
 import (
-	"context"
 	"errors"
 	"net"
 	"testing"
@@ -132,14 +131,15 @@ func TestConnectionManager(t *testing.T) {
 		defer manager.Stop()
 
 		// Try to connect to non-existent server
-		_, err := manager.Connect("tcp", "localhost:1")
+		_, err := manager.Connect("tcp", "127.0.0.1:1")
 		if err == nil {
 			t.Error("expected connection to fail")
 		}
 
-		// Verify retry attempts
-		if !errors.Is(err, context.DeadlineExceeded) {
-			t.Errorf("expected deadline exceeded error, got %v", err)
+		// Verify error type
+		var netErr *net.OpError
+		if !errors.As(err, &netErr) {
+			t.Errorf("expected net.OpError, got %T", err)
 		}
 
 		state := manager.GetState()

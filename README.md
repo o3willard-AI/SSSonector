@@ -1,142 +1,215 @@
-# SSSonector - SSL Tunnel Application
+# SSSonector
 
-SSSonector is a secure SSL tunneling application that provides encrypted communication between servers and clients.
+A high-performance, secure SSL tunnel implementation with TUN interface support.
 
 ## Features
 
-- Secure SSL/TLS tunneling
-- Automatic certificate management
-- Built-in certificate generation
-- Quick test mode for troubleshooting
-- Rate limiting support
-- SNMP monitoring (optional)
-- Cross-platform support (Linux, macOS, Windows)
+### Core Functionality
+- TUN interface-based networking
+- Certificate-based authentication
+- Rate limiting and monitoring
+- Cross-platform support (Linux/macOS/Windows)
+
+### Performance Optimizations
+- Optimized buffer management
+- MTU-aware chunked transfers
+- Intelligent retry mechanisms
+- Connection pooling
+- Exponential backoff for error recovery
+
+### Security
+- Strong certificate validation
+- Automated certificate rotation
+- Secure key management
+- Regular security updates
+- Comprehensive audit logging
+
+### Monitoring
+- Real-time performance metrics
+- SNMP integration
+- Detailed error tracking
+- Resource utilization monitoring
+- Connection status reporting
 
 ## Quick Start
 
-1. Generate certificates:
+### Installation
+
 ```bash
+# From binary
+curl -L https://github.com/o3willard-AI/SSSonector/releases/latest/download/sssonector-$(uname -s)-$(uname -m) -o sssonector
+chmod +x sssonector
+sudo mv sssonector /usr/local/bin/
+
+# From source
+git clone https://github.com/o3willard-AI/SSSonector.git
+cd SSSonector
+make build
+sudo make install
+```
+
+### Basic Usage
+
+```bash
+# Generate certificates
 sssonector -keygen
+
+# Start server
+sssonector -server -config server.yaml
+
+# Start client
+sssonector -client -config client.yaml
 ```
-
-2. Start the server:
-```bash
-sssonector -mode server -config /etc/sssonector/config.yaml
-```
-
-3. Start the client:
-```bash
-sssonector -mode client -config /etc/sssonector/config.yaml
-```
-
-## Installation
-
-See the installation guides for your platform:
-- [Linux Installation](docs/linux_install.md)
-- [Windows Installation](docs/windows_install.md)
-- [macOS Installation](docs/macos_build.md)
-- [Ubuntu Installation](docs/ubuntu_install.md)
-
-## Configuration
-
-SSSonector uses YAML configuration files. Example configurations are provided:
-- [Server Configuration](configs/server.yaml)
-- [Client Configuration](configs/client.yaml)
 
 ## Certificate Management
 
-SSSonector includes comprehensive certificate management features:
-- Automatic certificate generation
-- Certificate validation and verification
-- Test mode with temporary certificates
-- Flexible certificate location options
-
-See [Certificate Management](docs/certificate_management.md) for detailed documentation.
-
-## Command Line Options
-
-```
-Usage: sssonector [options]
-
-Options:
-  -config string
-        Path to configuration file
-  -keygen
-        Generate SSL certificates
-  -keyfile string
-        Directory containing SSL certificates
-  -mode string
-        Operation mode (server/client)
-  -test-without-certs
-        Run a 15-second test connection without certificates
-```
-
-## Testing
-
-For quick connectivity testing without setting up certificates:
+SSSonector provides five certificate management flags:
 
 ```bash
-# Server side
-sssonector -mode server -test-without-certs
+# Run with temporary certificates (testing only)
+sssonector -test-without-certs
 
-# Client side
-sssonector -mode client -test-without-certs
+# Generate certificates without starting service
+sssonector -generate-certs-only
+
+# Specify certificate directory
+sssonector -keyfile /path/to/certs
+
+# Generate production certificates
+sssonector -keygen
+
+# Validate existing certificates
+sssonector -validate-certs
 ```
 
-This will create temporary certificates valid for 15 seconds to test the connection.
+## Configuration
 
-## Monitoring
+### Performance Tuning
 
-SSSonector supports SNMP monitoring for:
-- Connection status
-- Bandwidth usage
-- Error rates
-- Client connections (server mode)
+```yaml
+buffer:
+  read_size: 65536    # Optimized for large transfers
+  write_size: 65536   # Matched with read size
+  pool_size: 1024     # Increased for better performance
 
-Enable monitoring in the configuration file:
+retry:
+  max_attempts: 3     # Number of retry attempts
+  base_delay_ms: 50   # Base delay between retries
+  max_delay_ms: 1000  # Maximum backoff delay
+
+throttle:
+  enabled: true
+  rate_mbps: 100      # Adjust based on needs
+  burst_size: 1048576 # Optimized for bursty traffic
+```
+
+### Monitoring Setup
+
 ```yaml
 monitor:
-  snmp_enabled: true
-  snmp_port: 161
-  snmp_community: "public"
+  enabled: true
+  metrics:
+    interval_seconds: 10
+    detailed_logging: true
+  snmp:
+    enabled: true
+    port: 161
+    community: "public"
+  error_tracking:
+    enabled: true
+    detailed: true
 ```
 
-## Project Structure
+## Platform Support
 
+### Linux
+- Ubuntu 20.04+
+- CentOS 7+
+- RHEL 8+
+- Full TUN/TAP support
+- Systemd integration
+
+### macOS
+- macOS 10.15+
+- Network Extension support
+- Automatic permission handling
+
+### Windows
+- Windows 10
+- Server 2016+
+- TAP-Windows adapter support
+- Windows service integration
+
+## Development
+
+### Prerequisites
+- Go 1.21 or later
+- TUN/TAP kernel module
+- iproute2 package (Linux)
+- Administrative privileges
+
+### Building
+```bash
+# Build binary
+make build
+
+# Run tests
+make test
+
+# Generate documentation
+make docs
 ```
-.
-├── cmd/
-│   └── tunnel/          # Main application
-├── configs/             # Example configurations
-├── docs/               # Documentation
-├── internal/
-│   ├── adapter/        # Platform-specific code
-│   ├── cert/          # Certificate management
-│   ├── config/        # Configuration handling
-│   ├── connection/    # Connection management
-│   ├── monitor/       # Monitoring and metrics
-│   ├── throttle/      # Rate limiting
-│   └── tunnel/        # Core tunnel functionality
-└── installers/        # Platform installers
+
+### Testing
+```bash
+# Run unit tests
+go test ./...
+
+# Run integration tests
+make test-integration
+
+# Test certificate generation
+./test/test_cert_generation.sh
 ```
+
+## Documentation
+
+- [Installation Guide](docs/installation.md)
+- [Certificate Management](docs/certificate_management.md)
+- [Project Overview](docs/project_context.md)
+- [Code Structure](docs/code_structure_snapshot.md)
+- Platform Guides:
+  * [Linux](docs/linux_install.md)
+  * [macOS](docs/macos_build.md)
+  * [Windows](docs/windows_install.md)
+  * [Ubuntu](docs/ubuntu_install.md)
+
+## Recent Improvements
+
+### v1.1.0
+- Enhanced tunnel data transfer reliability
+- Improved buffer management
+- Added retry mechanisms
+- Optimized chunked transfers
+- Better error recovery
+- Enhanced monitoring capabilities
+- Improved certificate management
+- Better cross-platform support
 
 ## Contributing
 
 1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Submit a pull request
+2. Create your feature branch
+3. Commit your changes
+4. Push to the branch
+5. Create a Pull Request
 
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## Security
-
-Report security issues to security@sssonector.example.com (do not use for support).
-
 ## Support
 
-- Documentation: See [docs/](docs/) directory
-- Issues: Use GitHub issue tracker
-- Community: Join our [Discord server](https://discord.gg/sssonector)
+- Documentation: https://docs.sssonector.io
+- Issues: https://github.com/o3willard-AI/SSSonector/issues
+- Community: https://community.sssonector.io

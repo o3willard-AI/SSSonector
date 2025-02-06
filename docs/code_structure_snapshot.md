@@ -1,267 +1,127 @@
-# Code Structure Snapshot
+# Code Structure Overview
 
-## Directory Structure
-```
-SSSonector/
-├── cmd/
-│   └── tunnel/
-│       ├── main.go     # Entry point and flag handling
-│       ├── server.go   # Server implementation
-│       └── client.go   # Client implementation
-├── internal/
-│   ├── adapter/        # TUN interface implementations
-│   │   ├── interface.go
-│   │   ├── interface_linux.go
-│   │   ├── interface_darwin.go
-│   │   └── interface_windows.go
-│   ├── cert/          # Certificate management
-│   │   ├── manager.go
-│   │   ├── generator.go
-│   │   ├── locator.go
-│   │   └── validator.go
-│   ├── config/        # Configuration handling
-│   │   ├── loader.go
-│   │   └── types.go
-│   ├── connection/    # Connection management
-│   │   └── manager.go
-│   ├── monitor/       # Monitoring and metrics
-│   │   ├── monitor.go
-│   │   ├── metrics.go
-│   │   ├── logging.go
-│   │   └── snmp.go
-│   ├── throttle/      # Rate limiting
-│   │   ├── limiter.go
-│   │   └── token_bucket.go
-│   └── tunnel/        # Core tunnel logic
-│       ├── tunnel.go
-│       └── tls.go
-├── test/             # Test suites
-│   ├── test_temp_certs.sh
-│   └── test_results.md
-└── docs/             # Documentation
-    ├── installation.md
-    ├── certificate_management.md
-    └── project_context.md
-```
+## Core Components
 
-## Key Components
+### Tunnel Implementation (`internal/tunnel/`)
+- `tunnel.go`: Core tunnel implementation with optimized data transfer
+  * Bidirectional data streaming with EOF handling
+  * MTU-aware chunked transfers
+  * Exponential backoff retry mechanism
+  * Buffer overflow prevention
+  * Metrics integration
+- `tls.go`: TLS configuration and security settings
+- `tls_config.go`: TLS profile management
+- `buffer.go`: Buffer management and pooling
+- `tunnel_test.go`: Comprehensive test suite
 
-### 1. Command Layer (cmd/)
-Entry points for the application:
-```go
-// main.go - Flag definitions
-var (
-    configPath        string
-    generateCerts     bool
-    certDir           string
-    validateCerts     bool
-    testMode          bool
-    mode              string
-    generateCertsOnly bool
-)
+### Certificate Management (`internal/cert/`)
+- `manager.go`: Certificate lifecycle management
+- `generator.go`: Certificate generation utilities
+- `validator.go`: Certificate validation logic
+- `locator.go`: Certificate discovery and loading
+- `generator/`: Certificate generation implementation
+- `validator/`: Detailed validation rules
 
-// server.go - Server operations
-type Server struct {
-    config    *config.Config
-    tunnel    *tunnel.Tunnel
-    monitor   *monitor.Monitor
-    certMgr   *cert.Manager
-    testMode  bool
-}
+### Network Adapters (`internal/adapter/`)
+- `interface.go`: Common adapter interface
+- `interface_linux.go`: Linux TUN implementation
+- `interface_darwin.go`: macOS network extension
+- `interface_windows.go`: Windows TAP adapter
 
-// client.go - Client operations
-type Client struct {
-    config    *config.Config
-    tunnel    *tunnel.Tunnel
-    monitor   *monitor.Monitor
-    certMgr   *cert.Manager
-    testMode  bool
-}
-```
+### Monitoring System (`internal/monitor/`)
+- `monitor.go`: Core monitoring functionality
+- `metrics.go`: Performance metrics collection
+- `logging.go`: Structured logging
+- `snmp.go`: SNMP integration
+- `mib.go`: SNMP MIB definitions
+- `snmp_message.go`: SNMP message handling
+- `snmp_asn1.go`: ASN.1 encoding/decoding
 
-### 2. Adapter Layer (internal/adapter/)
-Platform-specific TUN interface implementations:
-```go
-// interface.go - Common interface
-type Interface interface {
-    Read([]byte) (int, error)
-    Write([]byte) (int, error)
-    Close() error
-    GetName() string
-    GetMTU() int
-    GetAddress() string
-    IsUp() bool
-    Cleanup() error
-}
+### Rate Limiting (`internal/throttle/`)
+- `limiter.go`: Rate limiting implementation
+- `token_bucket.go`: Token bucket algorithm
+- `io.go`: I/O rate control
+- `limiter_test.go`: Rate limiting tests
 
-// interface_linux.go - Linux implementation
-type linuxInterface struct {
-    name    string
-    file    *os.File
-    address string
-    mtu     int
-    isUp    bool
-}
-```
+### Connection Management (`internal/connection/`)
+- `manager.go`: Connection lifecycle
+- `manager_test.go`: Connection tests
 
-### 3. Certificate Management (internal/cert/)
-Certificate handling and validation:
-```go
-// manager.go - Certificate operations
-type Manager interface {
-    GenerateCertificates(string) error
-    ValidateCertificates(string) error
-    LoadCertificates(string) error
-    GetCertificatePaths() (string, string, string)
-}
+### Configuration (`internal/config/`)
+- `types.go`: Configuration structures
+- `loader.go`: Configuration loading
 
-// generator.go - Certificate generation
-func GenerateTemporaryCertificates(dir string) error
-func GenerateProductionCertificates(dir string) error
-```
+### Command Line Interface (`cmd/tunnel/`)
+- `main.go`: Entry point and flag handling
+- `server.go`: Server mode implementation
+- `client.go`: Client mode implementation
 
-### 4. Configuration (internal/config/)
-Configuration management:
-```go
-// types.go - Configuration structures
-type Config struct {
-    Mode     string
-    Network  NetworkConfig
-    Tunnel   TunnelConfig
-    Monitor  MonitorConfig
-}
+## Test Suite
 
-// loader.go - Configuration loading
-func LoadConfig(path string) (*Config, error)
-func ValidateConfig(cfg *Config) error
-```
-
-### 5. Monitoring (internal/monitor/)
-System monitoring and metrics:
-```go
-// monitor.go - Monitoring system
-type Monitor struct {
-    logger     *zap.Logger
-    config     *Config
-    metrics    *Metrics
-    snmpAgent  *SNMPAgent
-    startTime  time.Time
-}
-
-// metrics.go - Performance metrics
-type Metrics struct {
-    BytesIn      int64
-    BytesOut     int64
-    PacketsIn    int64
-    PacketsOut   int64
-    Errors       int64
-    Connections  int
-    Uptime       int64
-}
-```
-
-### 6. Tunnel Implementation (internal/tunnel/)
-Core tunnel functionality:
-```go
-// tunnel.go - Tunnel operations
-type Tunnel struct {
-    conn      net.Conn
-    adapter   adapter.Interface
-    throttler *throttle.Limiter
-    done      chan struct{}
-    wg        sync.WaitGroup
-}
-
-// tls.go - TLS handling
-func ConfigureTLS(certFile, keyFile, caFile string) (*tls.Config, error)
-```
-
-## Dependencies
-
-### Internal Dependencies
-- adapter → None
-- cert → config
-- config → None
-- connection → tunnel, monitor
-- monitor → metrics
-- throttle → None
-- tunnel → adapter, throttle
-
-### External Dependencies
-```go
-// From go.mod
-require (
-    github.com/sirupsen/logrus v1.9.3
-    go.uber.org/zap latest
-    golang.org/x/crypto v0.17.0
-    golang.org/x/sys v0.15.0
-    gopkg.in/yaml.v2 v2.4.0
-)
-```
-
-## Testing Structure
+### Integration Tests (`test/`)
+- `test_temp_certs.sh`: Certificate testing
+- `test_cert_generation.sh`: Certificate generation tests
+- `transfer_certs.sh`: Certificate transfer tests
+- `run_cert_tests.sh`: Certificate test suite runner
+- `test_results.md`: Test results documentation
 
 ### Unit Tests
-Each package contains its own unit tests:
-- adapter_test.go
-- tunnel_test.go
-- monitor_test.go
-- etc.
+- Comprehensive test coverage across all packages
+- Mock implementations for testing
+- Performance benchmarks
+- Error condition testing
 
-### Integration Tests
-Shell scripts for end-to-end testing:
-- test_temp_certs.sh
-- test_cert_generation.sh
-- transfer_certs.sh
+## Documentation
 
-### Test Utilities
-Common test helpers and fixtures:
-- Mock interfaces
-- Test certificates
-- Configuration templates
+### User Documentation
+- `README.md`: Project overview and quick start
+- `docs/installation.md`: Installation instructions
+- `docs/certificate_management.md`: Certificate guide
+- `docs/project_context.md`: Project overview
+- `docs/code_structure_snapshot.md`: Code organization
+- `docs/RELEASE_NOTES.md`: Version history
+
+### Platform-specific Guides
+- `docs/linux_install.md`: Linux setup
+- `docs/macos_build.md`: macOS build guide
+- `docs/windows_install.md`: Windows setup
+- `docs/ubuntu_install.md`: Ubuntu-specific guide
+
+### Development Documentation
+- `docs/virtualbox_testing.md`: Testing environment
+- `docs/ai_context_restoration.md`: Development history
+- `docs/ai_recovery_prompt.md`: Recovery procedures
 
 ## Build System
 
-### Makefile Targets
-```makefile
-build:     Build the binary
-clean:     Clean build artifacts
-test:      Run unit tests
-install:   Install the binary
-generate:  Generate certificates
-validate:  Validate certificates
-```
+### Build Configuration
+- `Makefile`: Build automation
+- `go.mod`: Go module definition
+- `configs/`: Configuration templates
+  * `server.yaml`: Server configuration
+  * `client.yaml`: Client configuration
 
-## Code Patterns
+### Installation
+- `installers/`: Platform installers
+  * `windows.nsi`: Windows installer script
 
-### Error Handling
-- Use of custom error types
-- Error wrapping with context
-- Consistent error reporting
+## Recent Improvements
 
-### Concurrency
-- Use of goroutines for I/O
-- Channel-based communication
-- WaitGroup for synchronization
+### Tunnel Optimizations
+- Enhanced EOF handling in data transfer
+- Improved buffer management
+- Added retry mechanisms
+- Optimized chunked transfers
+- Better error recovery
 
-### Resource Management
-- Proper cleanup in defer blocks
-- Resource pooling where appropriate
-- Graceful shutdown handling
+### Monitoring Enhancements
+- More detailed metrics collection
+- Improved error tracking
+- Enhanced SNMP integration
+- Better performance analysis
 
-## Future Considerations
-
-### Planned Refactoring
-- Extract common TUN logic
-- Improve error handling
-- Enhance monitoring system
-
-### Technical Debt
-- Certificate rotation
-- Cross-platform testing
-- Performance optimization
-
-### Enhancement Opportunities
-- Add clustering support
-- Implement high availability
-- Create management UI
+### Testing Improvements
+- Extended test coverage
+- More comprehensive error testing
+- Better mock implementations
+- Enhanced performance benchmarks

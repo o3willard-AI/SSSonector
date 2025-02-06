@@ -2,11 +2,12 @@ package main
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
-	"net"
+	"io/ioutil"
+	"time"
 
 	"github.com/o3willard-AI/SSSonector/internal/adapter"
-	"github.com/o3willard-AI/SSSonector/internal/cert"
 	"github.com/o3willard-AI/SSSonector/internal/config"
 	"github.com/o3willard-AI/SSSonector/internal/monitor"
 	"github.com/o3willard-AI/SSSonector/internal/throttle"
@@ -14,70 +15,57 @@ import (
 	"go.uber.org/zap"
 )
 
-func init() {
-	defaultMode = "client"
-}
-
+// Client represents a tunnel client
 type Client struct {
-	config     *config.Config
-	logger     *zap.Logger
-	conn       net.Conn
-	tlsConfig  *tls.Config
-	adapter    adapter.Interface
-	monitor    *monitor.Monitor
-	tunnel     *tunnel.Tunnel
-	shutdownCh chan struct{}
-	testMode   bool
+	config  *config.Config
+	monitor *monitor.Monitor
 }
 
-func NewClient(cfg *config.Config, testMode bool) (*Client, error) {
-	logger, err := zap.NewProduction()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create logger: %w", err)
-	}
-
-	// Initialize TLS configuration
-	tlsCfg, err := cert.NewTLSConfig(cfg.Tunnel.CertFile, cfg.Tunnel.KeyFile, cfg.Tunnel.CAFile, false, testMode)
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize TLS config: %w", err)
-	}
-
-	// Initialize network adapter
-	iface, err := adapter.New(cfg.Network.Interface)
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize network interface: %w", err)
-	}
-
+// NewClient creates a new tunnel client
+func NewClient(cfg *config.Config) (*Client, error) {
 	// Initialize monitoring
-	mon, err := monitor.New(&monitor.Config{
+	monCfg := &monitor.Config{
 		LogFile:       cfg.Monitor.LogFile,
 		SNMPEnabled:   cfg.Monitor.SNMPEnabled,
 		SNMPPort:      cfg.Monitor.SNMPPort,
 		SNMPCommunity: cfg.Monitor.SNMPCommunity,
-	})
+		SNMPAddress:   cfg.Monitor.SNMPAddress,
+	}
+	mon, err := monitor.New(monCfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize monitoring: %w", err)
 	}
 
 	return &Client{
-		config:     cfg,
-		logger:     logger,
-		tlsConfig:  tlsCfg,
-		adapter:    iface,
-		monitor:    mon,
-		shutdownCh: make(chan struct{}),
-		testMode:   testMode,
+		config:  cfg,
+		monitor: mon,
 	}, nil
 }
 
+// Start starts the tunnel client
 func (c *Client) Start() error {
-	// Configure network interface
-	if err := c.adapter.Configure(&adapter.Config{
-		Name:    c.config.Network.Interface,
-		Address: c.config.Network.Address,
-		MTU:     c.config.Network.MTU,
-	}); err != nil {
-		return fmt.Errorf("failed to configure network interface: %w", err)
+	// Load CA certificate
+	caCert, err := ioutil.ReadFile(c.config.Tunnel.CAFile)
+	if err != nil {
+		return fmt.Errorf("failed to read CA certificate: %w", err)
+	}
+
+	caCertPool := x509.NewCertPool()
+	if !caCertPool.AppendCertsFromPEM(caCert) {
+		return fmt.Errorf("failed to parse CA certificate")
+	}
+
+	// Load client certificate
+	cert, err := tls.LoadX509KeyPair(c.config.Tunnel.CertFile, c.config.Tunnel.KeyFile)
+	if err != nil {
+		return fmt.Errorf("failed to load client certificate: %w", err)
+	}
+
+	// Create TLS config
+	tlsConfig := &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		RootCAs:      caCertPool,
+		MinVersion:   tls.VersionTLS12,
 	}
 
 	// Start monitoring
@@ -86,96 +74,57 @@ func (c *Client) Start() error {
 	}
 
 	// Connect to server
-	if err := c.connect(); err != nil {
-		return fmt.Errorf("failed to connect to server: %w", err)
-	}
-
-	return nil
-}
-
-func (c *Client) connect() error {
-	// Connect to server
-	conn, err := tls.Dial("tcp", fmt.Sprintf("%s:%d", c.config.Tunnel.ServerAddress, c.config.Tunnel.ServerPort), c.tlsConfig)
+	serverAddr := fmt.Sprintf("%s:%d", c.config.Tunnel.ServerAddress, c.config.Tunnel.ServerPort)
+	conn, err := tls.Dial("tcp", serverAddr, tlsConfig)
 	if err != nil {
 		return fmt.Errorf("failed to connect to server: %w", err)
 	}
-	c.conn = conn
+	defer conn.Close()
+
+	c.monitor.Info("Connected to server",
+		zap.String("address", serverAddr),
+		zap.Bool("snmp_enabled", c.config.Monitor.SNMPEnabled))
+
+	// Create TUN adapter
+	tunName := fmt.Sprintf("tun%d", time.Now().UnixNano())
+	iface, err := adapter.New(tunName)
+	if err != nil {
+		return fmt.Errorf("failed to create adapter: %w", err)
+	}
+	defer iface.Close()
+
+	// Configure adapter
+	adapterCfg := &adapter.Config{
+		Name:    tunName,
+		Address: c.config.Network.Address,
+		MTU:     c.config.Network.MTU,
+	}
+	if err := iface.Configure(adapterCfg); err != nil {
+		return fmt.Errorf("failed to configure adapter: %w", err)
+	}
 
 	// Create throttler
-	throttler := throttle.NewLimiter(conn, conn, int64(c.config.Tunnel.UploadKbps), int64(c.config.Tunnel.DownloadKbps))
+	throttler := throttle.NewLimiter(conn, conn, c.config.Tunnel.UploadKbps*1024, c.config.Tunnel.DownloadKbps*1024)
 
-	// Create tunnel
-	tun, err := tunnel.New(conn, c.adapter, throttler)
+	// Create and start tunnel
+	tun, err := tunnel.New(conn, iface, throttler, c.monitor)
 	if err != nil {
-		conn.Close()
 		return fmt.Errorf("failed to create tunnel: %w", err)
 	}
-	c.tunnel = tun
 
-	// Start tunnel
 	if err := tun.Start(); err != nil {
-		conn.Close()
 		return fmt.Errorf("failed to start tunnel: %w", err)
 	}
 
-	// Monitor tunnel in background
-	go c.monitorTunnel()
-
+	// Wait for tunnel to close
+	<-tun.Done()
 	return nil
 }
 
-func (c *Client) monitorTunnel() {
-	select {
-	case <-c.shutdownCh:
-		return
-	case <-c.tunnel.Done():
-		if c.testMode {
-			c.monitor.Info("Test mode: certificate expired, shutting down")
-			c.Stop()
-			return
-		}
-		c.monitor.Info("Tunnel closed, attempting reconnect")
-		for {
-			select {
-			case <-c.shutdownCh:
-				return
-			default:
-				if err := c.connect(); err != nil {
-					if c.testMode && err.Error() == "remote error: tls: bad certificate" {
-						c.monitor.Info("Test mode: certificate expired, shutting down")
-						c.Stop()
-						return
-					}
-					c.monitor.Error("Failed to reconnect", err)
-					continue
-				}
-				return
-			}
-		}
-	}
-}
-
+// Stop stops the tunnel client
 func (c *Client) Stop() error {
-	// Signal shutdown
-	close(c.shutdownCh)
-
-	// Stop tunnel
-	if c.tunnel != nil {
-		c.tunnel.Stop()
+	if c.monitor != nil {
+		c.monitor.Stop()
 	}
-
-	// Close connection
-	if c.conn != nil {
-		c.conn.Close()
-	}
-
-	// Stop monitoring
-	c.monitor.Stop()
-
-	// Cleanup network interface
-	if err := c.adapter.Cleanup(); err != nil {
-		return fmt.Errorf("failed to cleanup network interface: %w", err)
-	}
-
 	return nil
 }
