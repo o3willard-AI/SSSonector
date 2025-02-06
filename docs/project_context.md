@@ -1,211 +1,199 @@
 # SSSonector Project Context
 
 ## Project Overview
-SSSonector is a cross-platform SSL tunneling application that provides secure network connectivity between systems. It supports both server and client modes with configurable bandwidth controls, thread-safe operations, and comprehensive monitoring capabilities.
+SSSonector is a secure SSL tunnel implementation that provides:
+- TUN interface-based networking for low-level network access
+- Certificate-based authentication for security
+- Rate limiting and monitoring capabilities
+- Cross-platform support (Linux/macOS/Windows)
 
-## Core Components
+## Architecture
 
-### 1. Network Interface Management
-- Platform-specific virtual network interfaces with thread safety:
-  - Linux: TUN with ICMP handling and packet routing
-  - Windows: TAP with mutex-protected operations
-  - macOS: UTUN with proper byte handling
-- Automatic interface creation and cleanup
-- MTU configuration support
-- Resource leak prevention
+### Core Components
+1. **TUN Interface Layer**
+   - Platform-specific implementations
+   - Network packet handling
+   - Interface lifecycle management
 
-### 2. SSL/TLS Implementation
-- TLS 1.3 with certificate-based authentication
-- Support for CA, server, and client certificates
-- Secure key management and validation
-- Certificate rotation support
-- EU-exportable cipher suites
+2. **Certificate System**
+   - Production and temporary certificates
+   - Certificate generation and validation
+   - Expiration monitoring
+   - Five feature flags for flexible management
 
-### 3. Bandwidth Control
-- Configurable upload and download throttling
-- Per-connection bandwidth limits
-- Real-time bandwidth monitoring
-- Default limits of 10 Mbps for both directions
-- Thread-safe bandwidth management
+3. **Tunnel Implementation**
+   - SSL/TLS encryption
+   - Bidirectional data transfer
+   - Connection management
+   - Error handling and recovery
 
-### 4. Configuration System
-- YAML-based configuration
-- Support for both server and client modes
-- Flexible certificate path configuration
-- Monitoring and logging settings
-- Bandwidth control settings
+4. **Monitoring System**
+   - Performance metrics
+   - Resource usage tracking
+   - SNMP integration
+   - Logging and diagnostics
 
-## Recent Updates (Version 1.0.0 - January 31, 2025)
-
-### Core Functionality Implementation
-1. Server and Client Modes
-   - Thread-safe server mode with client acceptance
-   - Client mode with automatic reconnection
-   - Support for multiple simultaneous clients
-   - Proper connection handling and cleanup
-   - Resource leak prevention
-
-2. Cross-Platform Support
-   - Linux: Full TUN support with ICMP handling
-   - Windows: Enhanced TAP driver integration
-   - macOS: Improved UTUN device support
-   - Platform-specific network configuration
-   - Thread-safe operations
-
-3. Performance Features
-   - Bandwidth throttling implementation
-   - Connection monitoring
-   - Statistics collection
-   - Resource cleanup
-   - Race condition prevention
-
-### Configuration Updates
-1. New Configuration Options
-   ```yaml
-   tunnel:
-     uploadKbps: 10240    # 10 Mbps
-     downloadKbps: 10240  # 10 Mbps
+### Key Interfaces
+1. **Network Adapter Interface**
+   ```go
+   type Interface interface {
+       Read([]byte) (int, error)
+       Write([]byte) (int, error)
+       Close() error
+       GetName() string
+       GetMTU() int
+       GetAddress() string
+       IsUp() bool
+       Cleanup() error
+   }
    ```
 
-2. Enhanced Certificate Management
-   - Support for CA certificates
-   - Proper certificate validation
-   - Secure key file handling
-   - Certificate rotation support
-
-3. Monitoring Configuration
-   ```yaml
-   monitor:
-     logFile: "/var/log/sssonector/monitor.log"
-     snmpEnabled: false
-     snmpPort: 161
-     snmpCommunity: "public"
+2. **Certificate Manager Interface**
+   ```go
+   type Manager interface {
+       GenerateCertificates(string) error
+       ValidateCertificates(string) error
+       LoadCertificates(string) error
+       GetCertificatePaths() (string, string, string)
+   }
    ```
 
-## Package Management
+## Current Implementation Status
+
+### Completed Features
+1. **TUN Interface**
+   - ✅ Linux implementation
+   - ✅ Interface initialization
+   - ✅ Error handling
+   - ✅ Cleanup procedures
+
+2. **Certificate Management**
+   - ✅ Production certificates
+   - ✅ Temporary certificates
+   - ✅ Certificate validation
+   - ✅ Directory management
+   - ✅ Feature flags
+
+3. **Tunnel Operations**
+   - ✅ Data transfer
+   - ✅ Connection handling
+   - ✅ Error recovery
+   - ✅ Resource cleanup
+
+4. **Monitoring**
+   - ✅ Basic metrics
+   - ✅ Log management
+   - ✅ SNMP integration
+   - ✅ Performance tracking
+
+### In Progress
+1. **Cross-Platform Support**
+   - 🔄 macOS implementation
+   - 🔄 Windows implementation
+   - 🔄 Platform-specific testing
+
+2. **Performance Optimization**
+   - 🔄 Tunnel throughput
+   - 🔄 Memory usage
+   - 🔄 CPU utilization
+
+3. **Security Hardening**
+   - 🔄 Certificate rotation
+   - 🔄 Access controls
+   - 🔄 Audit logging
+
+## Development Environment
+
+### Requirements
+- Go 1.21 or later
+- Linux (Ubuntu 24.04)
+- TUN/TAP kernel module
+- iproute2 package
 
 ### Build System
-- Cross-platform build support with build tags
-- Automated package generation
-- Platform-specific installers:
-  - Linux: .deb and .rpm packages
-  - Windows: NSIS-based installer
-  - macOS: pkg installer structure
+- Makefile-based build
+- Automated testing
+- CI/CD integration (planned)
 
-### Installation
-- Automated service installation
-- Configuration file deployment
-- Certificate directory setup
-- Proper permissions management
-- Resource cleanup on uninstall
+### Testing Infrastructure
+- Unit tests
+- Integration tests
+- Certificate testing suite
+- Performance benchmarks
 
-## Development Guidelines
+## Recent Improvements
 
-### Code Structure
-1. Main Components:
-   - cmd/tunnel: Main application entry point with build tags
-   - internal/adapter: Thread-safe platform-specific interfaces
-   - internal/cert: Certificate management
-   - internal/config: Configuration handling
-   - internal/tunnel: Core tunneling logic
+### TUN Interface
+- Added initialization retries
+- Improved error handling
+- Enhanced cleanup procedures
+- Added validation checks
 
-2. Platform-Specific Code:
-   - interface_linux.go: TUN with ICMP
-   - interface_windows.go: TAP with mutex
-   - interface_darwin.go: UTUN with byte handling
+### Certificate Management
+- Implemented temporary certificates
+- Added expiration monitoring
+- Improved validation
+- Enhanced security checks
 
-### Best Practices
-1. Error Handling:
-   - Proper error wrapping
-   - Detailed error messages
-   - Graceful failure handling
-   - Resource cleanup
+### Process Management
+- Added forceful cleanup
+- Improved signal handling
+- Enhanced resource tracking
+- Better error reporting
 
-2. Resource Management:
-   - Thread-safe interface operations
-   - Proper mutex usage
-   - Memory leak prevention
-   - Graceful cleanup
+## Next Steps
 
-3. Security:
-   - Secure certificate handling
-   - Proper file permissions
-   - Network security best practices
-   - Resource isolation
+### Short Term
+1. Optimize tunnel performance
+2. Enhance monitoring metrics
+3. Implement certificate rotation
+4. Improve cross-platform testing
 
-## Testing
+### Medium Term
+1. Complete Windows support
+2. Add automated benchmarking
+3. Implement audit logging
+4. Enhance security features
 
-### Test Environment
-- VirtualBox-based testing environment
-- Cross-platform testing requirements
-- Network isolation for security testing
-- Thread safety validation
+### Long Term
+1. Add clustering support
+2. Implement high availability
+3. Add plugin system
+4. Create management UI
 
-### Test Cases
-1. Basic Functionality:
-   - Server/client connection
-   - Certificate validation
-   - Bandwidth control
-   - Thread safety
+## Known Issues
 
-2. Error Conditions:
-   - Network failures
-   - Invalid certificates
-   - Resource exhaustion
-   - Race conditions
+### TUN Interface
+- Occasional initialization delays
+- Platform-specific quirks
+- Cleanup edge cases
 
-3. Performance:
-   - Bandwidth limits
-   - Multiple clients
-   - Resource usage
-   - Memory leaks
+### Certificate Management
+- Manual rotation required
+- Limited validation options
+- Directory permission issues
 
-## Known Issues and Limitations
-1. macOS Package:
-   - Final package must be built on macOS system
-   - Requires additional signing steps
+### Performance
+- Memory usage spikes
+- CPU bottlenecks
+- Network congestion
 
-2. Windows TAP Driver:
-   - Requires administrator privileges
-   - May need manual driver installation
-   - Some antivirus software may require manual whitelisting
+## Documentation Status
 
-3. Interface Management:
-   - Race conditions in tunnel initialization have been fixed
-   - Improved error handling for interface operations
-   - Enhanced packet handling in tunnel transfer
+### Complete
+- Installation guide
+- Certificate management
+- Basic usage
+- Testing procedures
 
-## Future Improvements
-1. Planned Features:
-   - Web-based management interface
-   - Enhanced monitoring capabilities
-   - Additional platform support
-   - Performance optimizations
-
-2. Performance Optimizations:
-   - Connection pooling
-   - Improved buffer management
-   - Protocol optimizations
-   - Resource usage optimization
-
-## Maintenance
-1. Regular Tasks:
-   - Certificate rotation
-   - Log rotation
-   - Performance monitoring
-   - Security updates
-
-2. Troubleshooting:
-   - Log analysis
-   - Network diagnostics
-   - Performance profiling
-   - Resource monitoring
-
-## Documentation
-- Installation guides for all platforms
-- Configuration reference
-- API documentation
+### In Progress
+- Performance tuning
+- Security best practices
 - Troubleshooting guide
-- Release notes
+- API documentation
 
-This context document should be updated with any significant changes to the project structure, features, or best practices.
+## Contributing
+- Follow Go best practices
+- Maintain test coverage
+- Update documentation
+- Add regression tests

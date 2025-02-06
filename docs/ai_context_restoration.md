@@ -1,99 +1,274 @@
-# AI Context Restoration Guide for SSSonector
+# AI Context Restoration Guide
 
-This document provides instructions for restoring the full project context state for new VSCode with Cline AI instances.
+## Development History
 
-## Project Structure Overview
+### Phase 1: Core Implementation
+1. **Initial Setup**
+   - Created basic project structure
+   - Implemented TUN interface abstraction
+   - Added basic certificate handling
 
-The SSSonector project is a cross-platform SSL tunneling application located in:
+2. **Certificate System**
+   - Implemented production certificate generation
+   - Added temporary certificate support
+   - Created certificate validation system
+   - Added five feature flags:
+     * -test-without-certs
+     * -generate-certs-only
+     * -keyfile
+     * -keygen
+     * -validate-certs
+
+3. **Tunnel Implementation**
+   - Created basic tunnel structure
+   - Added TLS support
+   - Implemented bidirectional data transfer
+   - Added connection management
+
+### Phase 2: Improvements
+1. **TUN Interface Enhancement**
+   - Added initialization retries
+   - Improved error handling
+   - Enhanced cleanup procedures
+   - Added validation checks
+
+2. **Certificate Management**
+   - Enhanced expiration monitoring
+   - Improved validation system
+   - Added security checks
+   - Implemented cleanup procedures
+
+3. **Process Management**
+   - Added forceful cleanup
+   - Improved signal handling
+   - Enhanced resource tracking
+   - Better error reporting
+
+## Key Design Decisions
+
+### 1. TUN Interface Design
+```go
+// Decision: Use interface abstraction for platform support
+type Interface interface {
+    Read([]byte) (int, error)
+    Write([]byte) (int, error)
+    Close() error
+    GetName() string
+    GetMTU() int
+    GetAddress() string
+    IsUp() bool
+    Cleanup() error
+}
+
+// Rationale:
+// - Enables cross-platform support
+// - Simplifies testing with mocks
+// - Allows platform-specific optimizations
 ```
-/home/sblanken/Desktop/go/src/github.com/o3willard-AI/SSSonector/
+
+### 2. Certificate Management
+```go
+// Decision: Support both temporary and production certificates
+func GenerateTemporaryCertificates(dir string) error
+func GenerateProductionCertificates(dir string) error
+
+// Rationale:
+// - Facilitates testing without permanent certificates
+// - Maintains security in production
+// - Enables automated testing
 ```
 
-## Restoration Steps
+### 3. Monitoring System
+```go
+// Decision: Use structured logging and metrics
+type Monitor struct {
+    logger     *zap.Logger
+    metrics    *Metrics
+    snmpAgent  *SNMPAgent
+}
 
-1. Ensure all project files are accessible in the correct paths
-2. Open VSCode with Cline extension
-3. Start a new chat session
-4. Copy the "Context Initialization Block" below into your first task message
-
-## Context Initialization Block
-
-Copy and paste the following block when starting a new task session with the Planning AI:
-
-```
-I need to initialize project context for the SSSonector SSL tunneling application. Here are the relevant files and their paths:
-
-Core Documentation:
-/home/sblanken/Desktop/go/src/github.com/o3willard-AI/SSSonector/docs/project_context.md
-/home/sblanken/Desktop/go/src/github.com/o3willard-AI/SSSonector/README.md
-/home/sblanken/Desktop/go/src/github.com/o3willard-AI/SSSonector/docs/RELEASE_NOTES.md
-
-Installation Documentation:
-/home/sblanken/Desktop/go/src/github.com/o3willard-AI/SSSonector/docs/installation.md
-/home/sblanken/Desktop/go/src/github.com/o3willard-AI/SSSonector/docs/linux_install.md
-/home/sblanken/Desktop/go/src/github.com/o3willard-AI/SSSonector/docs/windows_install.md
-/home/sblanken/Desktop/go/src/github.com/o3willard-AI/SSSonector/docs/ubuntu_install.md
-/home/sblanken/Desktop/go/src/github.com/o3willard-AI/SSSonector/docs/macos_build.md
-
-Build Configuration:
-/home/sblanken/Desktop/go/src/github.com/o3willard-AI/SSSonector/Makefile
-/home/sblanken/Desktop/go/src/github.com/o3willard-AI/SSSonector/installers/windows.nsi
-/home/sblanken/Desktop/go/src/github.com/o3willard-AI/SSSonector/.gitignore
-
-Testing and Development:
-/home/sblanken/Desktop/go/src/github.com/o3willard-AI/SSSonector/docs/virtualbox_testing.md
-
-Distribution:
-/home/sblanken/Desktop/go/src/github.com/o3willard-AI/SSSonector/dist/v1.0.0/README.md
-/home/sblanken/Desktop/go/src/github.com/o3willard-AI/SSSonector/build/checksums.txt
-
-Code Structure:
-/home/sblanken/Desktop/go/src/github.com/o3willard-AI/SSSonector/docs/code_structure_snapshot.md
-
-Please read these files to understand the project context and provide guidance on [specify your task here].
+// Rationale:
+// - Enables detailed troubleshooting
+// - Supports performance monitoring
+// - Allows integration with monitoring systems
 ```
 
-## Additional Context Notes
+## Critical Changes
 
-1. Key Documentation Files:
-   - project_context.md: Comprehensive project overview
-   - code_structure_snapshot.md: Detailed source code organization
-   
-2. The project_context.md contains:
-   - Core components and architecture
-   - Recent updates and version history
-   - Known issues and limitations
-   - Development guidelines
-   - Testing procedures
-   - Maintenance requirements
+### TUN Interface Initialization
+```go
+// Before: Simple initialization
+file, err := os.OpenFile("/dev/net/tun", os.O_RDWR, 0)
 
-2. Key Version Information:
-   - Current Version: 1.0.0
-   - Last Updated: January 31, 2025
-   - Major Features: Cross-platform SSL tunneling with bandwidth control
+// After: Robust initialization with retries
+for i := 0; i < 10; i++ {
+    if _, err := os.Stat(fmt.Sprintf("/sys/class/net/%s", name)); err == nil {
+        break
+    }
+    time.Sleep(100 * time.Millisecond)
+}
+```
 
-3. Critical Areas for AI Understanding:
-   - Thread safety implementations
-   - Platform-specific interface management
-   - Security considerations
-   - Resource management
-   - Error handling patterns
+### Certificate Expiration
+```go
+// Before: Basic expiration
+if time.Now().After(cert.NotAfter) {
+    return fmt.Errorf("certificate expired")
+}
 
-## Verification Steps
+// After: Proactive monitoring
+func (m *Monitor) monitorCertExpiration() {
+    select {
+    case <-time.After(15 * time.Second):
+        m.Info("Test mode: certificate expired, shutting down")
+        // Force kill process group
+        pgid, err := syscall.Getpgid(os.Getpid())
+        if err == nil {
+            syscall.Kill(-pgid, syscall.SIGKILL)
+        }
+    case <-m.shutdownCh:
+        return
+    }
+}
+```
 
-After initializing context with a new AI instance:
+### Process Cleanup
+```go
+// Before: Simple cleanup
+process.Kill()
 
-1. Verify the AI can access and read all specified files
-2. Confirm understanding of core components and architecture
-3. Test knowledge of platform-specific implementations
-4. Validate awareness of current issues and limitations
+// After: Comprehensive cleanup
+func cleanup() {
+    // Bring interface down
+    if err := exec.Command("ip", "link", "set", "down", "dev", i.name).Run(); err != nil {
+        return fmt.Errorf("failed to bring interface down: %w", err)
+    }
 
-## Troubleshooting
+    // Remove IP address
+    if err := exec.Command("ip", "addr", "del", i.address, "dev", i.name).Run(); err != nil {
+        return fmt.Errorf("failed to remove IP address: %w", err)
+    }
 
-If the AI seems to lack context:
-1. Ensure all file paths are correct and files are accessible
-2. Verify the project_context.md file is up to date
-3. Check if any new documentation has been added that should be included
-4. Consider providing additional context about specific areas of focus
+    i.isUp = false
+    return i.Close()
+}
+```
 
-Remember to update this restoration guide whenever significant changes are made to the project structure or documentation.
+## Lessons Learned
+
+### 1. TUN Interface Handling
+- Need for initialization retries
+- Importance of proper cleanup
+- Platform-specific considerations
+- Error handling requirements
+
+### 2. Certificate Management
+- Temporary certificate usefulness
+- Expiration monitoring importance
+- Security considerations
+- Permission handling
+
+### 3. Process Management
+- Signal handling complexity
+- Resource cleanup importance
+- Error reporting needs
+- Monitoring requirements
+
+## Future Considerations
+
+### Short Term
+1. Performance Optimization
+   - Tunnel throughput
+   - Memory usage
+   - CPU utilization
+
+2. Security Enhancements
+   - Certificate rotation
+   - Access controls
+   - Audit logging
+
+### Long Term
+1. Feature Additions
+   - Clustering support
+   - High availability
+   - Plugin system
+   - Management UI
+
+## Development Environment
+
+### Requirements
+- Go 1.21 or later
+- Linux (Ubuntu 24.04)
+- TUN/TAP kernel module
+- iproute2 package
+
+### Tools
+- VSCode with Go extensions
+- golangci-lint
+- go test
+- openssl
+
+## Testing Strategy
+
+### Unit Tests
+- Package-level testing
+- Interface mocking
+- Error condition coverage
+
+### Integration Tests
+- End-to-end scenarios
+- Certificate handling
+- Network operations
+
+### Performance Tests
+- Throughput measurement
+- Resource utilization
+- Stress testing
+
+## Documentation Status
+
+### Complete
+- Installation guide
+- Certificate management
+- Basic usage
+- Testing procedures
+
+### In Progress
+- Performance tuning
+- Security best practices
+- Troubleshooting guide
+- API documentation
+
+## Known Issues
+
+### TUN Interface
+- Occasional initialization delays
+- Platform-specific quirks
+- Cleanup edge cases
+
+### Certificate Management
+- Manual rotation required
+- Limited validation options
+- Directory permission issues
+
+### Performance
+- Memory usage spikes
+- CPU bottlenecks
+- Network congestion
+
+## Next Development Phase
+
+### 1. Performance
+- Optimize tunnel implementation
+- Reduce memory allocations
+- Improve CPU usage
+
+### 2. Security
+- Implement certificate rotation
+- Add access controls
+- Enhance audit logging
+
+### 3. Features
+- Add clustering support
+- Implement high availability
+- Create management UI
