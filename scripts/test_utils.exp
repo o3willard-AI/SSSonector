@@ -1,0 +1,29 @@
+#!/usr/bin/expect
+# Common test utilities
+
+proc log_test_result {test_name result message} {
+    send_log "\n=== $test_name ===\n"
+    send_log "Result: [expr {$result ? "PASS" : "FAIL"}]\n"
+    send_log "Details: $message\n"
+    return $result
+}
+
+proc setup_test_environment {} {
+    global monitor_host server_host client_host
+    set timeout 30
+    log_file -a "test_results.log"
+}
+
+proc cleanup_test_environment {} {
+    global monitor_host
+    
+    # Reset SNMP configuration
+    spawn ssh $monitor_host "sudo systemctl restart snmpd"
+    expect "Password:"
+    send "101abn\r"
+    
+    # Clean test data
+    spawn ssh $monitor_host "rm -f /tmp/test_*.dat"
+    expect "Password:"
+    send "101abn\r"
+}
