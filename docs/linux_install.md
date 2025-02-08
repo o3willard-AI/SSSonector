@@ -1,86 +1,100 @@
-# Linux Installation Guide for SSSonector
+# Linux Installation Guide
 
-This guide covers installation instructions for various Linux distributions.
+This guide provides detailed instructions for installing and configuring SSSonector on Linux systems.
 
-⚠️ **Important:** All installer packages are distributed through [GitHub Releases](https://github.com/o3willard-AI/SSSonector/releases/tag/v1.0.0). Always use the GitHub Releases URLs for downloading packages. Do not use repository URLs (like `/blob/main/dist/...`) as they will not work with wget or other download tools.
+## System Requirements
 
-## Debian/Ubuntu
+### Minimum Requirements
+- Linux kernel 4.4 or later
+- TUN/TAP kernel module support
+- iproute2 package
+- Administrative (sudo) privileges
+- 1GB RAM
+- 100MB disk space
 
+### Recommended Requirements
+- Linux kernel 5.10 or later
+- 4GB RAM
+- 500MB disk space
+- Dedicated network interface
+
+### Supported Distributions
+- Ubuntu 20.04 LTS or later
+- CentOS 7/8
+- RHEL 8/9
+- Debian 11/12
+- Fedora 35+
+
+## Pre-Installation Steps
+
+1. Verify TUN/TAP support:
 ```bash
-# Download the package
-wget https://github.com/o3willard-AI/SSSonector/releases/download/v1.0.0/sssonector_1.0.0_amd64.deb
+# Check if TUN module is loaded
+lsmod | grep tun
 
-# Verify the download URL worked (should show sssonector_1.0.0_amd64.deb)
-ls sssonector_1.0.0_amd64.deb
+# Load TUN module if not present
+sudo modprobe tun
 
-# Install the package
-sudo dpkg -i sssonector_1.0.0_amd64.deb
-sudo apt-get install -f  # Install dependencies if needed
+# Make TUN module load on boot
+echo "tun" | sudo tee /etc/modules-load.d/tun.conf
 ```
 
-## Red Hat Enterprise Linux (RHEL) / Rocky Linux
-
-### Using RPM Package
-
+2. Install required packages:
 ```bash
-# Download the package
-wget https://github.com/o3willard-AI/SSSonector/releases/download/v1.0.0/sssonector-1.0.0-1.x86_64.rpm
+# Ubuntu/Debian
+sudo apt-get update
+sudo apt-get install -y build-essential iproute2 net-tools
 
-# Verify the download URL worked (should show sssonector-1.0.0-1.x86_64.rpm)
-ls sssonector-1.0.0-1.x86_64.rpm
-
-# Install the package
-sudo dnf install sssonector-1.0.0-1.x86_64.rpm
-```
-
-### From Source
-
-1. Install build dependencies:
-```bash
-# RHEL/Rocky Linux 8
+# CentOS/RHEL
 sudo dnf groupinstall "Development Tools"
-sudo dnf install golang openssl-devel systemd-devel
-
-# RHEL/Rocky Linux 9
-sudo dnf groupinstall "Development Tools"
-sudo dnf install golang openssl-devel systemd-devel
+sudo dnf install iproute net-tools
 ```
 
-2. Build and install:
+## Installation Methods
+
+### Method 1: Binary Installation (Recommended)
+
+1. Download the latest release:
+```bash
+# For x86_64 systems
+wget https://github.com/o3willard-AI/SSSonector/releases/download/v2.0.0/sssonector_2.0.0_linux_amd64
+chmod +x sssonector_2.0.0_linux_amd64
+
+# For ARM64 systems
+wget https://github.com/o3willard-AI/SSSonector/releases/download/v2.0.0/sssonector_2.0.0_linux_arm64
+chmod +x sssonector_2.0.0_linux_arm64
+```
+
+2. Install the binary:
+```bash
+sudo mv sssonector_2.0.0_linux_* /usr/local/bin/sssonector
+```
+
+### Method 2: Building from Source
+
+1. Install Go:
+```bash
+wget https://go.dev/dl/go1.21.6.linux-amd64.tar.gz
+sudo tar -C /usr/local -xzf go1.21.6.linux-amd64.tar.gz
+export PATH=$PATH:/usr/local/go/bin
+```
+
+2. Clone and build:
 ```bash
 git clone https://github.com/o3willard-AI/SSSonector.git
 cd SSSonector
-make
+make build
 sudo make install
 ```
 
-## Post-Installation Steps
+## Configuration Examples
 
-### 1. Generate or Install Certificates
-
-```bash
-# Generate test certificates (for development)
-./scripts/generate-certs.sh
-
-# Copy certificates
-sudo mkdir -p /etc/sssonector/certs
-sudo cp certs/ca.crt certs/server.crt certs/server.key /etc/sssonector/certs/
-sudo chmod 600 /etc/sssonector/certs/*.key
-sudo chmod 644 /etc/sssonector/certs/*.crt
-```
-
-### 2. Configure the Service
-
-#### Server Mode
-```bash
-sudo cp /etc/sssonector/server.yaml.example /etc/sssonector/config.yaml
-sudo vi /etc/sssonector/config.yaml
-
-# Configure with your settings:
+### Example 1: Basic Server Setup
+```yaml
 mode: "server"
 network:
   interface: "tun0"
-  address: "10.0.0.1"
+  address: "10.0.0.1/24"
   mtu: 1500
 tunnel:
   cert_file: "/etc/sssonector/certs/server.crt"
@@ -88,139 +102,187 @@ tunnel:
   ca_file: "/etc/sssonector/certs/ca.crt"
   listen_address: "0.0.0.0"
   listen_port: 8443
+monitor:
+  enabled: true
+  log_file: "/var/log/sssonector/server.log"
 ```
 
-#### Client Mode
-```bash
-sudo cp /etc/sssonector/client.yaml.example /etc/sssonector/config.yaml
-sudo vi /etc/sssonector/config.yaml
-
-# Configure with your settings:
+### Example 2: High-Performance Client Setup
+```yaml
 mode: "client"
 network:
   interface: "tun0"
-  address: "10.0.0.2"
-  mtu: 1500
+  address: "10.0.0.2/24"
+  mtu: 9000  # Jumbo frames
 tunnel:
   cert_file: "/etc/sssonector/certs/client.crt"
   key_file: "/etc/sssonector/certs/client.key"
   ca_file: "/etc/sssonector/certs/ca.crt"
-  server_address: "tunnel.example.com"
+  server_address: "server.example.com"
   server_port: 8443
+monitor:
+  enabled: true
+  log_file: "/var/log/sssonector/client.log"
+  snmp_enabled: true
+  snmp_port: 10161
+throttle:
+  enabled: true
+  rate_limit: 1000000000  # 1 Gbps
+  burst_limit: 1200000000 # 1.2 Gbps burst
 ```
 
-### 3. Start and Enable the Service
+### Example 3: Load-Balanced Server Setup
+```yaml
+mode: "server"
+network:
+  interface: "tun0"
+  address: "10.0.0.1/24"
+  mtu: 1500
+tunnel:
+  cert_file: "/etc/sssonector/certs/server.crt"
+  key_file: "/etc/sssonector/certs/server.key"
+  ca_file: "/etc/sssonector/certs/ca.crt"
+  listen_address: "0.0.0.0"
+  listen_port: 8443
+  max_clients: 1000
+  client_queue_size: 5000
+monitor:
+  enabled: true
+  log_file: "/var/log/sssonector/server.log"
+  snmp_enabled: true
+  snmp_port: 10161
+  metrics_interval: 10
+throttle:
+  enabled: true
+  rate_limit: 10000000000  # 10 Gbps
+  burst_limit: 12000000000 # 12 Gbps burst
+buffer:
+  read_size: 65536
+  write_size: 65536
+  pool_size: 1024
+```
 
+## Systemd Service Setup
+
+1. Create service file:
 ```bash
-# Start the service
-sudo systemctl start sssonector
+sudo tee /etc/systemd/system/sssonector.service << 'EOL'
+[Unit]
+Description=SSSonector Tunnel Service
+After=network.target
 
-# Enable auto-start on boot
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/bin/sssonector -config /etc/sssonector/config.yaml
+Restart=always
+RestartSec=5
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
+EOL
+```
+
+2. Enable and start service:
+```bash
+sudo systemctl daemon-reload
 sudo systemctl enable sssonector
-
-# Check service status
-sudo systemctl status sssonector
-```
-
-### 4. View Logs
-
-```bash
-# View service logs
-sudo journalctl -u sssonector -f
-
-# View application logs
-sudo tail -f /var/log/sssonector/service.log
+sudo systemctl start sssonector
 ```
 
 ## Firewall Configuration
 
-### RHEL/Rocky Linux (firewalld)
-
+### UFW (Ubuntu)
 ```bash
-# Allow SSL tunnel port (server mode)
-sudo firewall-cmd --permanent --add-port=8443/tcp
-sudo firewall-cmd --reload
+sudo ufw allow 8443/tcp  # Tunnel port
+sudo ufw allow 10161/udp # SNMP monitoring (if enabled)
+```
 
-# Allow forwarding (if needed)
-sudo firewall-cmd --permanent --add-masquerade
+### FirewallD (CentOS/RHEL)
+```bash
+sudo firewall-cmd --permanent --add-port=8443/tcp
+sudo firewall-cmd --permanent --add-port=10161/udp
 sudo firewall-cmd --reload
 ```
 
-### Ubuntu/Debian (ufw)
+## Performance Tuning
 
+1. Network stack optimization:
 ```bash
-# Allow SSL tunnel port (server mode)
-sudo ufw allow 8443/tcp
+# Add to /etc/sysctl.conf
+net.core.rmem_max = 16777216
+net.core.wmem_max = 16777216
+net.ipv4.tcp_rmem = 4096 87380 16777216
+net.ipv4.tcp_wmem = 4096 87380 16777216
+```
 
-# Enable forwarding (if needed)
-echo "net.ipv4.ip_forward=1" | sudo tee -a /etc/sysctl.conf
+2. Interface optimization:
+```bash
+# Set interface txqueuelen
+sudo ip link set tun0 txqueuelen 10000
+
+# Enable TCP BBR
+echo "net.core.default_qdisc=fq" | sudo tee -a /etc/sysctl.conf
+echo "net.ipv4.tcp_congestion_control=bbr" | sudo tee -a /etc/sysctl.conf
 sudo sysctl -p
 ```
 
 ## Troubleshooting
 
-### SELinux (RHEL/Rocky Linux)
-
-If you encounter permission issues on RHEL/Rocky Linux, you may need to configure SELinux:
-
-```bash
-# Check SELinux status
-sestatus
-
-# Allow network access for the service
-sudo semanage port -a -t http_port_t -p tcp 8443
-
-# Allow TUN device access
-sudo semanage permissive -a sssonector_t
-```
-
 ### Common Issues
 
-1. TUN/TAP Device Issues:
+1. TUN Interface Creation Fails
 ```bash
-# Check if TUN module is loaded
+# Check TUN module
 lsmod | grep tun
-
-# Load TUN module if needed
+# Load if missing
 sudo modprobe tun
-
-# Make it persistent
-echo "tun" | sudo tee -a /etc/modules
+# Check device permissions
+ls -l /dev/net/tun
 ```
 
-2. Permission Issues:
+2. Connection Issues
 ```bash
-# Check file permissions
-ls -l /etc/sssonector/certs/
-ls -l /var/log/sssonector/
-
-# Fix permissions if needed
-sudo chown -R sssonector:sssonector /etc/sssonector/certs/
-sudo chmod 600 /etc/sssonector/certs/*.key
-sudo chmod 644 /etc/sssonector/certs/*.crt
+# Check service status
+systemctl status sssonector
+# View logs
+journalctl -u sssonector -f
+# Check network connectivity
+ping server.example.com
 ```
 
-3. Network Issues:
+3. Performance Issues
 ```bash
-# Check if service is listening
-sudo netstat -tulpn | grep sssonector
-
-# Test connectivity
-nc -zv server_ip 8443
-
-# Check routing
-ip route show
+# Monitor network throughput
+iftop -i tun0
+# Check system resources
+top
+# View detailed metrics
+sssonector -metrics
 ```
 
-## Uninstallation
+## Monitoring Integration
 
-### Debian/Ubuntu
-```bash
-sudo apt-get remove sssonector
-sudo apt-get purge sssonector  # Remove configuration files
+### Prometheus Integration
+```yaml
+monitor:
+  enabled: true
+  prometheus_enabled: true
+  prometheus_port: 9091
+  metrics_path: "/metrics"
 ```
 
-### RHEL/Rocky Linux
+### Grafana Dashboard
 ```bash
-sudo dnf remove sssonector
-sudo rm -rf /etc/sssonector  # Remove configuration files
+# Import dashboard
+grafana-cli plugins install grafana-piechart-panel
+curl -o sssonector-dashboard.json https://raw.githubusercontent.com/o3willard-AI/SSSonector/main/monitoring/grafana/dashboard.json
+```
+
+## Support and Resources
+
+- Documentation: https://docs.sssonector.io
+- GitHub Issues: https://github.com/o3willard-AI/SSSonector/issues
+- Community Forum: https://community.sssonector.io
+- Security Updates: https://security.sssonector.io

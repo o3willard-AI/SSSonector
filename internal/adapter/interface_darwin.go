@@ -1,9 +1,12 @@
+//go:build darwin
+// +build darwin
+
 package adapter
 
 import (
 	"fmt"
 )
 
-func newDarwinInterface(name string) (Interface, error) {
+func New(name string) (Interface, error) {
 	return nil, fmt.Errorf("darwin platform not implemented")
 }

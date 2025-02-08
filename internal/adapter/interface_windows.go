@@ -1,9 +1,12 @@
+//go:build windows
+// +build windows
+
 package adapter
 
 import (
 	"fmt"
 )
 
-func newWindowsInterface(name string) (Interface, error) {
+func New(name string) (Interface, error) {
 	return nil, fmt.Errorf("windows platform not implemented")
 }
