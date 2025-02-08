@@ -11,7 +11,9 @@ proc log_test_result {test_name result message} {
 proc setup_test_environment {} {
     global monitor_host server_host client_host
     set timeout 30
-    log_file -a "test_results.log"
+    
+    # Close any existing log file
+    catch {log_file}
 }
 
 proc cleanup_test_environment {} {
@@ -19,11 +21,28 @@ proc cleanup_test_environment {} {
     
     # Reset SNMP configuration
     spawn ssh $monitor_host "sudo systemctl restart snmpd"
-    expect "Password:"
-    send "101abn\r"
+    expect {
+        "password for sblanken:" {
+            send "101abn\r"
+            exp_continue
+        }
+        timeout {
+            send_log "Timeout waiting for SNMP restart\n"
+        }
+    }
     
     # Clean test data
     spawn ssh $monitor_host "rm -f /tmp/test_*.dat"
-    expect "Password:"
-    send "101abn\r"
+    expect {
+        "password for sblanken:" {
+            send "101abn\r"
+            exp_continue
+        }
+        timeout {
+            send_log "Timeout waiting for cleanup\n"
+        }
+    }
+    
+    # Close log file
+    catch {log_file}
 }

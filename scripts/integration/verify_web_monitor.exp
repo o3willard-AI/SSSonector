@@ -7,7 +7,10 @@ set monitor_host "192.168.50.212"
 set server_host "192.168.50.210"
 set client_host "192.168.50.211"
 
-# Log file setup
+# Main test execution
+setup_test_environment
+
+# Setup logging
 log_file -a "test/test_logs/web_monitor_test.log"
 send_log "\n=== Starting Web Monitor Validation Tests ===\n"
 send_log "[exec date]\n"
@@ -38,9 +41,6 @@ proc verify_web_monitor {host port} {
         }
     }
 }
-
-# Main test execution
-setup_test_environment
 
 send_log "\n=== Running Web Monitor Tests ===\n"
 
