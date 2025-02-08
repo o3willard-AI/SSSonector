@@ -1,239 +1,320 @@
-# Net-SNMP Monitoring Guide for SSSonector QA
+# SNMP Monitoring Guide
+
+This guide provides comprehensive documentation for setting up and using SNMP monitoring with SSSonector v2.0.0.
 
 ## Overview
-This guide documents the setup and usage of Net-SNMP for monitoring SSSonector in the QA environment. The SNMP monitoring server is configured on 192.168.50.212 (sssonector-qa-monitor).
 
-## Installation
+SSSonector provides SNMP monitoring capabilities for real-time metrics collection and system monitoring. The SNMP implementation supports:
+- SNMPv2c protocol
+- Custom MIB for SSSonector-specific metrics
+- Rate limiting statistics
+- Connection tracking
+- System resource utilization
+- Tunnel performance metrics
 
-### Prerequisites
-- Ubuntu 24.04
-- SSH access to QA monitor system
-- Sudo privileges
+## MIB Structure
 
-### Installation Steps
-1. Install Net-SNMP packages:
-```bash
-sudo apt-get update
-sudo apt-get install -y snmpd snmp snmp-mibs-downloader
+### Root OID
+- Enterprise Root: .1.3.6.1.4.1.54321
+- SSSonector Branch: .1.3.6.1.4.1.54321.1
+
+### Metric Categories
+
+1. System Information (.1)
+```
+.1.1 - Version
+.1.2 - Uptime
+.1.3 - Mode (Server/Client)
+.1.4 - Build Info
 ```
 
-2. Configure SNMP daemon:
-```bash
-# Backup original configuration
-sudo cp /etc/snmp/snmpd.conf /etc/snmp/snmpd.conf.original
-
-# Create new configuration
-sudo tee /etc/snmp/snmpd.conf > /dev/null << 'EOL'
-# Listen on all interfaces
-agentAddress udp:161
-
-# Configure access control
-rocommunity public 192.168.50.0/24
-
-# System information
-syslocation "QA Environment"
-syscontact "QA Team"
-
-# Enable all SNMP versions
-master agentx
-
-# Load required MIBs
-view systemview included .1.3.6.1.2.1.1
-view systemview included .1.3.6.1.2.1.25.1
-view systemview included .1.3.6.1.4.1.54321
-
-# Performance monitoring
-extend sssonector-throughput /usr/local/bin/check_throughput.sh
-extend sssonector-connections /usr/local/bin/check_connections.sh
-extend sssonector-latency /usr/local/bin/check_latency.sh
-EOL
+2. Network Metrics (.2)
+```
+.2.1 - Bytes In
+.2.2 - Bytes Out
+.2.3 - Packets In
+.2.4 - Packets Out
+.2.5 - Current Connections
+.2.6 - Peak Connections
 ```
 
-3. Create monitoring scripts:
-```bash
-# Throughput monitoring script
-sudo tee /usr/local/bin/check_throughput.sh > /dev/null << 'EOL'
-#!/bin/bash
-interface="enp0s3"
-rx_bytes=$(cat /sys/class/net/$interface/statistics/rx_bytes)
-tx_bytes=$(cat /sys/class/net/$interface/statistics/tx_bytes)
-echo "$rx_bytes:$tx_bytes"
-EOL
-
-# Connection monitoring script
-sudo tee /usr/local/bin/check_connections.sh > /dev/null << 'EOL'
-#!/bin/bash
-netstat -an | grep "ESTABLISHED" | wc -l
-EOL
-
-# Latency monitoring script
-sudo tee /usr/local/bin/check_latency.sh > /dev/null << 'EOL'
-#!/bin/bash
-ping -c 1 192.168.50.210 | grep "time=" | cut -d "=" -f 4
-EOL
-
-# Make scripts executable
-sudo chmod +x /usr/local/bin/check_*.sh
+3. Rate Limiting (.3)
+```
+.3.1 - Current Rate In
+.3.2 - Current Rate Out
+.3.3 - Rate Limit
+.3.4 - Burst Limit
+.3.5 - Rate Limit Hits
 ```
 
-4. Restart SNMP service:
-```bash
-sudo systemctl restart snmpd
-sudo systemctl enable snmpd
+4. Error Statistics (.4)
+```
+.4.1 - Total Errors
+.4.2 - Connection Errors
+.4.3 - Protocol Errors
+.4.4 - Rate Limit Errors
 ```
 
-## Verification
-
-### Basic SNMP Queries
-```bash
-# Test system information
-snmpwalk -v2c -c public 192.168.50.212 system
-
-# Test throughput monitoring
-snmpwalk -v2c -c public 192.168.50.212 .1.3.6.1.4.1.8072.1.3.2.3.1.2.19.115.115.115.111.110.101.99.116.111.114.45.116.104.114.111.117.103.104.112.117.116
-
-# Test connection monitoring
-snmpwalk -v2c -c public 192.168.50.212 .1.3.6.1.4.1.8072.1.3.2.3.1.2.21.115.115.115.111.110.101.99.116.111.114.45.99.111.110.110.101.99.116.105.111.110.115
+5. Resource Usage (.5)
+```
+.5.1 - CPU Usage
+.5.2 - Memory Usage
+.5.3 - Open Files
+.5.4 - Goroutines
 ```
 
-## Common Usage Examples
+## Configuration Examples
 
-### Monitor Rate Limiting
-```bash
-# Get current throughput
-snmpget -v2c -c public 192.168.50.212 .1.3.6.1.4.1.8072.1.3.2.3.1.2.19.115.115.115.111.110.101.99.116.111.114.45.116.104.114.111.117.103.104.112.117.116.1.0
-
-# Monitor continuously (every 5 seconds)
-watch -n 5 'snmpget -v2c -c public 192.168.50.212 .1.3.6.1.4.1.8072.1.3.2.3.1.2.19.115.115.115.111.110.101.99.116.111.114.45.116.104.114.111.117.103.104.112.117.116.1.0'
+### Example 1: Basic SNMP Monitoring
+```yaml
+monitor:
+  enabled: true
+  snmp_enabled: true
+  snmp_address: "0.0.0.0"
+  snmp_port: 10161
+  snmp_community: "public"
+  update_interval: 30
 ```
 
-### Monitor Connections
-```bash
-# Get current connection count
-snmpget -v2c -c public 192.168.50.212 .1.3.6.1.4.1.8072.1.3.2.3.1.2.21.115.115.115.111.110.101.99.116.111.114.45.99.111.110.110.101.99.116.105.111.110.115.1.0
-
-# Monitor continuously
-watch -n 5 'snmpget -v2c -c public 192.168.50.212 .1.3.6.1.4.1.8072.1.3.2.3.1.2.21.115.115.115.111.110.101.99.116.111.114.45.99.111.110.110.101.99.116.105.111.110.115.1.0'
+### Example 2: Detailed Monitoring with Rate Limiting
+```yaml
+monitor:
+  enabled: true
+  snmp_enabled: true
+  snmp_address: "0.0.0.0"
+  snmp_port: 10161
+  snmp_community: "public"
+  update_interval: 10
+  detailed_logging: true
+  metrics:
+    include_system: true
+    include_network: true
+    include_errors: true
+    include_resources: true
+  rate_limiting:
+    track_individual: true
+    track_aggregate: true
+    history_size: 3600
 ```
 
-### Monitor Latency
-```bash
-# Get current latency
-snmpget -v2c -c public 192.168.50.212 .1.3.6.1.4.1.8072.1.3.2.3.1.2.17.115.115.115.111.110.101.99.116.111.114.45.108.97.116.101.110.99.121.1.0
-
-# Monitor continuously
-watch -n 5 'snmpget -v2c -c public 192.168.50.212 .1.3.6.1.4.1.8072.1.3.2.3.1.2.17.115.115.115.111.110.101.99.116.111.114.45.108.97.116.101.110.99.121.1.0'
+### Example 3: High-Performance Monitoring
+```yaml
+monitor:
+  enabled: true
+  snmp_enabled: true
+  snmp_address: "0.0.0.0"
+  snmp_port: 10161
+  snmp_community: "public"
+  update_interval: 5
+  buffer_size: 10000
+  metrics:
+    include_system: true
+    include_network: true
+    include_errors: true
+    include_resources: true
+  performance:
+    metric_buffer: 1000
+    async_updates: true
+    batch_size: 100
 ```
 
-## Maintenance
+## Usage Examples
 
-### Log Files
-- SNMP daemon logs: `/var/log/syslog`
-- Monitor script logs: `/var/log/snmp/`
+### Basic Metrics Collection
 
-### Configuration Files
-- Main config: `/etc/snmp/snmpd.conf`
-- MIB config: `/etc/snmp/snmp.conf`
-
-### Common Tasks
-1. Restart SNMP service:
+1. Get system information:
 ```bash
-sudo systemctl restart snmpd
+# Version information
+snmpget -v2c -c public localhost:10161 .1.3.6.1.4.1.54321.1.1.1.0
+
+# Uptime
+snmpget -v2c -c public localhost:10161 .1.3.6.1.4.1.54321.1.1.2.0
 ```
 
-2. Check SNMP service status:
+2. Monitor network metrics:
 ```bash
-sudo systemctl status snmpd
+# Current throughput
+snmpwalk -v2c -c public localhost:10161 .1.3.6.1.4.1.54321.1.2
+
+# Watch network metrics (updates every 5 seconds)
+watch -n 5 'snmpwalk -v2c -c public localhost:10161 .1.3.6.1.4.1.54321.1.2'
 ```
 
-3. View SNMP logs:
+### Rate Limiting Monitoring
+
+1. Monitor current rates:
 ```bash
-tail -f /var/log/syslog | grep snmpd
+# Get current rate information
+snmpwalk -v2c -c public localhost:10161 .1.3.6.1.4.1.54321.1.3
+
+# Monitor rate limiting hits
+snmpget -v2c -c public localhost:10161 .1.3.6.1.4.1.54321.1.3.5.0
+```
+
+2. Track rate limit violations:
+```bash
+# Set up trap receiver
+snmptrapd -f -Lo -c /etc/snmp/snmptrapd.conf
+
+# Configure rate limit alerts
+snmpset -v2c -c public localhost:10161 .1.3.6.1.4.1.54321.1.3.6.0 i 90
+```
+
+### Resource Monitoring
+
+1. System resource usage:
+```bash
+# Get all resource metrics
+snmpwalk -v2c -c public localhost:10161 .1.3.6.1.4.1.54321.1.5
+
+# Monitor CPU usage
+watch -n 1 'snmpget -v2c -c public localhost:10161 .1.3.6.1.4.1.54321.1.5.1.0'
+```
+
+2. Connection tracking:
+```bash
+# Get current connections
+snmpget -v2c -c public localhost:10161 .1.3.6.1.4.1.54321.1.2.5.0
+
+# Monitor connection changes
+snmptrapd -f -Lo -n -c /etc/snmp/snmptrapd.conf
+```
+
+## Integration Examples
+
+### Prometheus Integration
+
+1. SNMP Exporter configuration:
+```yaml
+modules:
+  sssonector:
+    walk:
+      - 1.3.6.1.4.1.54321.1
+    metrics:
+      - name: sssonector_bytes_in
+        oid: 1.3.6.1.4.1.54321.1.2.1
+        type: counter
+      - name: sssonector_bytes_out
+        oid: 1.3.6.1.4.1.54321.1.2.2
+        type: counter
+      - name: sssonector_current_rate
+        oid: 1.3.6.1.4.1.54321.1.3.1
+        type: gauge
+```
+
+2. Prometheus configuration:
+```yaml
+scrape_configs:
+  - job_name: 'sssonector'
+    static_configs:
+      - targets: ['localhost:10161']
+    metrics_path: /snmp
+    params:
+      module: [sssonector]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: localhost:9116
+```
+
+### Grafana Dashboard
+
+1. Import dashboard configuration:
+```bash
+curl -X POST -H "Content-Type: application/json" -d @sssonector-dashboard.json http://localhost:3000/api/dashboards/db
+```
+
+2. Dashboard panels:
+```json
+{
+  "panels": [
+    {
+      "title": "Network Throughput",
+      "type": "graph",
+      "targets": [
+        {
+          "expr": "rate(sssonector_bytes_in[5m])",
+          "legendFormat": "Bytes In"
+        },
+        {
+          "expr": "rate(sssonector_bytes_out[5m])",
+          "legendFormat": "Bytes Out"
+        }
+      ]
+    },
+    {
+      "title": "Rate Limiting",
+      "type": "gauge",
+      "targets": [
+        {
+          "expr": "sssonector_current_rate",
+          "legendFormat": "Current Rate"
+        }
+      ]
+    }
+  ]
+}
 ```
 
 ## Troubleshooting
 
 ### Common Issues
 
-1. Connection Refused
+1. SNMP Connection Refused
 ```bash
-# Check if SNMP daemon is running
-sudo systemctl status snmpd
+# Check if SNMP agent is running
+ps aux | grep snmp
 
-# Verify firewall rules
-sudo ufw status
-```
+# Verify port is open
+netstat -an | grep 10161
 
-2. No Response
-```bash
 # Test SNMP connectivity
-snmpwalk -v2c -c public 192.168.50.212 system
-
-# Check configuration
-sudo cat /etc/snmp/snmpd.conf
+snmpwalk -v2c -c public localhost:10161 .1.3.6.1.2.1.1
 ```
 
-3. Invalid Community String
+2. Missing Metrics
 ```bash
-# Verify community string in config
-grep "rocommunity" /etc/snmp/snmpd.conf
+# Check metric configuration
+snmpwalk -v2c -c public localhost:10161 .1.3.6.1.4.1.54321.1
 
-# Test with explicit version
-snmpwalk -v2c -c public 192.168.50.212 system
+# Verify update interval
+snmpget -v2c -c public localhost:10161 .1.3.6.1.4.1.54321.1.1.5.0
 ```
 
-## Integration with Test Scripts
+3. Performance Issues
+```bash
+# Check SNMP response times
+time snmpget -v2c -c public localhost:10161 .1.3.6.1.4.1.54321.1.1.1.0
 
-### Example Expect Script
-```expect
-#!/usr/bin/expect
-
-set timeout 30
-
-spawn snmpwalk -v2c -c public 192.168.50.212 system
-expect {
-    "system.sysDescr.0" {
-        puts "SNMP query successful"
-        exit 0
-    }
-    timeout {
-        puts "SNMP query timed out"
-        exit 1
-    }
-}
+# Monitor SNMP traffic
+tcpdump -i any port 10161
 ```
 
-### Example Python Script
-```python
-from pysnmp.hlapi import *
+## Best Practices
 
-def get_throughput():
-    iterator = getCmd(
-        SnmpEngine(),
-        CommunityData('public', mpModel=1),
-        UdpTransportTarget(('192.168.50.212', 161)),
-        ContextData(),
-        ObjectType(ObjectIdentity('1.3.6.1.4.1.8072.1.3.2.3.1.2.19.115.115.115.111.110.101.99.116.111.114.45.116.104.114.111.117.103.104.112.117.116.1.0'))
-    )
-    errorIndication, errorStatus, errorIndex, varBinds = next(iterator)
-    
-    if errorIndication:
-        print(f"Error: {errorIndication}")
-    elif errorStatus:
-        print(f"Error: {errorStatus}")
-    else:
-        for varBind in varBinds:
-            print(f"Throughput: {varBind[1]}")
-```
+1. Security
+   - Change default community strings
+   - Use non-standard ports
+   - Implement access controls
+   - Regular security audits
 
-## Additional Resources
+2. Performance
+   - Adjust update intervals based on needs
+   - Use bulk queries when possible
+   - Monitor agent resource usage
+   - Implement rate limiting for queries
 
-1. Net-SNMP Documentation
-   - [Official Net-SNMP Documentation](http://www.net-snmp.org/docs/)
-   - [MIB Reference](http://www.net-snmp.org/docs/mibs/)
+3. Monitoring
+   - Set up alerting thresholds
+   - Monitor agent health
+   - Regular metric validation
+   - Backup monitoring configuration
 
-2. Monitoring Tools
-   - snmpwalk: Walk through SNMP tree
-   - snmpget: Get specific SNMP values
-   - snmpset: Set SNMP values (if writable)
-   - snmptrapd: Receive SNMP traps
+4. Integration
+   - Use standard monitoring tools
+   - Implement redundancy
+   - Regular backup of dashboards
+   - Document custom configurations

@@ -1,333 +1,277 @@
-# SSSonector Rate Limiting Implementation
+# Rate Limiting Implementation Guide
+
+This document details the rate limiting implementation in SSSonector v2.0.0, including configuration examples and best practices.
 
 ## Overview
 
-The rate limiting system in SSSonector uses a token bucket algorithm to control bandwidth usage and is monitored through SNMP. This document details the implementation, configuration, and monitoring of the rate limiting features.
+SSSonector implements a token bucket rate limiting algorithm with the following features:
+- Independent ingress and egress rate limiting
+- Configurable burst allowance
+- Per-connection and global limits
+- Dynamic rate adjustment
+- SNMP monitoring integration
 
-## Architecture
+## Implementation Details
 
-### 1. Token Bucket Implementation
+### Token Bucket Algorithm
+
+The rate limiter uses a token bucket implementation with the following characteristics:
+
+1. Token Generation
+   - Tokens are generated at a fixed rate (rate limit)
+   - Each token represents one byte of data transfer
+   - Tokens accumulate up to the burst limit
+
+2. Packet Processing
+   - Each packet consumes tokens equal to its size
+   - If insufficient tokens are available, the packet is delayed
+   - Bursts are allowed up to the configured burst limit
+
+### Code Structure
 
 ```go
-// internal/throttle/token_bucket.go
-type TokenBucket struct {
-    rate       float64   // tokens per second
-    burstSize  float64   // maximum bucket size
-    tokens     float64   // current token count
-    lastUpdate time.Time // last token update time
-    mu         sync.Mutex
+type Limiter struct {
+    rate       int64         // Tokens per second
+    burst      int64         // Maximum burst size
+    tokens     int64         // Current token count
+    lastUpdate time.Time     // Last token update time
+    mu         sync.Mutex    // Mutex for thread safety
 }
 
-func (tb *TokenBucket) Allow(tokens float64) bool {
-    tb.mu.Lock()
-    defer tb.mu.Unlock()
-
-    now := time.Now()
-    elapsed := now.Sub(tb.lastUpdate).Seconds()
-    tb.tokens = math.Min(tb.burstSize, tb.tokens+elapsed*tb.rate)
-    tb.lastUpdate = now
-
-    if tokens <= tb.tokens {
-        tb.tokens -= tokens
-        return true
-    }
-    return false
+type RateLimiter interface {
+    Allow(n int64) bool      // Check if n bytes can be transferred
+    Wait(ctx context.Context, n int64) error  // Wait for n tokens
+    Update(newRate int64)    // Update rate limit
 }
 ```
 
-### 2. Rate Limiting Integration
+## Configuration Examples
 
-#### Connection Manager
-```go
-// internal/connection/manager.go
-type RateLimitedConnection struct {
-    conn       net.Conn
-    upBucket   *TokenBucket
-    downBucket *TokenBucket
-    metrics    *monitor.Metrics
-}
-
-func (rlc *RateLimitedConnection) Read(p []byte) (n int, err error) {
-    if !rlc.downBucket.Allow(float64(len(p))) {
-        time.Sleep(time.Millisecond * 100)
-        return 0, nil
-    }
-    n, err = rlc.conn.Read(p)
-    if n > 0 {
-        rlc.metrics.AddBytesIn(int64(n))
-    }
-    return
-}
-
-func (rlc *RateLimitedConnection) Write(p []byte) (n int, err error) {
-    if !rlc.upBucket.Allow(float64(len(p))) {
-        time.Sleep(time.Millisecond * 100)
-        return 0, nil
-    }
-    n, err = rlc.conn.Write(p)
-    if n > 0 {
-        rlc.metrics.AddBytesOut(int64(n))
-    }
-    return
-}
-```
-
-### 3. SNMP Integration
-
-#### MIB Structure
-```
-SSSONECTOR-MIB DEFINITIONS ::= BEGIN
-
--- Rate Limiting OIDs
-sssonectorRateLimit OBJECT IDENTIFIER ::= { sssonector 3 }
-
--- Upload rate limit
-uploadRateLimit OBJECT-TYPE
-    SYNTAX      Gauge32
-    MAX-ACCESS  read-write
-    STATUS      current
-    DESCRIPTION "Upload rate limit in kbps"
-    ::= { sssonectorRateLimit 1 }
-
--- Download rate limit
-downloadRateLimit OBJECT-TYPE
-    SYNTAX      Gauge32
-    MAX-ACCESS  read-write
-    STATUS      current
-    DESCRIPTION "Download rate limit in kbps"
-    ::= { sssonectorRateLimit 2 }
-
-END
-```
-
-#### Rate Limit Configuration
-```go
-// internal/throttle/limiter.go
-type RateLimiter struct {
-    uploadLimit   uint32
-    downloadLimit uint32
-    metrics       *monitor.Metrics
-}
-
-func (rl *RateLimiter) SetUploadLimit(kbps uint32) {
-    rl.uploadLimit = kbps
-    rl.metrics.SetRateLimit("upload", int64(kbps))
-}
-
-func (rl *RateLimiter) SetDownloadLimit(kbps uint32) {
-    rl.downloadLimit = kbps
-    rl.metrics.SetRateLimit("download", int64(kbps))
-}
-```
-
-## Configuration
-
-### 1. Rate Limit Settings
-
-#### YAML Configuration
+### Example 1: Basic Rate Limiting
 ```yaml
-# configs/server.yaml
-rate_limiting:
-  upload:
+throttle:
+  enabled: true
+  rate_limit: 1048576    # 1 MB/s
+  burst_limit: 2097152   # 2 MB burst
+```
+
+### Example 2: Asymmetric Rate Limiting
+```yaml
+throttle:
+  enabled: true
+  upload_rate: 5242880   # 5 MB/s upload
+  upload_burst: 10485760 # 10 MB upload burst
+  download_rate: 10485760 # 10 MB/s download
+  download_burst: 20971520 # 20 MB download burst
+  per_connection: true
+```
+
+### Example 3: Dynamic Rate Limiting
+```yaml
+throttle:
+  enabled: true
+  rate_limit: 1048576    # Base rate: 1 MB/s
+  burst_limit: 2097152   # Base burst: 2 MB
+  dynamic:
     enabled: true
-    rate_kbps: 10240  # 10 Mbps
-    burst_factor: 1.5  # Allow 50% burst
-  download:
+    min_rate: 524288     # Minimum: 512 KB/s
+    max_rate: 10485760   # Maximum: 10 MB/s
+    adjustment_interval: 5 # Check every 5 seconds
+    increase_threshold: 0.8 # Increase if utilization > 80%
+    decrease_threshold: 0.2 # Decrease if utilization < 20%
+```
+
+## Usage Examples
+
+### Example 1: Server with Multiple Clients
+```yaml
+mode: "server"
+tunnel:
+  listen_address: "0.0.0.0"
+  listen_port: 8443
+  max_clients: 10
+throttle:
+  enabled: true
+  global_rate: 52428800  # 50 MB/s total
+  global_burst: 104857600 # 100 MB burst total
+  per_client:
+    rate: 5242880        # 5 MB/s per client
+    burst: 10485760      # 10 MB burst per client
+  fair_queue: true       # Enable fair queuing
+monitor:
+  enabled: true
+  snmp_enabled: true
+  metrics:
+    include_rate_limits: true
+```
+
+### Example 2: High-Performance Client
+```yaml
+mode: "client"
+tunnel:
+  server_address: "server.example.com"
+  server_port: 8443
+throttle:
+  enabled: true
+  rate_limit: 104857600  # 100 MB/s
+  burst_limit: 209715200 # 200 MB burst
+  buffer:
+    size: 65536          # 64 KB buffer
+    count: 1000          # 1000 buffers in pool
+  optimization:
+    batch_size: 100
+    max_delay: "10ms"
+monitor:
+  enabled: true
+  update_interval: 1
+```
+
+### Example 3: Adaptive Rate Limiting
+```yaml
+throttle:
+  enabled: true
+  adaptive:
     enabled: true
-    rate_kbps: 10240
-    burst_factor: 1.5
+    target_latency: "50ms"
+    max_rate: 104857600   # 100 MB/s
+    min_rate: 1048576     # 1 MB/s
+    measurement_window: "1s"
+    adjustment_interval: "100ms"
+    increase_factor: 1.1   # 10% increase
+    decrease_factor: 0.9   # 10% decrease
+  monitoring:
+    latency_threshold: "100ms"
+    congestion_threshold: 0.8
+    alert_interval: "1m"
 ```
 
-#### Dynamic Configuration via SNMP
+## Performance Tuning
+
+### Buffer Configuration
+```yaml
+buffer:
+  read_size: 65536      # 64 KB read buffer
+  write_size: 65536     # 64 KB write buffer
+  pool_size: 1000       # Buffer pool size
+  prealloc: true        # Preallocate buffers
+```
+
+### System Optimization
 ```bash
-# Set upload rate limit (10 Mbps)
-snmpset -v2c -c private localhost \
-    'NET-SNMP-EXTEND-MIB::nsExtendOutput1Line."sssonector-rate-up"' \
-    i 10240
+# Increase socket buffers
+sysctl -w net.core.rmem_max=16777216
+sysctl -w net.core.wmem_max=16777216
 
-# Set download rate limit (10 Mbps)
-snmpset -v2c -c private localhost \
-    'NET-SNMP-EXTEND-MIB::nsExtendOutput1Line."sssonector-rate-down"' \
-    i 10240
+# Optimize TCP settings
+sysctl -w net.ipv4.tcp_rmem="4096 87380 16777216"
+sysctl -w net.ipv4.tcp_wmem="4096 87380 16777216"
 ```
 
-### 2. Monitoring Configuration
+## Monitoring Integration
 
-#### SNMP Extend Scripts
-```bash
-# /usr/local/bin/sssonector-rate-limits
-#!/bin/bash
-
-case "$1" in
-    "upload")
-        cat /var/run/sssonector/rate_up
-        ;;
-    "download")
-        cat /var/run/sssonector/rate_down
-        ;;
-    *)
-        echo "Unknown rate limit type: $1"
-        exit 1
-        ;;
-esac
+### SNMP Metrics
+```yaml
+monitor:
+  enabled: true
+  snmp_enabled: true
+  metrics:
+    rate_limits:
+      current_rate: .1.3.6.1.4.1.54321.1.3.1
+      burst_rate: .1.3.6.1.4.1.54321.1.3.2
+      limit_hits: .1.3.6.1.4.1.54321.1.3.3
 ```
 
-## Monitoring
-
-### 1. Available Metrics
-
-#### Rate Limiting Metrics
-- Current rate limits
-  * Upload limit (kbps)
-  * Download limit (kbps)
-- Actual throughput
-  * Upload rate (kbps)
-  * Download rate (kbps)
-- Burst statistics
-  * Peak upload rate
-  * Peak download rate
-  * Burst duration
-
-### 2. SNMP Queries
-
-#### Get Current Rate Limits
-```bash
-# Upload limit
-snmpget -v2c -c public localhost \
-    'NET-SNMP-EXTEND-MIB::nsExtendOutput1Line."sssonector-rate-up"'
-
-# Download limit
-snmpget -v2c -c public localhost \
-    'NET-SNMP-EXTEND-MIB::nsExtendOutput1Line."sssonector-rate-down"'
-```
-
-#### Monitor Actual Throughput
-```bash
-# Watch throughput in real-time
-watch -n 1 'snmpget -v2c -c public localhost \
-    NET-SNMP-EXTEND-MIB::nsExtendOutput1Line."sssonector-throughput"'
-```
-
-## Testing
-
-### 1. Rate Limit Validation
-
-#### Basic Rate Test
-```tcl
-# test_snmp_rate_limiting.exp
-proc test_rate_limit {target_rate actual_rate tolerance} {
-    set lower_bound [expr {$target_rate * (1.0 - $tolerance)}]
-    set upper_bound [expr {$target_rate * (1.0 + $tolerance)}]
-    
-    if {$actual_rate >= $lower_bound && $actual_rate <= $upper_bound} {
-        return [log_test_result "Rate Limit $target_rate" 1 \
-            "Rate $actual_rate within bounds"]
-    } else {
-        return [log_test_result "Rate Limit $target_rate" 0 \
-            "Rate $actual_rate outside bounds"]
-    }
-}
-```
-
-#### Dynamic Rate Testing
-```tcl
-# test_snmp_dynamic_rates.exp
-proc test_dynamic_rate_adjustment {initial_rate new_rate} {
-    # Set initial rate
-    spawn snmpset -v2c -c private localhost \
-        'NET-SNMP-EXTEND-MIB::nsExtendOutput1Line."sssonector-rate-up"' \
-        i $initial_rate
-    expect "Success"
-    
-    # Transfer data and measure
-    set initial_throughput [measure_transfer_rate]
-    
-    # Change rate during transfer
-    spawn snmpset -v2c -c private localhost \
-        'NET-SNMP-EXTEND-MIB::nsExtendOutput1Line."sssonector-rate-up"' \
-        i $new_rate
-    expect "Success"
-    
-    # Measure new throughput
-    set new_throughput [measure_transfer_rate]
-    
-    # Verify adjustment
-    return [test_rate_limit $new_rate $new_throughput 0.05]
-}
-```
-
-### 2. Performance Testing
-
-#### Stress Testing
-```bash
-# Generate test load
-dd if=/dev/urandom of=test.dat bs=1M count=1024
-
-# Test upload with rate limit
-curl -T test.dat http://localhost:8080/upload
-
-# Monitor throughput
-watch -n 0.1 'snmpget -v2c -c public localhost \
-    NET-SNMP-EXTEND-MIB::nsExtendOutput1Line."sssonector-throughput"'
+### Prometheus Integration
+```yaml
+monitor:
+  prometheus:
+    enabled: true
+    port: 9091
+    metrics:
+      - name: "sssonector_rate_current"
+        help: "Current transfer rate"
+        type: "gauge"
+      - name: "sssonector_rate_limit_hits"
+        help: "Number of rate limit hits"
+        type: "counter"
 ```
 
 ## Troubleshooting
 
-### 1. Common Issues
+### Common Issues
 
-#### Rate Limiting Not Working
-1. Verify token bucket initialization
+1. Poor Performance
 ```bash
-# Check rate limit configuration
-cat /etc/sssonector/server.yaml
+# Check current rate
+snmpget -v2c -c public localhost:10161 .1.3.6.1.4.1.54321.1.3.1.0
 
-# Verify runtime values
-snmpwalk -v2c -c public localhost NET-SNMP-EXTEND-MIB::nsExtendOutput1Line
+# Monitor rate limit hits
+watch -n 1 'snmpget -v2c -c public localhost:10161 .1.3.6.1.4.1.54321.1.3.3.0'
+
+# View detailed metrics
+sssonector -metrics
 ```
 
-#### Inconsistent Throughput
-1. Check system resources
+2. High Latency
 ```bash
-# Monitor CPU usage
-top -b -n 1
+# Monitor buffer usage
+snmpwalk -v2c -c public localhost:10161 .1.3.6.1.4.1.54321.1.5
 
-# Check network interface
-ethtool enp0s3
+# Check system resources
+top -p $(pgrep sssonector)
 ```
 
-2. Verify token bucket parameters
+3. Inconsistent Rates
 ```bash
-# Review burst settings
-grep burst_factor /etc/sssonector/server.yaml
+# Verify rate limit configuration
+sssonector -validate-config
 
-# Monitor token availability
-tail -f /var/log/sssonector/throttle.log
+# Monitor rate adjustments
+tail -f /var/log/sssonector/rate.log
 ```
 
-### 2. Debugging Tools
+## Best Practices
 
-#### Rate Limiting Logs
-```bash
-# Enable debug logging
-sed -i 's/log_level: info/log_level: debug/' /etc/sssonector/server.yaml
+1. Rate Limit Selection
+   - Start with conservative limits
+   - Monitor actual usage patterns
+   - Adjust based on network capacity
+   - Consider client requirements
 
-# Monitor rate limiting events
-tail -f /var/log/sssonector/throttle.log | grep "rate_limit"
-```
+2. Burst Configuration
+   - Set burst limit 2-3x base rate
+   - Monitor burst utilization
+   - Adjust based on application needs
+   - Consider network latency
 
-## Future Improvements
+3. Performance Optimization
+   - Use appropriate buffer sizes
+   - Enable buffer pooling
+   - Monitor system resources
+   - Regular performance testing
 
-1. Enhanced Rate Limiting
-   - Per-connection limits
-   - Time-based rate policies
-   - QoS integration
+4. Monitoring
+   - Enable detailed metrics
+   - Set up alerting
+   - Regular configuration review
+   - Monitor client experience
 
-2. Monitoring Enhancements
-   - Historical rate tracking
-   - Bandwidth usage alerts
-   - Rate limit violation logging
+## Security Considerations
 
-3. Management Features
-   - Rate limit schedules
-   - Bandwidth quotas
-   - Group-based policies
+1. Rate Limit Protection
+   - Implement global rate limits
+   - Set per-client limits
+   - Monitor for abuse
+   - Regular security audits
+
+2. Resource Protection
+   - Set maximum connections
+   - Implement fair queuing
+   - Monitor resource usage
+   - Set up alerts
+
+3. Configuration Security
+   - Validate configuration changes
+   - Backup configurations
+   - Document changes
+   - Regular security reviews
