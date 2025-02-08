@@ -5,7 +5,6 @@ import (
 	"os"
 	"runtime"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -149,13 +148,9 @@ func (m *Monitor) monitorCertExpiration() {
 	select {
 	case <-time.After(15 * time.Second):
 		m.Info("Test mode: certificate expired, shutting down")
-		// Force kill the process group
-		pgid, err := syscall.Getpgid(os.Getpid())
-		if err == nil {
-			syscall.Kill(-pgid, syscall.SIGKILL)
-		} else {
-			// Fallback to killing just this process
-			syscall.Kill(os.Getpid(), syscall.SIGKILL)
+		// Use platform-specific process termination
+		if err := killProcess(os.Getpid()); err != nil {
+			m.Error("Failed to kill process: %v", err)
 		}
 	case <-m.shutdownCh:
 		return
