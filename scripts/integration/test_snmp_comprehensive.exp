@@ -1,0 +1,95 @@
+#!/usr/bin/expect
+
+source [file dirname $argv0]/../test_utils.exp
+
+array set test_suites {
+    "basic" {
+        "description" "Basic SNMP Functionality"
+        "tests" {
+            "connectivity" test_snmp_connectivity
+            "metrics" test_basic_metrics
+        }
+        "required" 1
+    }
+    "rate_limiting" {
+        "description" "Rate Limiting Features"
+        "tests" {
+            "static_limits" test_static_rate_limits
+            "dynamic_limits" test_dynamic_rate_limits
+        }
+        "required" 1
+    }
+}
+
+proc test_snmp_connectivity {host} {
+    send_log "\nTesting SNMP connectivity to $host...\n"
+    spawn snmpwalk -v2c -c public $host system
+    expect {
+        "system.sysDescr.0" {
+            return [log_test_result "SNMP Connectivity" 1 "Successfully connected to $host"]
+        }
+        timeout {
+            return [log_test_result "SNMP Connectivity" 0 "Connection timeout to $host"]
+        }
+    }
+}
+
+proc test_basic_metrics {host} {
+    set metrics {
+        "throughput" "NET-SNMP-EXTEND-MIB::nsExtendOutput1Line.\"sssonector-throughput\""
+        "connections" "NET-SNMP-EXTEND-MIB::nsExtendOutput1Line.\"sssonector-connections\""
+        "latency" "NET-SNMP-EXTEND-MIB::nsExtendOutput1Line.\"sssonector-latency\""
+    }
+    
+    set all_passed 1
+    foreach {metric oid} $metrics {
+        spawn snmpget -v2c -c public $host $oid
+        expect {
+            -re "STRING: .+" {
+                send_log "\nMetric $metric: OK\n"
+            }
+            timeout {
+                set all_passed 0
+                send_log "\nMetric $metric: Failed\n"
+            }
+        }
+    }
+    return [log_test_result "Basic Metrics" $all_passed "Metric collection test"]
+}
+
+proc test_static_rate_limits {host} {
+    return [test_rate_limit $host 5242880 0.1]
+}
+
+proc test_dynamic_rate_limits {host} {
+    return [test_rate_limit $host 10485760 0.1]
+}
+
+# Main test execution
+setup_test_environment
+
+set total_tests 0
+set passed_tests 0
+
+foreach {suite_name suite_info} [array get test_suites] {
+    send_log "\n=== Running $suite_name test suite ===\n"
+    array set suite $suite_info
+    
+    foreach {test_name test_proc} $suite(tests) {
+        incr total_tests
+        if {[$test_proc $monitor_host]} {
+            incr passed_tests
+        }
+    }
+}
+
+send_log "\n=== Test Summary ===\n"
+send_log "Passed $passed_tests out of $total_tests tests\n"
+
+cleanup_test_environment
+
+if {$passed_tests == $total_tests} {
+    exit 0
+} else {
+    exit 1
+}

@@ -1,0 +1,43 @@
+#!/usr/bin/expect
+
+source [file dirname $argv0]/../test_utils.exp
+
+proc verify_web_monitor {host port} {
+    send_log "\nVerifying web monitor on $host:$port...\n"
+    
+    # Check if port is listening
+    spawn ssh $host "netstat -tuln | grep $port"
+    expect {
+        -re ".*:$port.*LISTEN.*" {
+            send_log "Web monitor port is listening\n"
+        }
+        timeout {
+            return [log_test_result "Web Monitor Port" 0 "Port $port not listening"]
+        }
+    }
+    
+    # Check if web monitor responds
+    spawn ssh $host "curl -s http://localhost:$port"
+    expect {
+        "SSSonector SNMP Monitor" {
+            send_log "Web monitor page loaded successfully\n"
+            return [log_test_result "Web Monitor Access" 1 "Successfully accessed web monitor"]
+        }
+        timeout {
+            return [log_test_result "Web Monitor Access" 0 "Failed to access web monitor"]
+        }
+    }
+}
+
+# Main test execution
+setup_test_environment
+
+set result [verify_web_monitor $monitor_host 8080]
+
+cleanup_test_environment
+
+if {$result} {
+    exit 0
+} else {
+    exit 1
+}
