@@ -1,143 +1,66 @@
-# SSSonector QA Environment State Documentation
+# QA Environment State
 
-## Current Environment Status
+## Test Environment Configuration
 
-### 1. Virtual Machine Configuration
+### Network Configuration
+- Monitor Node: 192.168.50.212
+- Server Node: 192.168.50.210
+- Client Node: 192.168.50.211
 
-#### Monitor Node (192.168.50.212)
-- **Role**: SNMP monitoring and metrics collection
-- **Hostname**: sssonector-qa-monitor
-- **Specifications**:
-  - CPU: 4 cores
-  - Memory: 8GB
-  - Disk: 40GB
-  - OS: Ubuntu 24.04 LTS
-  - Network: Bridged (enp0s3)
-- **Status**: Operational
-  - Web monitor running on port 8080
-  - Direct metrics collection active
-  - All core metrics reporting
+### Test Resources
+- FTP servers installed and operational on both client and server nodes
+- Test file: `/home/sblanken/DryFire_v4_10.zip` available on both machines
+- Purpose: Rate limiting testing in both directions through the tunnel
 
-#### Server Node (192.168.50.210)
-- **Role**: Primary tunnel endpoint
-- **Hostname**: sssonector-server
-- **Specifications**:
-  - CPU: 2 cores
-  - Memory: 4GB
-  - Disk: 20GB
-  - OS: Ubuntu 24.04 LTS
-  - Network: Bridged (enp0s3)
-- **Status**: Connected and responding
-
-#### Client Node (192.168.50.211)
-- **Role**: Secondary tunnel endpoint
-- **Hostname**: sssonector-client
-- **Specifications**:
-  - CPU: 2 cores
-  - Memory: 4GB
-  - Disk: 20GB
-  - OS: Ubuntu 24.04 LTS
-  - Network: Bridged (enp0s3)
-- **Status**: Connected and responding
-
-### 2. Monitoring Implementation
-
-#### Current Status
+### Monitoring System
+- Web monitor operational on port 8080
 - Direct metrics collection via script
-- Web monitor operational
-- MIB implementation deferred
+- Current metrics:
+  * Throughput: RX/TX in Mbps
+  * Active Connections
+  * Latency
 
-#### Metrics Collection
-```bash
-# Currently implemented metrics
-/usr/local/bin/sssonector-snmp throughput   # Returns bytes RX:TX
-/usr/local/bin/sssonector-snmp connections  # Returns active connection count
-/usr/local/bin/sssonector-snmp latency      # Returns latency in ms
-```
+### Rate Limiting Configuration
+- Implemented using tc (traffic control)
+- Test rates: 5, 10, 25, 50 Mbps
+- Tolerance: ±10%
+- Validation through FTP transfer tests
 
-#### Web Monitor Status
-- Service: Running on port 8080
-- Implementation: Python Flask application
-- Metrics Collection:
-  - Throughput (RX/TX in Mbps)
-  - Active Connections
-  - Latency
-- Update Interval: 5 seconds
-- Last Verified: 2025-02-08 21:44:16 UTC
+### Test Suite Organization
+- Basic SNMP tests
+- Rate limiting tests
+- Integration tests
+- Web monitor validation
 
-#### Current Metrics
-```yaml
-throughput:
-  rx: 172.41 Mbps
-  tx: 50.8 Mbps
-connections: 5
-latency: 45.2 ms
-```
+## Current Status
 
-### 3. Recent Changes (2025-02-08)
+### Active Services
+- SNMP monitoring
+- Web interface
+- FTP servers
+- Rate limiting controls
 
-1. Monitoring System
-   - Implemented direct metrics collection
-   - Deployed web monitor interface
-   - Added automatic unit conversion
-   - Improved error handling
+### Test Coverage
+- Basic connectivity: Complete
+- Metric validation: Complete
+- Rate limiting: In progress
+- Integration tests: Pending
 
-2. Infrastructure Verification
-   - Validated VM connectivity
-   - Confirmed network interface settings
-   - Verified service accessibility
-   - Tested metric collection end-to-end
+### Known Issues
+- None currently reported
 
-### 4. Known Issues
+## Maintenance Procedures
 
-1. MIB Implementation
-   - Status: Deferred
-   - Impact: No direct SNMP OID access
-   - Workaround: Using script-based metrics collection
+### Daily Checks
+- Verify FTP server status
+- Monitor system metrics
+- Review error logs
 
-### 5. Next Steps
+### Weekly Tasks
+- Run full test suite
+- Verify rate limiting
+- Update test data if needed
 
-#### Priority Items
-1. Performance Testing
-   - Validate rate limiting functionality
-   - Test certificate management
-   - Verify tunnel operations
-
-2. Test Coverage
-   - Complete metric validation tests
-   - Implement remaining rate limiting tests
-   - Add comprehensive integration tests
-
-3. Future Improvements
-   - Implement Enterprise MIB
-   - Enhance monitoring capabilities
-   - Add automated test scheduling
-
-### 6. Environment Management
-
-#### Validation Procedures
-1. Network Connectivity
-   - Inter-VM communication: Verified
-   - Web monitor access: Verified
-   - Metric collection: Verified
-
-2. Service Status
-   - Web monitor: Running
-   - Metrics collection: Active
-   - Test data generation: Pending
-
-3. Configuration Verification
-   - Collection scripts: Verified
-   - Metric reporting: Verified
-   - Alert thresholds: Pending
-
-#### Maintenance Procedures
-1. Regular Tasks
-   - Log rotation
-   - Test data cleanup
-   - Performance metrics collection
-
-2. Backup Procedures
-   - Configuration files
-   - Test results
-   - Custom scripts
+## Contact Information
+- Technical Support: admin@example.com
+- Emergency Contact: ops@example.com
