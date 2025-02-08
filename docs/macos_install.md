@@ -1,285 +1,303 @@
-# macOS Installation Guide for SSSonector
+# macOS Installation Guide
 
-This guide provides detailed instructions for installing and configuring SSSonector on macOS systems.
+This guide provides instructions for installing and configuring SSSonector on macOS systems. Please note that macOS support is currently in basic mode, with TUN interface implementation planned for future releases.
 
 ## System Requirements
 
-- macOS 11 (Big Sur) or later
-- Administrative access
-- At least 100MB free disk space
-- Xcode Command Line Tools (for building from source)
+### Minimum Requirements
+- macOS 10.15 (Catalina) or later
+- Intel or Apple Silicon processor
+- 2GB RAM
+- 200MB disk space
+- Administrator privileges
+
+### Recommended Requirements
+- macOS 12 (Monterey) or later
+- 4GB RAM
+- 500MB disk space
+- Dedicated network interface
+
+### Development Requirements
+- Xcode Command Line Tools
+- Go 1.21 or later
+- Network Extension entitlements (for future TUN support)
+
+## Pre-Installation Steps
+
+1. Install Xcode Command Line Tools:
+```bash
+xcode-select --install
+```
+
+2. Install Homebrew (if not installed):
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+```
+
+3. Install dependencies:
+```bash
+brew install openssl
+```
 
 ## Installation Methods
 
-### Method 1: Using PKG Installer (Recommended)
+### Method 1: Binary Installation (Recommended)
 
-1. Install required dependencies:
+1. Download the appropriate binary:
 ```bash
-# Install Homebrew if not already installed
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+# For Intel Macs
+curl -LO https://github.com/o3willard-AI/SSSonector/releases/download/v2.0.0/sssonector_2.0.0_darwin_amd64
 
-# Install dependencies
-brew install openssl@3 snmp
+# For Apple Silicon Macs
+curl -LO https://github.com/o3willard-AI/SSSonector/releases/download/v2.0.0/sssonector_2.0.0_darwin_arm64
 ```
 
-2. Download and install SSSonector:
+2. Install the binary:
 ```bash
-# Download the package
-curl -LO https://github.com/o3willard-AI/SSSonector/releases/download/v1.0.0/SSSonector-1.0.0-macos.pkg
+# Make executable
+chmod +x sssonector_2.0.0_darwin_*
 
-# Install the package
-sudo installer -pkg SSSonector-1.0.0-macos.pkg -target /
+# Move to applications directory
+sudo mv sssonector_2.0.0_darwin_* /usr/local/bin/sssonector
+
+# Verify installation
+sssonector -version
 ```
 
 ### Method 2: Building from Source
 
-1. Install build dependencies:
+1. Install Go:
 ```bash
-# Install Xcode Command Line Tools
-xcode-select --install
-
-# Install Homebrew dependencies
-brew install \
-    golang \
-    openssl@3 \
-    pkg-config \
-    snmp
-
-# Set OpenSSL paths
-export LDFLAGS="-L/opt/homebrew/opt/openssl@3/lib"
-export CPPFLAGS="-I/opt/homebrew/opt/openssl@3/include"
-export PKG_CONFIG_PATH="/opt/homebrew/opt/openssl@3/lib/pkgconfig"
+brew install go
 ```
 
 2. Clone and build:
 ```bash
 git clone https://github.com/o3willard-AI/SSSonector.git
 cd SSSonector
-make
+make build
 sudo make install
 ```
 
 ## Configuration Examples
 
-### Example 1: Simple Point-to-Point Connection
-
-This example sets up a basic tunnel between two locations.
-
-#### Server Configuration (HQ Office)
-```bash
-# Generate certificates
-sudo mkdir -p /etc/sssonector/certs
-cd /etc/sssonector/certs
-sudo openssl req -x509 -newkey rsa:4096 -keyout server.key -out server.crt -days 365 -nodes \
-    -subj "/C=US/ST=California/L=San Francisco/O=MyCompany/CN=hq.example.com"
-
-# Configure server
-sudo tee /etc/sssonector/config.yaml << 'EOF'
-mode: "server"
-network:
-  interface: "utun0"  # macOS uses utun instead of tun
-  address: "10.0.1.1"
-  mtu: 1500
-tunnel:
-  cert_file: "/etc/sssonector/certs/server.crt"
-  key_file: "/etc/sssonector/certs/server.key"
-  ca_file: "/etc/sssonector/certs/ca.crt"
-  listen_address: "0.0.0.0"
-  listen_port: 8443
-  max_clients: 10
-monitor:
-  snmp_enabled: true
-  snmp_address: "127.0.0.1"
-  snmp_port: 161
-EOF
-
-# Configure macOS firewall
-sudo /usr/libexec/ApplicationFirewall/socketfilterfw --add /usr/local/bin/sssonector
-sudo /usr/libexec/ApplicationFirewall/socketfilterfw --unblock /usr/local/bin/sssonector
-
-# Enable IP forwarding
-sudo sysctl -w net.inet.ip.forwarding=1
-echo "net.inet.ip.forwarding=1" | sudo tee -a /etc/sysctl.conf
-
-# Start service
-sudo launchctl load /Library/LaunchDaemons/com.o3willard.sssonector.plist
-```
-
-#### Client Configuration (Branch Office)
-```bash
-# Copy certificates from server
-sudo mkdir -p /etc/sssonector/certs
-sudo scp user@hq.example.com:/etc/sssonector/certs/ca.crt /etc/sssonector/certs/
-sudo scp user@hq.example.com:/etc/sssonector/certs/client.* /etc/sssonector/certs/
-
-# Configure client
-sudo tee /etc/sssonector/config.yaml << 'EOF'
+### Example 1: Basic Client Setup
+```yaml
 mode: "client"
 network:
-  interface: "utun0"  # macOS uses utun instead of tun
-  address: "10.0.1.2"
+  interface: "utun0"
+  address: "10.0.0.2/24"
   mtu: 1500
 tunnel:
   cert_file: "/etc/sssonector/certs/client.crt"
   key_file: "/etc/sssonector/certs/client.key"
   ca_file: "/etc/sssonector/certs/ca.crt"
-  server_address: "hq.example.com"
+  server_address: "server.example.com"
   server_port: 8443
-  retry_interval: 5
 monitor:
-  snmp_enabled: true
-  snmp_address: "127.0.0.1"
-  snmp_port: 161
-EOF
-
-# Start service
-sudo launchctl load /Library/LaunchDaemons/com.o3willard.sssonector.plist
+  enabled: true
+  log_file: "/var/log/sssonector/client.log"
 ```
 
-### Example 2: Multi-Site Hub and Spoke with Bandwidth Control
-
-#### HQ Server (Hub)
-```bash
-sudo tee /etc/sssonector/config.yaml << 'EOF'
-mode: "server"
+### Example 2: High-Performance Client Setup
+```yaml
+mode: "client"
 network:
   interface: "utun0"
-  address: "10.0.0.1"
+  address: "10.0.0.2/24"
   mtu: 1500
 tunnel:
-  cert_file: "/etc/sssonector/certs/server.crt"
-  key_file: "/etc/sssonector/certs/server.key"
+  cert_file: "/etc/sssonector/certs/client.crt"
+  key_file: "/etc/sssonector/certs/client.key"
   ca_file: "/etc/sssonector/certs/ca.crt"
-  listen_address: "0.0.0.0"
-  listen_port: 8443
-  max_clients: 50
-  bandwidth_limit: 10485760  # 10 MB/s per client
+  server_address: "server.example.com"
+  server_port: 8443
 monitor:
+  enabled: true
+  log_file: "/var/log/sssonector/client.log"
   snmp_enabled: true
-  snmp_address: "0.0.0.0"  # Allow remote monitoring
-  snmp_port: 161
-  snmp_community: "private"
-EOF
+  snmp_port: 10161
+throttle:
+  enabled: true
+  rate_limit: 1000000000  # 1 Gbps
+  burst_limit: 1200000000 # 1.2 Gbps burst
+buffer:
+  read_size: 65536
+  write_size: 65536
+  pool_size: 1024
 ```
 
-## Monitoring and Management
+## Launch Daemon Setup
 
-### View Service Status
+1. Create launch daemon configuration:
+```bash
+sudo tee /Library/LaunchDaemons/com.sssonector.plist << 'EOL'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.sssonector</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/sssonector</string>
+        <string>-config</string>
+        <string>/etc/sssonector/config.yaml</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardErrorPath</key>
+    <string>/var/log/sssonector/error.log</string>
+    <key>StandardOutPath</key>
+    <string>/var/log/sssonector/output.log</string>
+</dict>
+</plist>
+EOL
+```
+
+2. Set proper permissions:
+```bash
+sudo chown root:wheel /Library/LaunchDaemons/com.sssonector.plist
+sudo chmod 644 /Library/LaunchDaemons/com.sssonector.plist
+```
+
+3. Load the launch daemon:
+```bash
+sudo launchctl load /Library/LaunchDaemons/com.sssonector.plist
+```
+
+## Firewall Configuration
+
+1. Allow tunnel traffic:
+```bash
+# Add firewall rules
+sudo /usr/libexec/ApplicationFirewall/socketfilterfw --add /usr/local/bin/sssonector
+sudo /usr/libexec/ApplicationFirewall/socketfilterfw --unblock /usr/local/bin/sssonector
+
+# Allow specific ports
+echo "pass in proto tcp from any to any port 8443" | sudo pfctl -f -
+echo "pass in proto udp from any to any port 10161" | sudo pfctl -f -  # For SNMP
+```
+
+## Performance Tuning
+
+1. Network stack optimization:
+```bash
+# Increase network buffer sizes
+sudo sysctl -w kern.ipc.maxsockbuf=8388608
+sudo sysctl -w net.inet.tcp.sendspace=262144
+sudo sysctl -w net.inet.tcp.recvspace=262144
+
+# Make changes permanent
+cat << 'EOL' | sudo tee /etc/sysctl.conf
+kern.ipc.maxsockbuf=8388608
+net.inet.tcp.sendspace=262144
+net.inet.tcp.recvspace=262144
+EOL
+```
+
+2. System optimization:
+```bash
+# Increase maximum file descriptors
+sudo launchctl limit maxfiles 65536 65536
+
+# Increase maximum processes
+sudo launchctl limit maxproc 2048 2048
+```
+
+## Troubleshooting
+
+### Common Issues
+
+1. Service Start Fails
 ```bash
 # Check service status
 sudo launchctl list | grep sssonector
 
 # View logs
-sudo log show --predicate 'processImagePath contains "sssonector"' --last 30m
+tail -f /var/log/sssonector/error.log
+tail -f /var/log/sssonector/output.log
 
-# View SNMP metrics
-snmpwalk -v2c -c public localhost:161 .1.3.6.1.4.1
+# Check configuration
+sudo cat /etc/sssonector/config.yaml
 ```
 
-### Network Testing
+2. Network Connectivity Issues
 ```bash
-# Check interface
+# Test network connectivity
+ping server.example.com
+nc -zv server.example.com 8443
+
+# Check interface status
 ifconfig utun0
 
-# Test connectivity
-ping 10.0.1.1  # From client to server
-traceroute 10.0.1.1
-
-# Monitor bandwidth (install via Homebrew)
-brew install iftop
-sudo iftop -i utun0
+# View network statistics
+netstat -an | grep 8443
 ```
 
-## Troubleshooting
-
-### 1. Service Won't Start
+3. Performance Issues
 ```bash
-# Check system logs
-sudo log show --predicate 'processImagePath contains "sssonector"' --last 1h
+# Monitor network throughput
+sudo dtrace -n 'fbt::tcp_output:entry { @bytes = sum(args[2]->m_pkthdr.len); }'
 
-# Verify permissions
-sudo ls -l /etc/sssonector/certs/
-sudo chown -R root:wheel /etc/sssonector/certs/
-sudo chmod 600 /etc/sssonector/certs/*.key
-```
-
-### 2. Connection Issues
-```bash
-# Check network settings
-networksetup -listallnetworkservices
-scutil --nwi
-
-# Verify routing
-netstat -nr
-sudo pfctl -s rules  # Check packet filter rules
-
-# Test server connectivity
-nc -zv hq.example.com 8443
-```
-
-### 3. Performance Issues
-```bash
-# Monitor system resources
+# Check system resources
 top -pid $(pgrep sssonector)
-
-# Check network throughput
-brew install iperf3
-# On server
-iperf3 -s -p 5201
-# On client
-iperf3 -c 10.0.1.1 -p 5201
 ```
 
-## Backup and Recovery
+## Monitoring Setup
 
-### Backup Configuration
-```bash
-# Backup certificates and config
-sudo tar czf sssonector-backup.tar.gz \
-    /etc/sssonector/certs/ \
-    /etc/sssonector/config.yaml
+### SNMP Monitoring
+```yaml
+monitor:
+  enabled: true
+  snmp_enabled: true
+  snmp_address: "0.0.0.0"
+  snmp_port: 10161
+  snmp_community: "public"
 ```
 
-### Restore Configuration
+### Integration with macOS Monitoring Tools
 ```bash
-# Restore from backup
-sudo tar xzf sssonector-backup.tar.gz -C /
-sudo launchctl unload /Library/LaunchDaemons/com.o3willard.sssonector.plist
-sudo launchctl load /Library/LaunchDaemons/com.o3willard.sssonector.plist
+# Install monitoring tools
+brew install prometheus
+brew install grafana
+
+# Configure Prometheus
+cat << 'EOL' > prometheus.yml
+scrape_configs:
+  - job_name: 'sssonector'
+    static_configs:
+      - targets: ['localhost:9091']
+EOL
 ```
 
-## macOS-Specific Considerations
+## Support and Resources
 
-### Security & Privacy
-1. System Extensions:
-   - Open System Preferences → Security & Privacy
-   - Allow system extension from SSSonector
+- Documentation: https://docs.sssonector.io
+- macOS-specific Issues: https://github.com/o3willard-AI/SSSonector/labels/macos
+- Community Support: https://community.sssonector.io/c/macos
+- Security Updates: https://security.sssonector.io/macos
 
-2. Network Extension Permission:
-   ```bash
-   sudo sqlite3 /Library/Application\ Support/com.apple.TCC/TCC.db \
-   "INSERT or REPLACE INTO access VALUES('kTCCServiceSystemPolicyNetworkExtension','com.o3willard.sssonector',0,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,1);"
-   ```
+## Known Limitations
 
-### Automatic Updates
-To prevent automatic updates from disrupting the tunnel:
-```bash
-# Disable automatic updates for SSSonector
-sudo defaults write /Library/Preferences/com.o3willard.sssonector AutoUpdate -bool false
-```
+1. TUN Interface Support
+   - Basic network interface support only
+   - Native TUN support planned for future releases
+   - Limited MTU options available
 
-## Uninstallation
+2. Performance Considerations
+   - Lower throughput compared to Linux
+   - Higher CPU usage in current implementation
+   - Limited rate limiting precision
 
-```bash
-# Stop service
-sudo launchctl unload /Library/LaunchDaemons/com.o3willard.sssonector.plist
+3. Platform-Specific Issues
+   - Network Extension entitlement requirements
+   - System Integrity Protection considerations
+   - Limited kernel extension support
 
-# Remove files
-sudo rm -rf /etc/sssonector
-sudo rm -rf /var/log/sssonector
-sudo rm -f /usr/local/bin/sssonector
-sudo rm -f /Library/LaunchDaemons/com.o3willard.sssonector.plist
-
-# Remove network extension
-sudo sqlite3 /Library/Application\ Support/com.apple.TCC/TCC.db \
-"DELETE FROM access WHERE client='com.o3willard.sssonector';"
+4. Monitoring Capabilities
+   - Partial SNMP implementation
+   - Limited system metrics availability
+   - DTrace probe limitations
