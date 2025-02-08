@@ -1,5 +1,18 @@
 package monitor
 
+import (
+	"fmt"
+)
+
+// Maximum sizes defined by RFCs
+const (
+	MaxSNMPPacketSize  = 65507 // Maximum UDP packet size
+	MaxOIDLength       = 128   // Maximum OID length in bytes
+	MaxCommunityLength = 32    // RFC 3584 max community string length
+	MaxVarBinds        = 2048  // Maximum number of variable bindings
+	MaxStringLength    = 65535 // Maximum octet string length
+)
+
 // ASN.1 BER type constants
 const (
 	// Tag classes
@@ -45,8 +58,110 @@ const (
 	Version3  SNMPVersion = 3
 )
 
-// SNMPError represents SNMP error status
+// SNMPError represents SNMP error status with description
 type SNMPError int
+
+// Error returns a human-readable error description
+func (e SNMPError) Error() string {
+	switch e {
+	case NoError:
+		return "No error"
+	case TooBig:
+		return "Response too big"
+	case NoSuchName:
+		return "Object not found"
+	case BadValue:
+		return "Bad value"
+	case ReadOnly:
+		return "Object is read-only"
+	case GenErr:
+		return "General error"
+	case NoAccess:
+		return "Access denied"
+	case WrongType:
+		return "Wrong type"
+	case WrongLength:
+		return "Wrong length"
+	case WrongEncoding:
+		return "Wrong encoding"
+	case WrongValue:
+		return "Wrong value"
+	case NoCreation:
+		return "Object creation not allowed"
+	case InconsistentValue:
+		return "Inconsistent value"
+	case ResourceUnavailable:
+		return "Resource unavailable"
+	case CommitFailed:
+		return "Commit failed"
+	case UndoFailed:
+		return "Undo failed"
+	case AuthorizationError:
+		return "Authorization error"
+	case NotWritable:
+		return "Object not writable"
+	case InconsistentName:
+		return "Inconsistent name"
+	default:
+		return fmt.Sprintf("Unknown error (%d)", e)
+	}
+}
+
+// Validation functions
+func validateLength(length, max int) error {
+	if length < 0 {
+		return fmt.Errorf("negative length: %d", length)
+	}
+	if length > max {
+		return fmt.Errorf("length %d exceeds maximum %d", length, max)
+	}
+	return nil
+}
+
+func validateOID(oid string) error {
+	if len(oid) == 0 {
+		return fmt.Errorf("empty OID")
+	}
+	if len(oid) > MaxOIDLength {
+		return fmt.Errorf("OID length %d exceeds maximum %d", len(oid), MaxOIDLength)
+	}
+	if oid[0] != '.' {
+		return fmt.Errorf("OID must start with '.'")
+	}
+	return nil
+}
+
+func validateCommunity(community string) error {
+	if len(community) == 0 {
+		return fmt.Errorf("empty community string")
+	}
+	if len(community) > MaxCommunityLength {
+		return fmt.Errorf("community string length %d exceeds maximum %d", len(community), MaxCommunityLength)
+	}
+	for _, c := range community {
+		if c == 0 {
+			return fmt.Errorf("community string contains null byte")
+		}
+		if !isPrintableASCII(c) {
+			return fmt.Errorf("community string contains non-printable character: %x", c)
+		}
+	}
+	return nil
+}
+
+func isPrintableASCII(c rune) bool {
+	return c >= 0x20 && c <= 0x7E
+}
+
+func validateVarBinds(count int) error {
+	if count < 0 {
+		return fmt.Errorf("negative variable binding count: %d", count)
+	}
+	if count > MaxVarBinds {
+		return fmt.Errorf("variable binding count %d exceeds maximum %d", count, MaxVarBinds)
+	}
+	return nil
+}
 
 const (
 	NoError             SNMPError = 0

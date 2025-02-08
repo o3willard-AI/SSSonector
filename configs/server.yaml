@@ -6,9 +6,9 @@ network:
   mtu: 1500
 
 tunnel:
-  cert_file: "/etc/sssonector/certs/server.crt"
-  key_file: "/etc/sssonector/certs/server.key"
-  ca_file: "/etc/sssonector/certs/ca.crt"
+  cert_file: "certs/server.crt"
+  key_file: "certs/server.key"
+  ca_file: "certs/ca.crt"
   listen_address: "0.0.0.0"
   listen_port: 8443
   max_clients: 10
@@ -16,7 +16,8 @@ tunnel:
   download_kbps: 10240
 
 monitor:
-  log_file: "/var/log/sssonector/server.log"
-  snmp_enabled: false
-  snmp_port: 161
+  log_file: "server.log"
+  snmp_enabled: true
+  snmp_port: 10161
   snmp_community: "public"
+  snmp_address: "0.0.0.0"

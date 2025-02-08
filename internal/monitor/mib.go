@@ -8,18 +8,49 @@ import (
 
 // OID constants for our enterprise MIB
 const (
-	// Base OID for our enterprise MIB (example: 1.3.6.1.4.1.XXXXX)
-	// Replace XXXXX with an actual enterprise number in production
+	// Base OID for our enterprise MIB
 	baseOID = ".1.3.6.1.4.1.54321"
 
-	// Metric OIDs
-	bytesInOID     = baseOID + ".1.1"
-	bytesOutOID    = baseOID + ".1.2"
-	packetsInOID   = baseOID + ".1.3"
-	packetsOutOID  = baseOID + ".1.4"
-	errorsOID      = baseOID + ".1.5"
-	uptimeOID      = baseOID + ".1.6"
-	connectionsOID = baseOID + ".1.7"
+	// Performance Metrics (1.x)
+	bytesInOID     = baseOID + ".1.1" // Counter64: Total bytes received
+	bytesOutOID    = baseOID + ".1.2" // Counter64: Total bytes sent
+	activeConnsOID = baseOID + ".1.7" // Gauge32: Current active connections
+	cpuUsageOID    = baseOID + ".1.8" // Gauge32: CPU usage percentage
+	memoryUsageOID = baseOID + ".1.9" // Gauge32: Memory usage in MB
+
+	// Status Metrics (2.x)
+	tunnelStatusOID = baseOID + ".2.1" // INTEGER: 0=down, 1=up
+	lastErrorOID    = baseOID + ".2.2" // OCTET STRING: Last error message
+	startTimeOID    = baseOID + ".2.3" // Counter64: Start time (unix timestamp)
+
+	// Configuration (3.x)
+	maxConnsOID = baseOID + ".3.1" // INTEGER: Maximum allowed connections
+	rateUpOID   = baseOID + ".3.2" // Gauge32: Upload rate limit (kbps)
+	rateDownOID = baseOID + ".3.3" // Gauge32: Download rate limit (kbps)
+)
+
+// SNMP community strings
+const (
+	defaultCommunity = "public"
+	readCommunity    = defaultCommunity
+	writeCommunity   = "private"
+)
+
+// MIBError represents MIB-specific errors
+type MIBError struct {
+	Code    int
+	Message string
+}
+
+func (e *MIBError) Error() string {
+	return fmt.Sprintf("MIB Error %d: %s", e.Code, e.Message)
+}
+
+// Common MIB errors
+var (
+	ErrInvalidCommunity = &MIBError{Code: 1, Message: "Invalid community string"}
+	ErrNoAccess         = &MIBError{Code: 2, Message: "No access to this OID"}
+	ErrWrongType        = &MIBError{Code: 3, Message: "Wrong value type"}
 )
 
 // MIBEntry represents a single entry in our MIB
@@ -30,6 +61,8 @@ type MIBEntry struct {
 	Type         string
 	Value        interface{}
 	ValueToInt64 func(interface{}) int64
+	Access       string       // "read-only", "read-write", or "write-only"
+	Validate     func() error // Custom validation function
 }
 
 // MIBTree represents our complete MIB structure
@@ -43,106 +76,108 @@ func NewMIBTree(metrics *Metrics) *MIBTree {
 		entries: make(map[string]MIBEntry),
 	}
 
-	// Define MIB entries
-	tree.entries[bytesInOID] = MIBEntry{
-		OID:         bytesInOID,
-		Name:        "bytesIn",
-		Description: "Total bytes received",
+	// Performance Metrics
+	tree.addCounter64(bytesInOID, "bytesIn", "Total bytes received", metrics.BytesIn, "read-only")
+	tree.addCounter64(bytesOutOID, "bytesOut", "Total bytes sent", metrics.BytesOut, "read-only")
+	tree.addGauge32(activeConnsOID, "activeConnections", "Current active connections", metrics.Connections, "read-only")
+	tree.addGauge32(cpuUsageOID, "cpuUsage", "CPU usage percentage", int32(metrics.CPUUsage), "read-only")
+	tree.addGauge32(memoryUsageOID, "memoryUsage", "Memory usage in MB", int32(metrics.MemoryUsage/1024/1024), "read-only")
+
+	// Status Metrics
+	tree.addInteger(tunnelStatusOID, "tunnelStatus", "Tunnel operational status", 1, "read-only")
+	tree.addString(lastErrorOID, "lastError", "Last error message", "", "read-only")
+	tree.addCounter64(startTimeOID, "startTime", "Service start time", metrics.StartTime.Unix(), "read-only")
+
+	// Configuration
+	tree.addInteger(maxConnsOID, "maxConnections", "Maximum allowed connections", 10, "read-write")
+	tree.addGauge32(rateUpOID, "uploadRateLimit", "Upload rate limit in kbps", 10240, "read-write")
+	tree.addGauge32(rateDownOID, "downloadRateLimit", "Download rate limit in kbps", 10240, "read-write")
+
+	return tree
+}
+
+// Helper methods for adding metrics
+func (t *MIBTree) addCounter64(oid, name, desc string, value int64, access string) {
+	t.entries[oid] = MIBEntry{
+		OID:         oid,
+		Name:        name,
+		Description: desc,
 		Type:        "Counter64",
-		Value:       metrics.BytesIn,
+		Value:       value,
+		Access:      access,
 		ValueToInt64: func(v interface{}) int64 {
 			if val, ok := v.(int64); ok {
 				return val
 			}
 			return 0
 		},
-	}
-
-	tree.entries[bytesOutOID] = MIBEntry{
-		OID:         bytesOutOID,
-		Name:        "bytesOut",
-		Description: "Total bytes sent",
-		Type:        "Counter64",
-		Value:       metrics.BytesOut,
-		ValueToInt64: func(v interface{}) int64 {
-			if val, ok := v.(int64); ok {
-				return val
+		Validate: func() error {
+			if value < 0 {
+				return &MIBError{Code: 4, Message: "Counter64 cannot be negative"}
 			}
-			return 0
+			return nil
 		},
 	}
+}
 
-	tree.entries[packetsInOID] = MIBEntry{
-		OID:         packetsInOID,
-		Name:        "packetsIn",
-		Description: "Total packets received",
-		Type:        "Counter64",
-		Value:       metrics.PacketsIn,
-		ValueToInt64: func(v interface{}) int64 {
-			if val, ok := v.(int64); ok {
-				return val
-			}
-			return 0
-		},
-	}
-
-	tree.entries[packetsOutOID] = MIBEntry{
-		OID:         packetsOutOID,
-		Name:        "packetsOut",
-		Description: "Total packets sent",
-		Type:        "Counter64",
-		Value:       metrics.PacketsOut,
-		ValueToInt64: func(v interface{}) int64 {
-			if val, ok := v.(int64); ok {
-				return val
-			}
-			return 0
-		},
-	}
-
-	tree.entries[errorsOID] = MIBEntry{
-		OID:         errorsOID,
-		Name:        "errors",
-		Description: "Total error count",
-		Type:        "Counter64",
-		Value:       metrics.Errors,
-		ValueToInt64: func(v interface{}) int64 {
-			if val, ok := v.(int64); ok {
-				return val
-			}
-			return 0
-		},
-	}
-
-	tree.entries[uptimeOID] = MIBEntry{
-		OID:         uptimeOID,
-		Name:        "uptime",
-		Description: "System uptime in seconds",
-		Type:        "Counter64",
-		Value:       metrics.Uptime,
-		ValueToInt64: func(v interface{}) int64 {
-			if val, ok := v.(int64); ok {
-				return val
-			}
-			return 0
-		},
-	}
-
-	tree.entries[connectionsOID] = MIBEntry{
-		OID:         connectionsOID,
-		Name:        "connections",
-		Description: "Current number of connections",
+func (t *MIBTree) addGauge32(oid, name, desc string, value int32, access string) {
+	t.entries[oid] = MIBEntry{
+		OID:         oid,
+		Name:        name,
+		Description: desc,
 		Type:        "Gauge32",
-		Value:       metrics.Connections,
+		Value:       value,
+		Access:      access,
+		ValueToInt64: func(v interface{}) int64 {
+			if val, ok := v.(int32); ok {
+				return int64(val)
+			}
+			return 0
+		},
+		Validate: func() error {
+			if value < 0 {
+				return &MIBError{Code: 5, Message: "Gauge32 cannot be negative"}
+			}
+			return nil
+		},
+	}
+}
+
+func (t *MIBTree) addInteger(oid, name, desc string, value int, access string) {
+	t.entries[oid] = MIBEntry{
+		OID:         oid,
+		Name:        name,
+		Description: desc,
+		Type:        "INTEGER",
+		Value:       value,
+		Access:      access,
 		ValueToInt64: func(v interface{}) int64 {
 			if val, ok := v.(int); ok {
 				return int64(val)
 			}
 			return 0
 		},
+		Validate: func() error {
+			return nil // No specific validation for INTEGER
+		},
 	}
+}
 
-	return tree
+func (t *MIBTree) addString(oid, name, desc string, value string, access string) {
+	t.entries[oid] = MIBEntry{
+		OID:         oid,
+		Name:        name,
+		Description: desc,
+		Type:        "OCTET STRING",
+		Value:       value,
+		Access:      access,
+		ValueToInt64: func(v interface{}) int64 {
+			return 0 // Strings don't convert to int64
+		},
+		Validate: func() error {
+			return nil // No specific validation for strings
+		},
+	}
 }
 
 // UpdateMetrics updates all metric values in the MIB tree
@@ -156,33 +191,63 @@ func (t *MIBTree) UpdateMetrics(metrics *Metrics) {
 			newEntry.Value = metrics.BytesIn
 		case bytesOutOID:
 			newEntry.Value = metrics.BytesOut
-		case packetsInOID:
-			newEntry.Value = metrics.PacketsIn
-		case packetsOutOID:
-			newEntry.Value = metrics.PacketsOut
-		case errorsOID:
-			newEntry.Value = metrics.Errors
-		case uptimeOID:
-			newEntry.Value = metrics.Uptime
-		case connectionsOID:
+		case activeConnsOID:
 			newEntry.Value = metrics.Connections
+		case cpuUsageOID:
+			newEntry.Value = int32(metrics.CPUUsage)
+		case memoryUsageOID:
+			newEntry.Value = int32(metrics.MemoryUsage / 1024 / 1024) // Convert to MB
+		case tunnelStatusOID:
+			// Connected if last connect time is after last disconnect time
+			if metrics.ConnectTime > metrics.DisconnectTime {
+				newEntry.Value = 1
+			} else {
+				newEntry.Value = 0
+			}
+		case lastErrorOID:
+			newEntry.Value = metrics.LastError
+		case startTimeOID:
+			newEntry.Value = metrics.StartTime.Unix()
 		}
 		newEntries[oid] = newEntry
 	}
 	t.entries = newEntries
 }
 
-// GetEntry retrieves a MIB entry by its OID
-func (t *MIBTree) GetEntry(oid string) (MIBEntry, bool) {
+// GetEntry retrieves a MIB entry by its OID and community string
+func (t *MIBTree) GetEntry(oid string, community string) (MIBEntry, error) {
+	// Validate community string
+	if community == "" || (community != readCommunity && community != writeCommunity) {
+		return MIBEntry{}, ErrInvalidCommunity
+	}
+
 	entry, ok := t.entries[oid]
-	return entry, ok
+	if !ok {
+		return MIBEntry{}, &MIBError{Code: 6, Message: "OID not found"}
+	}
+
+	// Check access rights
+	if community == readCommunity && entry.Access == "write-only" {
+		return MIBEntry{}, ErrNoAccess
+	}
+
+	return entry, nil
 }
 
-// GetNextEntry retrieves the next MIB entry after the given OID
-func (t *MIBTree) GetNextEntry(oid string) (MIBEntry, bool) {
+// GetNextEntry retrieves the next MIB entry after the given OID with community string validation
+func (t *MIBTree) GetNextEntry(oid string, community string) (MIBEntry, error) {
+	// Validate community string
+	if community == "" || (community != readCommunity && community != writeCommunity) {
+		return MIBEntry{}, ErrInvalidCommunity
+	}
+
 	// Get all OIDs and sort them
 	var oids []string
-	for k := range t.entries {
+	for k, entry := range t.entries {
+		// Skip write-only entries for read community
+		if community == readCommunity && entry.Access == "write-only" {
+			continue
+		}
 		oids = append(oids, k)
 	}
 	sort.Strings(oids)
@@ -190,10 +255,10 @@ func (t *MIBTree) GetNextEntry(oid string) (MIBEntry, bool) {
 	// Find the next OID
 	for i, currentOID := range oids {
 		if currentOID > oid && i < len(oids) {
-			return t.entries[oids[i]], true
+			return t.entries[oids[i]], nil
 		}
 	}
-	return MIBEntry{}, false
+	return MIBEntry{}, &MIBError{Code: 7, Message: "No next OID found"}
 }
 
 // String returns a string representation of the MIB tree

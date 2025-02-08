@@ -1,0 +1,147 @@
+#!/usr/bin/expect
+
+set timeout 600
+set test_dir [file dirname [file normalize $argv0]]
+set results_dir "$test_dir/test_results"
+
+# Create results directory if it doesn't exist
+if {![file exists $results_dir]} {
+    file mkdir $results_dir
+}
+
+# Timestamp for this test run
+set timestamp [clock format [clock seconds] -format "%Y%m%d_%H%M%S"]
+set results_file "$results_dir/snmp_test_results_$timestamp.log"
+
+# Log file setup
+log_file -a $results_file
+send_log "\n=== Starting SNMP Test Suite ===\n"
+send_log "Test Start Time: [exec date]\n"
+
+proc run_test {test_script test_name} {
+    global test_dir results_file
+    send_log "\n=== Running $test_name ===\n"
+    
+    set start_time [clock seconds]
+    spawn $test_dir/$test_script
+    set test_result -1
+    
+    expect {
+        -re {Passed (\d+) out of (\d+) tests} {
+            set passed $expect_out(1,string)
+            set total $expect_out(2,string)
+            set test_result [expr {$passed == $total ? 1 : 0}]
+        }
+        timeout {
+            send_log "✗ Test timed out\n"
+            set test_result 0
+        }
+        eof {
+            if {[lindex [wait] 3] == 0} {
+                send_log "✓ Test completed successfully\n"
+                set test_result 1
+            } else {
+                send_log "✗ Test failed\n"
+                set test_result 0
+            }
+        }
+    }
+    
+    set end_time [clock seconds]
+    set duration [expr {$end_time - $start_time}]
+    
+    send_log "\n$test_name completed in $duration seconds\n"
+    send_log "Result: [expr {$test_result ? "PASS" : "FAIL"}]\n"
+    
+    return $test_result
+}
+
+# Initialize test results
+array set test_results {}
+
+# Phase 1: Basic SNMP Validation
+send_log "\n=== Phase 1: Basic SNMP Validation ===\n"
+set test_results(basic) [run_test "test_snmp_basic.exp" "Basic SNMP Tests"]
+
+# If basic tests fail, abort further testing
+if {!$test_results(basic)} {
+    send_log "\n❌ Basic SNMP tests failed. Aborting further tests.\n"
+    exit 1
+}
+
+# Phase 2: Rate Limiting Tests
+send_log "\n=== Phase 2: Rate Limiting Tests ===\n"
+set test_results(rate_limiting) [run_test "test_snmp_rate_limiting.exp" "Rate Limiting Tests"]
+
+# Phase 3: Dynamic Rate Change Tests
+send_log "\n=== Phase 3: Dynamic Rate Change Tests ===\n"
+set test_results(dynamic_rates) [run_test "test_snmp_dynamic_rates.exp" "Dynamic Rate Change Tests"]
+
+# Generate Final Report
+send_log "\n=== Final Test Report ===\n"
+send_log "Test Completion Time: [exec date]\n\n"
+
+set total_passed 0
+foreach {test result} [array get test_results] {
+    incr total_passed $result
+    send_log "[expr {$result ? "✓" : "✗"}] $test: [expr {$result ? "PASS" : "FAIL"}]\n"
+}
+
+set total_tests [array size test_results]
+set success_rate [expr {$total_passed * 100.0 / $total_tests}]
+
+send_log "\nOverall Results:\n"
+send_log "Tests Passed: $total_passed out of $total_tests\n"
+send_log "Success Rate: [format "%.1f" $success_rate]%\n"
+
+# Test Suite Analysis
+send_log "\nTest Suite Analysis:\n"
+
+if {$test_results(basic)} {
+    send_log "✓ SNMP Basic Functionality: All core SNMP functions are working correctly\n"
+} else {
+    send_log "❌ SNMP Basic Functionality: Core SNMP functions are not working properly\n"
+}
+
+if {$test_results(rate_limiting)} {
+    send_log "✓ Rate Limiting: Rate limiting functionality is working as expected\n"
+} else {
+    send_log "❌ Rate Limiting: Issues detected with rate limiting functionality\n"
+}
+
+if {$test_results(dynamic_rates)} {
+    send_log "✓ Dynamic Rate Changes: System handles rate changes smoothly\n"
+} else {
+    send_log "❌ Dynamic Rate Changes: Issues detected with dynamic rate changes\n"
+}
+
+# Recommendations
+send_log "\nRecommendations:\n"
+if {$total_passed < $total_tests} {
+    if {!$test_results(basic)} {
+        send_log "1. Review SNMP configuration and connectivity\n"
+        send_log "2. Check SNMP agent status and permissions\n"
+        send_log "3. Verify network connectivity between components\n"
+    }
+    if {!$test_results(rate_limiting)} {
+        send_log "4. Investigate rate limiting implementation\n"
+        send_log "5. Review rate limiting configuration\n"
+        send_log "6. Check for system resource constraints\n"
+    }
+    if {!$test_results(dynamic_rates)} {
+        send_log "7. Analyze rate change transition logic\n"
+        send_log "8. Review metric collection during transitions\n"
+        send_log "9. Check for timing-related issues\n"
+    }
+} else {
+    send_log "✓ All tests passed - no remediation needed\n"
+}
+
+send_log "\nDetailed test logs can be found at: $results_file\n"
+
+# Exit with appropriate status
+if {$total_passed == $total_tests} {
+    exit 0
+} else {
+    exit 1
+}
