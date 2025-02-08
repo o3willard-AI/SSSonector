@@ -1,0 +1,119 @@
+#!/usr/bin/expect
+
+set timeout 60
+set host "192.168.50.212"
+set user "sblanken"
+set identity "~/.ssh/id_rsa"
+
+# Copy web monitor script to QA system
+spawn scp -i $identity snmp_web_monitor.py $user@$host:/home/$user/
+expect {
+    "yes/no" {
+        send "yes\r"
+        exp_continue
+    }
+    "100%" {
+        expect eof
+    }
+}
+
+# Initial delay to allow for system reboot
+puts "Waiting 60 seconds for system to reboot..."
+sleep 60
+
+# Wait for system to be available
+set max_attempts 10
+set attempt 1
+set connected 0
+
+while {$attempt <= $max_attempts && !$connected} {
+    puts "Attempting to connect (attempt $attempt of $max_attempts)..."
+    if {[catch {
+        spawn ssh -i $identity $user@$host
+        expect {
+            "yes/no" {
+                send "yes\r"
+                exp_continue
+            }
+            "$ " {
+                set connected 1
+            }
+            timeout {
+                puts "Connection timed out, retrying..."
+                continue
+            }
+        }
+    }]} {
+        puts "Connection failed, waiting before retry..."
+        sleep 15
+        incr attempt
+        continue
+    }
+    if {!$connected} {
+        sleep 15
+        incr attempt
+    }
+}
+
+if {!$connected} {
+    puts "Failed to connect after $max_attempts attempts"
+    exit 1
+}
+
+expect "$ "
+send "DEBIAN_FRONTEND=noninteractive sudo -E apt-get update\r"
+expect {
+    "password for sblanken:" {
+        send "101abn\r"
+        exp_continue
+    }
+    "$ "
+}
+
+send "sudo DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true dpkg --configure -a && sudo DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=\"--force-confdef\" -o Dpkg::Options::=\"--force-confold\" install -y python3-pip\r"
+expect {
+    "password for sblanken:" {
+        send "101abn\r"
+        exp_continue
+    }
+    "$ "
+}
+
+send "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y python3-flask\r"
+expect {
+    "password for sblanken:" {
+        send "101abn\r"
+        exp_continue
+    }
+    "$ "
+}
+
+# Verify the file was copied
+send "ls -l /home/$user/snmp_web_monitor.py\r"
+expect "$ "
+
+# Make script executable
+send "chmod +x /home/$user/snmp_web_monitor.py\r"
+expect "$ "
+
+# Kill any existing monitor process
+send "pkill -f snmp_web_monitor.py\r"
+expect "$ "
+
+# Start web monitor in background
+send "nohup python3 /home/$user/snmp_web_monitor.py > /home/$user/web_monitor.log 2>&1 &\r"
+expect "$ "
+
+# Verify the process is running
+send "ps aux | grep snmp_web_monitor\r"
+expect "$ "
+
+# Check if port 8080 is listening
+send "netstat -tuln | grep 8080\r"
+expect "$ "
+
+send "echo 'Web monitor is running at http://192.168.50.212:8080'\r"
+expect "$ "
+
+send "exit\r"
+expect eof

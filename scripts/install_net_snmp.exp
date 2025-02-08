@@ -1,0 +1,74 @@
+#!/usr/bin/expect
+
+set timeout 300
+set host "192.168.50.212"
+set user "test"
+set password "test"
+
+# Copy setup script to remote host
+spawn scp setup_net_snmp.sh $user@$host:/tmp/
+expect {
+    "password:" {
+        send "$password\r"
+        exp_continue
+    }
+    "yes/no" {
+        send "yes\r"
+        exp_continue
+    }
+    eof
+}
+
+# SSH to remote host and run setup script
+spawn ssh $user@$host
+expect {
+    "password:" {
+        send "$password\r"
+    }
+    "yes/no" {
+        send "yes\r"
+        exp_continue
+    }
+}
+
+expect "$ "
+send "sudo chmod +x /tmp/setup_net_snmp.sh\r"
+expect "password"
+send "$password\r"
+
+expect "$ "
+send "sudo /tmp/setup_net_snmp.sh\r"
+expect {
+    "Installation complete!" {
+        puts "\nNet-SNMP installation successful"
+    }
+    timeout {
+        puts "\nInstallation timed out"
+        exit 1
+    }
+    eof {
+        puts "\nConnection closed unexpectedly"
+        exit 1
+    }
+}
+
+expect "$ "
+send "rm /tmp/setup_net_snmp.sh\r"
+
+expect "$ "
+send "exit\r"
+expect eof
+
+# Verify SNMP connectivity
+spawn snmpwalk -v2c -c public $host system
+expect {
+    "system.sysDescr.0" {
+        puts "\nSNMP verification successful"
+        exit 0
+    }
+    timeout {
+        puts "\nSNMP verification failed"
+        exit 1
+    }
+    eof
+}

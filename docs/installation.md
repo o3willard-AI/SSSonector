@@ -1,5 +1,7 @@
 # SSSonector Installation Guide
 
+For detailed configuration examples and best practices, please refer to our [Configuration Guide](configuration_guide.md).
+
 ## Prerequisites
 
 ### System Requirements
@@ -60,6 +62,8 @@
    ```
 
 ## Configuration
+
+For complete configuration examples and best practices, see the [Configuration Guide](configuration_guide.md).
 
 ### Certificate Setup
 

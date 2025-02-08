@@ -7,8 +7,6 @@ import (
 	"sync"
 	"syscall"
 	"time"
-
-	"go.uber.org/zap"
 )
 
 // Config holds monitoring configuration
@@ -22,10 +20,11 @@ type Config struct {
 
 // Monitor handles system monitoring and logging
 type Monitor struct {
-	logger     *zap.Logger
+	logger     *Logger
 	config     *Config
 	metrics    *Metrics
 	snmpAgent  *SNMPAgent
+	sysMetrics *SystemMetricsCollector
 	startTime  time.Time
 	mu         sync.RWMutex
 	shutdownCh chan struct{}
@@ -35,7 +34,7 @@ type Monitor struct {
 
 // New creates a new monitor instance
 func New(cfg *Config) (*Monitor, error) {
-	logger, err := zap.NewProduction()
+	logger, err := NewLogger(INFO, cfg.LogFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create logger: %w", err)
 	}
@@ -44,6 +43,7 @@ func New(cfg *Config) (*Monitor, error) {
 		logger:     logger,
 		config:     cfg,
 		metrics:    NewMetrics(),
+		sysMetrics: NewSystemMetricsCollector(),
 		startTime:  time.Now(),
 		shutdownCh: make(chan struct{}),
 		isTestMode: os.Getenv("TEMP_DIR") != "",
@@ -51,7 +51,7 @@ func New(cfg *Config) (*Monitor, error) {
 
 	// Initialize SNMP agent if enabled
 	if cfg.SNMPEnabled {
-		m.snmpAgent, err = NewSNMPAgent(cfg, m.metrics)
+		m.snmpAgent, err = NewSNMPAgent(cfg, m.metrics, logger)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create SNMP agent: %w", err)
 		}
@@ -66,9 +66,8 @@ func (m *Monitor) Start() error {
 		if err := m.snmpAgent.Start(); err != nil {
 			return fmt.Errorf("failed to start SNMP agent: %w", err)
 		}
-		m.Info("SNMP monitoring started",
-			zap.String("address", m.config.SNMPAddress),
-			zap.Int("port", m.config.SNMPPort))
+		m.logger.Info("SNMP monitoring started on %s:%d",
+			m.config.SNMPAddress, m.config.SNMPPort)
 	}
 
 	// Start certificate expiration monitor in test mode
@@ -96,29 +95,33 @@ func (m *Monitor) Stop() {
 
 	if m.config.SNMPEnabled && m.snmpAgent != nil {
 		m.snmpAgent.Stop()
-		m.Info("SNMP monitoring stopped")
+		m.logger.Info("SNMP monitoring stopped")
 	}
 
 	m.shutdownWg.Wait()
-	m.logger.Sync()
+
+	// Close and sync logger
+	if err := m.logger.Sync(); err != nil {
+		m.Error("Failed to sync logger: %v", err)
+	}
+	if err := m.logger.Close(); err != nil {
+		m.Error("Failed to close logger: %v", err)
+	}
 }
 
 // Info logs an info message
-func (m *Monitor) Info(msg string, fields ...zap.Field) {
-	m.logger.Info(msg, fields...)
+func (m *Monitor) Info(format string, v ...interface{}) {
+	m.logger.Info(format, v...)
 }
 
 // Error logs an error message
-func (m *Monitor) Error(msg string, err error, fields ...zap.Field) {
-	if err != nil {
-		fields = append(fields, zap.Error(err))
-	}
-	m.logger.Error(msg, fields...)
+func (m *Monitor) Error(format string, v ...interface{}) {
+	m.logger.Error(format, v...)
 }
 
 // Warn logs a warning message
-func (m *Monitor) Warn(msg string, fields ...zap.Field) {
-	m.logger.Warn(msg, fields...)
+func (m *Monitor) Warn(format string, v ...interface{}) {
+	m.logger.Warn(format, v...)
 }
 
 // UpdateMetrics updates monitoring metrics
@@ -179,20 +182,19 @@ func (m *Monitor) collectSystemMetrics() {
 			numGoroutines := runtime.NumGoroutine()
 
 			m.mu.Lock()
+			// Update resource metrics
 			m.metrics.UpdateResourceMetrics(
-				0, // CPU usage not implemented yet
+				m.metrics.CPUUsage, // Preserved from system metrics collector
 				int64(memStats.Alloc),
 				int64(memStats.HeapAlloc),
 				0, // Queue length from tunnel
 				int64(numGoroutines),
 			)
 
-			// Update system metrics
-			m.metrics.UpdateSystemMetrics(
-				0, // System load not implemented yet
-				0, // Disk I/O not implemented yet
-				0, // Network I/O not implemented yet
-			)
+			// Collect system metrics
+			if err := m.sysMetrics.CollectMetrics(m.metrics); err != nil {
+				m.Error("Failed to collect system metrics: %v", err)
+			}
 			m.mu.Unlock()
 		}
 	}
