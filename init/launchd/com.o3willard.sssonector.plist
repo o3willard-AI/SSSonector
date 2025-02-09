@@ -1,0 +1,142 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.o3willard.sssonector</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/sssonector</string>
+        <string>-config</string>
+        <string>/etc/sssonector/config.yaml</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+        <key>NetworkState</key>
+        <true/>
+    </dict>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>StandardOutPath</key>
+    <string>/var/log/sssonector/service.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/var/log/sssonector/error.log</string>
+
+    <key>UserName</key>
+    <string>_sssonector</string>
+
+    <key>GroupName</key>
+    <string>_sssonector</string>
+
+    <key>WorkingDirectory</key>
+    <string>/var/lib/sssonector</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <key>LowPriorityIO</key>
+    <true/>
+
+    <key>Nice</key>
+    <integer>0</integer>
+
+    <key>SoftResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>65536</integer>
+    </dict>
+
+    <key>HardResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>65536</integer>
+    </dict>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>GOMAXPROCS</key>
+        <string>0</string>
+    </dict>
+
+    <key>Umask</key>
+    <integer>27</integer>
+
+    <key>WatchPaths</key>
+    <array>
+        <string>/etc/sssonector/config.yaml</string>
+    </array>
+
+    <key>Sockets</key>
+    <dict>
+        <key>Listeners</key>
+        <dict>
+            <key>SockServiceName</key>
+            <string>8443</string>
+            <key>SockType</key>
+            <string>stream</string>
+            <key>SockFamily</key>
+            <string>IPv4</string>
+        </dict>
+    </dict>
+
+    <key>inetdCompatibility</key>
+    <dict>
+        <key>Wait</key>
+        <false/>
+    </dict>
+
+    <key>EnableTransactions</key>
+    <true/>
+
+    <key>EnablePressuredExit</key>
+    <true/>
+
+    <key>JetsamProperties</key>
+    <dict>
+        <key>JetsamPriority</key>
+        <integer>2</integer>
+        <key>JetsamMemoryLimit</key>
+        <integer>512</integer>
+    </dict>
+
+    <key>AssociatedBundleIdentifiers</key>
+    <string>com.o3willard.sssonector</string>
+
+    <key>Program</key>
+    <string>/usr/local/bin/sssonector</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/sssonector</string>
+        <string>-config</string>
+        <string>/etc/sssonector/config.yaml</string>
+    </array>
+
+    <key>MachServices</key>
+    <dict>
+        <key>com.o3willard.sssonector</key>
+        <true/>
+    </dict>
+
+    <key>EnableGlobbing</key>
+    <false/>
+
+    <key>AbandonProcessGroup</key>
+    <false/>
+
+    <key>Debug</key>
+    <false/>
+</dict>
+</plist>
