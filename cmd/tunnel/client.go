@@ -85,13 +85,28 @@ func (c *Client) Start() error {
 		zap.String("address", serverAddr),
 		zap.Bool("snmp_enabled", c.config.Monitor.SNMPEnabled))
 
-	// Create TUN adapter
+	// Create TUN adapter with robust options
 	tunName := fmt.Sprintf("tun%d", time.Now().UnixNano())
-	iface, err := adapter.New(tunName)
+	adapterOpts := &adapter.Options{
+		RetryAttempts:  5,     // More retries for initial setup
+		RetryDelay:     200,   // 200ms between retries
+		CleanupTimeout: 10000, // 10 seconds for cleanup
+		ValidateState:  true,  // Always validate interface state
+	}
+	iface, err := adapter.New(tunName, adapterOpts)
 	if err != nil {
 		return fmt.Errorf("failed to create adapter: %w", err)
 	}
-	defer iface.Close()
+
+	// Ensure proper cleanup on exit
+	defer func() {
+		c.monitor.Info("Cleaning up TUN interface", zap.String("name", tunName))
+		if err := iface.Cleanup(); err != nil {
+			c.monitor.Error("Failed to cleanup interface",
+				zap.String("name", tunName),
+				zap.Error(err))
+		}
+	}()
 
 	// Configure adapter
 	adapterCfg := &adapter.Config{
@@ -123,8 +138,13 @@ func (c *Client) Start() error {
 
 // Stop stops the tunnel client
 func (c *Client) Stop() error {
+	c.monitor.Info("Stopping tunnel client")
+
+	// Stop monitoring first to ensure final metrics are collected
 	if c.monitor != nil {
+		c.monitor.Info("Stopping monitoring")
 		c.monitor.Stop()
 	}
+
 	return nil
 }
