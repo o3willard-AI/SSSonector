@@ -197,21 +197,3 @@ func (m *NamespaceManager) setupIDMappings() error {
 	// Implementation omitted
 	return nil
 }
-
-// setupTmpfsMount sets up a tmpfs mount
-func (m *NamespaceManager) setupTmpfsMount(mount *TmpfsMount) error {
-	// Implementation omitted
-	return nil
-}
-
-// setupBindMount sets up a bind mount
-func (m *NamespaceManager) setupBindMount(mount *BindMount) error {
-	// Implementation omitted
-	return nil
-}
-
-// setupMount sets up a regular mount
-func (m *NamespaceManager) setupMount(mount *MountConfig) error {
-	// Implementation omitted
-	return nil
-}
