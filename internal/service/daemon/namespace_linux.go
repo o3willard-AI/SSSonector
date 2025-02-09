@@ -83,9 +83,20 @@ func (m *NamespaceManager) setupNetworkNamespace() error {
 	// Configure network interface based on type
 	switch m.config.Network.Type {
 	case "bridge":
-		if err := m.setupBridgeNetwork(); err != nil {
-			return err
+		if err := m.configureBridgeNetwork(); err != nil {
+			return fmt.Errorf("failed to configure bridge network: %w", err)
 		}
+
+		// Set up routing after bridge is configured
+		if err := m.setupRouting(); err != nil {
+			return fmt.Errorf("failed to setup routing: %w", err)
+		}
+
+		// Set up firewall rules
+		if err := m.setupFirewall(); err != nil {
+			return fmt.Errorf("failed to setup firewall: %w", err)
+		}
+
 	case "none":
 		// Nothing to do
 	case "host":
@@ -94,12 +105,6 @@ func (m *NamespaceManager) setupNetworkNamespace() error {
 		return fmt.Errorf("unsupported network type: %s", m.config.Network.Type)
 	}
 
-	return nil
-}
-
-// setupBridgeNetwork sets up bridge network
-func (m *NamespaceManager) setupBridgeNetwork() error {
-	// Implementation omitted
 	return nil
 }
 
