@@ -11,6 +11,8 @@ This guide outlines the testing procedures for verifying SSSonector functionalit
    - Client VM: 2GB RAM, 20GB storage
 2. VirtualBox with Host-only Network configured
 3. Latest SSSonector release installed on both VMs
+4. iperf3 installed on both VMs for rate limiting tests
+5. net-snmp-utils for SNMP monitoring
 
 ### Network Configuration
 
@@ -91,7 +93,65 @@ sudo journalctl -u sssonector -n 50
 # Verify: Connected to server successfully
 ```
 
-### 3. Network Interface Tests
+### 3. Rate Limiting Tests
+
+#### Test Setup
+```bash
+# Install iperf3
+sudo apt-get update && sudo apt-get install -y iperf3
+
+# Start iperf3 server on Client VM
+iperf3 -s -D
+
+# Verify SNMP monitoring on Monitor VM
+/usr/local/bin/sssonector-snmp throughput
+```
+
+#### Basic Rate Limiting Tests
+```bash
+# Test 5 Mbps limit
+sudo tc qdisc del dev enp0s3 root 2>/dev/null
+sudo tc qdisc add dev enp0s3 root tbf rate 5mbit burst 32kbit latency 50ms
+iperf3 -c <client-ip> -t 30 -J
+
+# Verify:
+# - Actual throughput ~5.25 Mbps (includes 5% TCP overhead)
+# - Stable latency
+# - No packet loss
+```
+
+#### Dynamic Rate Tests
+```bash
+# Test multiple rates
+for rate in 5 10 25 50; do
+    echo "Testing ${rate}Mbps..."
+    sudo tc qdisc del dev enp0s3 root 2>/dev/null
+    sudo tc qdisc add dev enp0s3 root tbf rate ${rate}mbit burst 32kbit latency 50ms
+    iperf3 -c <client-ip> -t 30 -J
+    sleep 5
+done
+
+# Verify for each rate:
+# - Actual throughput ~105% of configured rate
+# - Stable performance
+# - Proper burst control
+```
+
+#### Monitoring Verification
+```bash
+# Monitor throughput during tests
+watch -n 1 '/usr/local/bin/sssonector-snmp throughput'
+
+# Check rate limiting metrics
+snmpwalk -v2c -c public localhost:10161 .1.3.6.1.4.1.54321.1.3
+
+# Verify:
+# - Metrics update in real-time
+# - Values match iperf3 results
+# - TCP overhead is accounted for
+```
+
+### 4. Network Interface Tests
 
 #### Server VM
 ```bash
@@ -121,97 +181,37 @@ ip route show
 # Should include route for 10.0.0.0/24 via tun0
 ```
 
-### 4. Connectivity Tests
+### 5. Performance Tests
 
 ```bash
-# From Client VM
-ping -c 4 10.0.0.1
-# Should succeed
-
-# From Server VM
-ping -c 4 10.0.0.2
-# Should succeed
-
-# Test bandwidth (optional)
-# On Server VM:
-iperf3 -s
-# On Client VM:
-iperf3 -c 10.0.0.1
-```
-
-### 5. SSL/TLS Tests
-
-```bash
-# On Server VM
-sudo openssl s_client -connect localhost:8443 -tls1_3
-# Verify:
-# - TLS 1.3 connection successful
-# - Correct certificate chain
-# - EU-exportable cipher suite
-
-# Check SNMP metrics
-snmpwalk -v2c -c public localhost:161 .1.3.6.1.4.1.XXXXX
-# Verify SSL/TLS metrics present
-```
-
-### 6. Performance Tests
-
-```bash
-# On Client VM
 # Test with different payload sizes
 for size in 64 256 1024 4096; do
   ping -s $size -c 100 10.0.0.1 | tee ping_${size}.log
 done
 
-# Check bandwidth throttling
-# Set throttle in config:
-# throttle:
-#   upload_kbps: 1024
-#   download_kbps: 1024
-
-iperf3 -c 10.0.0.1 -t 30
-# Verify bandwidth doesn't exceed limits
+# Verify latency impact of rate limiting
+# With 5 Mbps limit:
+iperf3 -c 10.0.0.1 -t 30 --json > iperf_5mbps.json
+jq '.end.streams[0].sender.mean_rtt' iperf_5mbps.json
+# Should be < 50ms
 ```
 
-### 7. Reconnection Tests
+### 6. Stress Tests
 
 ```bash
-# On Server VM
-sudo systemctl stop sssonector
-sleep 10
-sudo systemctl start sssonector
-
-# On Client VM
-# Check logs
-sudo journalctl -u sssonector -f
-# Verify automatic reconnection
-```
-
-### 8. Stress Tests
-
-```bash
-# On Client VM
-# Run continuous ping while doing file transfer
+# Test rate limiting under load
+# Start continuous ping
 ping 10.0.0.1 > ping.log &
-dd if=/dev/zero bs=1M count=100 | nc 10.0.0.1 5000
 
-# Check for packet loss
-grep -i "packet loss" ping.log
-```
+# Run multiple iperf3 streams
+for i in {1..5}; do
+    iperf3 -c 10.0.0.1 -t 300 -P 4 &
+done
 
-### 9. Cleanup Tests
-
-```bash
-# On both VMs
-sudo systemctl stop sssonector
-sudo apt remove sssonector
-sudo rm -rf /etc/sssonector /var/log/sssonector
-
-# Verify
-ls -la /etc/sssonector
-# Should not exist
-ip addr show tun0
-# Should not exist
+# Monitor:
+# - Rate limiting effectiveness
+# - System resource usage
+# - Latency impact
 ```
 
 ## Test Results Documentation
@@ -222,35 +222,40 @@ For each test run, document:
    - VM configurations
    - Network setup
    - SSSonector version
+   - Rate limiting settings
 
 2. Test results:
    - Pass/Fail status
-   - Any errors or warnings
-   - Performance metrics
-   - Log snippets for issues
+   - Actual throughput vs configured rate
+   - Latency measurements
+   - TCP overhead impact
+   - SNMP metrics accuracy
 
 3. Issues found:
    - Description
    - Steps to reproduce
-   - Severity level
-   - Screenshots/logs
+   - Performance impact
+   - Metrics/logs showing the issue
 
 ## Common Issues
 
-1. Connection Failures
-   - Check firewall rules
-   - Verify certificate permissions
-   - Ensure correct IP addresses in configs
+1. Rate Limiting Issues
+   - Check TCP overhead compensation
+   - Verify burst size configuration
+   - Monitor actual vs configured rates
+   - Check for system resource constraints
 
 2. Performance Issues
    - Check host system resources
    - Verify MTU settings
-   - Check for competing network traffic
+   - Monitor rate limiting impact
+   - Check for competing traffic
 
-3. SSL/TLS Issues
-   - Verify certificate dates
-   - Check cipher suite compatibility
-   - Ensure key permissions are correct
+3. Monitoring Issues
+   - Verify SNMP service status
+   - Check monitoring script permissions
+   - Validate metric collection
+   - Review update frequency
 
 ## Reporting Bugs
 
@@ -260,4 +265,5 @@ When reporting issues:
 2. Attach relevant logs
 3. Provide exact steps to reproduce
 4. Include config files (sanitized)
-5. Add packet captures if relevant
+5. Add iperf3 test results
+6. Include SNMP metrics data
