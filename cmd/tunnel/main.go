@@ -36,7 +36,7 @@ func main() {
 	ctx := context.Background()
 
 	// Load configuration
-	loader := config.NewLoader(logger)
+	loader := config.NewLoader()
 	cfg, err := loader.LoadFromFile(configPath)
 	if err != nil {
 		logger.Fatal("Failed to load configuration",
@@ -46,14 +46,20 @@ func main() {
 	}
 
 	// Create configuration store and validator
-	store := config.NewFileStore(filepath.Dir(configPath), logger)
-	validator := config.NewValidator(logger)
+	store := config.NewFileStore(filepath.Dir(configPath))
+	validator := config.NewValidator()
 
 	// Create configuration manager
-	manager := config.NewManager(configPath, store, validator, logger)
+	manager, err := config.NewManager(store, validator, logger)
+	if err != nil {
+		logger.Fatal("Failed to create configuration manager", zap.Error(err))
+	}
+
+	// Create AppConfig
+	appCfg := config.NewAppConfig(cfg, config.TypeServer)
 
 	// Update certificate paths
-	if err := tunnel.UpdateCertificatePaths(cfg, filepath.Dir(configPath)); err != nil {
+	if err := tunnel.UpdateCertificatePaths(appCfg, filepath.Dir(configPath)); err != nil {
 		logger.Fatal("Failed to update certificate paths", zap.Error(err))
 	}
 
@@ -64,9 +70,9 @@ func main() {
 
 	switch cfg.Mode {
 	case config.ModeServer:
-		t, err = NewServer(cfg, manager, logger)
+		t, err = NewServer(appCfg, manager, logger)
 	case config.ModeClient:
-		t, err = NewClient(cfg, manager, logger)
+		t, err = NewClient(appCfg, manager, logger)
 	default:
 		logger.Fatal("Invalid mode", zap.String("mode", string(cfg.Mode)))
 	}

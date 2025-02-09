@@ -2,156 +2,111 @@ package service
 
 import "time"
 
-// Service states
+// ServiceCommand represents a service control command
+type ServiceCommand string
+
 const (
-	StateStarting  = "starting"
-	StateRunning   = "running"
-	StateStopping  = "stopping"
-	StateStopped   = "stopped"
-	StateReloading = "reloading"
-	StateFailed    = "failed"
+	// Service commands
+	CmdStatus  ServiceCommand = "status"
+	CmdMetrics ServiceCommand = "metrics"
+	CmdHealth  ServiceCommand = "health"
+	CmdStart   ServiceCommand = "start"
+	CmdStop    ServiceCommand = "stop"
+	CmdReload  ServiceCommand = "reload"
 )
 
-// Service commands
+// ServiceState represents a service state
+type ServiceState string
+
 const (
-	CmdStart        = "start"
-	CmdStop         = "stop"
-	CmdReload       = "reload"
-	CmdStatus       = "status"
-	CmdMetrics      = "metrics"
-	CmdHealth       = "health"
-	CmdUpdateConfig = "update-config"
-	CmdRotateCerts  = "rotate-certs"
+	// Service states
+	StateStarting  ServiceState = "starting"
+	StateRunning   ServiceState = "running"
+	StateStopping  ServiceState = "stopping"
+	StateStopped   ServiceState = "stopped"
+	StateReloading ServiceState = "reloading"
+	StateFailed    ServiceState = "failed"
 )
-
-// Service error codes
-const (
-	ErrNotFound       = 404
-	ErrUnauthorized   = 401
-	ErrForbidden      = 403
-	ErrInvalidInput   = 400
-	ErrInternal       = 500
-	ErrNotSupported   = 501
-	ErrUnavailable    = 503
-	ErrTimeout        = 504
-	ErrAlreadyExists  = 409
-	ErrAlreadyRunning = 400
-	ErrNotRunning     = 400
-	ErrInvalidCommand = 400
-	ErrNotImplemented = 501
-)
-
-// ServiceOptions represents service configuration options
-type ServiceOptions struct {
-	Name        string   // Service name
-	ConfigPath  string   // Path to config file
-	PIDFile     string   // Path to PID file
-	LogFile     string   // Path to log file
-	User        string   // User to run as
-	Group       string   // Group to run as
-	WorkingDir  string   // Working directory
-	Environment []string // Environment variables
-}
-
-// ServiceStatus represents service status information
-type ServiceStatus struct {
-	Name        string    // Service name
-	State       string    // Current state
-	PID         int       // Process ID
-	StartTime   time.Time // Start time
-	LastReload  time.Time // Last reload time
-	Error       string    // Last error message
-	Uptime      string    // Uptime duration
-	Memory      uint64    // Memory usage in bytes
-	CPU         float64   // CPU usage percentage
-	Restarts    int       // Number of restarts
-	Connections int       // Number of active connections
-	Platform    string    // Platform (linux, windows, etc)
-}
-
-// ServiceMetrics represents service metrics
-type ServiceMetrics struct {
-	StartTime       time.Time // Service start time
-	Platform        string    // Platform (linux, windows, etc)
-	LastError       string    // Last error message
-	CPUUsage        float64   // CPU usage percentage
-	MemoryUsage     uint64    // Memory usage in bytes
-	UptimeSeconds   int64     // Uptime in seconds
-	LastReload      time.Time // Last reload time
-	ConnectionCount int       // Number of active connections
-	BytesReceived   uint64    // Total bytes received
-	BytesSent       uint64    // Total bytes sent
-	ErrorCount      int       // Total error count
-}
-
-// ServiceCommand represents a command to be executed by the service
-type ServiceCommand struct {
-	Command   string // Command to execute
-	Type      string // Command type
-	RequestID string // Request ID for tracking
-	Data      []byte // Optional command data
-	Payload   []byte // Optional payload data
-}
 
 // ServiceError represents a service error
 type ServiceError struct {
-	Code    int    // Error code
-	Message string // Error message
-	Details string // Error details
+	Code    ErrorCode
+	Message string
 }
 
-// Error returns the error message
+// ErrorCode represents a service error code
+type ErrorCode string
+
+const (
+	// Error codes
+	ErrNotRunning     ErrorCode = "not_running"
+	ErrAlreadyRunning ErrorCode = "already_running"
+	ErrInvalidCommand ErrorCode = "invalid_command"
+	ErrInvalidConfig  ErrorCode = "invalid_config"
+	ErrInternal       ErrorCode = "internal_error"
+)
+
+// NewServiceError creates a new service error
+func NewServiceError(code ErrorCode, message string) error {
+	return &ServiceError{
+		Code:    code,
+		Message: message,
+	}
+}
+
+// Error implements the error interface
 func (e *ServiceError) Error() string {
 	return e.Message
 }
 
-// NewServiceError creates a new service error
-func NewServiceError(code int, message string, details string) *ServiceError {
-	return &ServiceError{
-		Code:    code,
-		Message: message,
-		Details: details,
-	}
+// ServiceStatus represents service status information
+type ServiceStatus struct {
+	Name       string       // Service name
+	State      ServiceState // Current state
+	Mode       string       // Operating mode
+	Version    string       // Service version
+	StartTime  time.Time    // Service start time
+	LastReload time.Time    // Last config reload time
+	PID        int          // Process ID
 }
 
-// Service interface defines the methods that must be implemented by a service
+// ServiceMetrics represents service metrics
+type ServiceMetrics struct {
+	Platform      string  // Operating system platform
+	UptimeSeconds int64   // Uptime in seconds
+	CPUPercent    float64 // CPU usage percentage
+	MemoryBytes   uint64  // Memory usage in bytes
+	OpenFiles     int     // Number of open files
+	Connections   int     // Number of active connections
+	BytesIn       uint64  // Total bytes received
+	BytesOut      uint64  // Total bytes sent
+	ErrorCount    int     // Total error count
+}
+
+// ServiceResponse represents a service command response
+type ServiceResponse struct {
+	Success bool        // Success flag
+	Message string      // Response message
+	Data    interface{} // Response data
+}
+
+// ServiceOptions represents service configuration options
+type ServiceOptions struct {
+	Name      string // Service name
+	ConfigDir string // Configuration directory
+	DataDir   string // Data directory
+	LogDir    string // Log directory
+}
+
+// Service defines the interface for service operations
 type Service interface {
-	// Start starts the service
+	// Core operations
 	Start() error
-
-	// Stop stops the service
 	Stop() error
-
-	// Reload reloads the service configuration
 	Reload() error
 
-	// Status returns the current service status
-	Status() (string, error)
-
-	// GetPID returns the service process ID
-	GetPID() (int, error)
-
-	// IsRunning returns whether the service is running
-	IsRunning() (bool, error)
-
-	// GetMetrics returns service metrics
-	GetMetrics() (ServiceMetrics, error)
-
-	// Health checks service health
+	// Status and monitoring
+	Status() (*ServiceStatus, error)
+	Metrics() (*ServiceMetrics, error)
 	Health() error
-
-	// ExecuteCommand executes a service command
-	ExecuteCommand(cmd ServiceCommand) (string, error)
-
-	// GetLogs returns service logs
-	GetLogs(lines int) ([]string, error)
-
-	// SendSignal sends a signal to the service
-	SendSignal(signal string) error
-
-	// Configure configures the service
-	Configure(opts ServiceOptions) error
-
-	// GetOptions returns service options
-	GetOptions() ServiceOptions
 }

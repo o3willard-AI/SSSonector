@@ -4,74 +4,78 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: sssonector-config
-  labels:
-    app: sssonector
+  namespace: sssonector
 data:
   config.json: |
     {
       "mode": "server",
       "network": {
-        "interface": "tun0",
-        "mtu": 1500
-      },
-      "tunnel": {
-        "protocol": "tcp",
-        "encryption": "aes-256-gcm",
-        "compression": "none"
+        "interface": "eth0",
+        "mtu": 1500,
+        "dnsServers": ["8.8.8.8", "8.8.4.4"]
       },
       "monitor": {
         "enabled": true,
-        "interval": 60,
-        "log_level": "info",
-        "metrics_enabled": true
+        "interval": "60s",
+        "prometheus": {
+          "enabled": true,
+          "port": 9090,
+          "path": "/metrics"
+        },
+        "snmp": {
+          "enabled": true,
+          "port": 161
+        }
       }
     }
 
 ---
-# Secret for TLS certificates
+# Service Account
 apiVersion: v1
-kind: Secret
-metadata:
-  name: sssonector-certs
-  labels:
-    app: sssonector
-type: Opaque
-data:
-  server.crt: ${BASE64_SERVER_CERT}
-  server.key: ${BASE64_SERVER_KEY}
-  ca.crt: ${BASE64_CA_CERT}
-
----
-# Service for SSSonector API
-apiVersion: v1
-kind: Service
+kind: ServiceAccount
 metadata:
   name: sssonector
-  labels:
-    app: sssonector
-spec:
-  type: LoadBalancer
-  ports:
-    - name: http-api
-      port: 8080
-      targetPort: 8080
-      protocol: TCP
-    - name: https-api
-      port: 8443
-      targetPort: 8443
-      protocol: TCP
-  selector:
-    app: sssonector
+  namespace: sssonector
 
 ---
-# DaemonSet for SSSonector
+# Role for SSSonector
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: sssonector
+  namespace: sssonector
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services"]
+  verbs: ["get", "list", "watch"]
+
+---
+# RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: sssonector
+  namespace: sssonector
+subjects:
+- kind: ServiceAccount
+  name: sssonector
+  namespace: sssonector
+roleRef:
+  kind: Role
+  name: sssonector
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Deployment
 apiVersion: apps/v1
-kind: DaemonSet
+kind: Deployment
 metadata:
   name: sssonector
+  namespace: sssonector
   labels:
     app: sssonector
 spec:
+  replicas: 1
   selector:
     matchLabels:
       app: sssonector
@@ -81,178 +85,145 @@ spec:
         app: sssonector
       annotations:
         prometheus.io/scrape: "true"
-        prometheus.io/port: "8080"
+        prometheus.io/port: "9090"
         prometheus.io/path: "/metrics"
     spec:
-      hostNetwork: true
-      dnsPolicy: ClusterFirstWithHostNet
-      securityContext:
-        runAsUser: 0
-        runAsGroup: 0
-        fsGroup: 0
+      serviceAccountName: sssonector
       containers:
-        - name: sssonector
-          image: sssonector:latest
-          imagePullPolicy: Always
-          securityContext:
-            privileged: true
-            capabilities:
-              add:
-                - NET_ADMIN
-                - NET_RAW
-                - SYS_ADMIN
-          ports:
-            - name: http-api
-              containerPort: 8080
-              protocol: TCP
-            - name: https-api
-              containerPort: 8443
-              protocol: TCP
-          env:
-            - name: SSSONECTOR_CONFIG
-              value: /etc/sssonector/config.json
-            - name: SSSONECTOR_LOG_LEVEL
-              value: info
-            - name: SSSONECTOR_LOG_FORMAT
-              value: json
-            - name: SSSONECTOR_METRICS_ENABLED
-              value: "true"
-            - name: NODE_NAME
-              valueFrom:
-                fieldRef:
-                  fieldPath: spec.nodeName
-            - name: POD_NAME
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.name
-            - name: POD_NAMESPACE
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.namespace
-          volumeMounts:
-            - name: config
-              mountPath: /etc/sssonector/config.json
-              subPath: config.json
-              readOnly: true
-            - name: certs
-              mountPath: /etc/sssonector/certs
-              readOnly: true
-            - name: data
-              mountPath: /var/lib/sssonector
-            - name: host-dev
-              mountPath: /dev
-            - name: host-sys
-              mountPath: /sys
-            - name: host-proc
-              mountPath: /host/proc
-              readOnly: true
-          resources:
-            requests:
-              cpu: 500m
-              memory: 512Mi
-            limits:
-              cpu: 1000m
-              memory: 1Gi
-          livenessProbe:
-            httpGet:
-              path: /health
-              port: 8080
-            initialDelaySeconds: 5
-            periodSeconds: 10
-            timeoutSeconds: 5
-            failureThreshold: 3
-          readinessProbe:
-            httpGet:
-              path: /ready
-              port: 8080
-            initialDelaySeconds: 5
-            periodSeconds: 10
-            timeoutSeconds: 5
-            failureThreshold: 3
-      volumes:
+      - name: sssonector
+        image: sssonector:latest
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          capabilities:
+            add: ["NET_ADMIN", "NET_RAW"]
+        ports:
+        - containerPort: 9090
+          name: metrics
+        - containerPort: 161
+          name: snmp
+          protocol: UDP
+        volumeMounts:
         - name: config
-          configMap:
-            name: sssonector-config
-        - name: certs
-          secret:
-            secretName: sssonector-certs
+          mountPath: /etc/sssonector
         - name: data
-          hostPath:
-            path: /var/lib/sssonector
-            type: DirectoryOrCreate
-        - name: host-dev
-          hostPath:
-            path: /dev
-        - name: host-sys
-          hostPath:
-            path: /sys
-        - name: host-proc
-          hostPath:
-            path: /proc
+          mountPath: /var/lib/sssonector
+        livenessProbe:
+          exec:
+            command:
+            - sssonectorctl
+            - health
+          initialDelaySeconds: 5
+          periodSeconds: 30
+          timeoutSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+            - sssonectorctl
+            - status
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+      volumes:
+      - name: config
+        configMap:
+          name: sssonector-config
+      - name: data
+        persistentVolumeClaim:
+          claimName: sssonector-data
 
 ---
-# NetworkPolicy for SSSonector
+# Service for metrics
+apiVersion: v1
+kind: Service
+metadata:
+  name: sssonector-metrics
+  namespace: sssonector
+  labels:
+    app: sssonector
+spec:
+  ports:
+  - port: 9090
+    targetPort: metrics
+    protocol: TCP
+    name: metrics
+  selector:
+    app: sssonector
+
+---
+# Service for SNMP
+apiVersion: v1
+kind: Service
+metadata:
+  name: sssonector-snmp
+  namespace: sssonector
+  labels:
+    app: sssonector
+spec:
+  ports:
+  - port: 161
+    targetPort: snmp
+    protocol: UDP
+    name: snmp
+  selector:
+    app: sssonector
+
+---
+# PersistentVolumeClaim
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: sssonector-data
+  namespace: sssonector
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+
+---
+# ServiceMonitor for Prometheus Operator
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: sssonector
+  namespace: sssonector
+  labels:
+    app: sssonector
+spec:
+  selector:
+    matchLabels:
+      app: sssonector
+  endpoints:
+  - port: metrics
+    interval: 30s
+    path: /metrics
+
+---
+# NetworkPolicy
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: sssonector
-  labels:
-    app: sssonector
+  namespace: sssonector
 spec:
   podSelector:
     matchLabels:
       app: sssonector
   policyTypes:
-    - Ingress
-    - Egress
+  - Ingress
+  - Egress
   ingress:
-    - ports:
-        - port: 8080
-          protocol: TCP
-        - port: 8443
-          protocol: TCP
+  - ports:
+    - port: 9090
+      protocol: TCP
+    - port: 161
+      protocol: UDP
   egress:
-    - {}
-
----
-# RBAC configuration
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: sssonector
-  labels:
-    app: sssonector
-
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: sssonector
-  labels:
-    app: sssonector
-rules:
-  - apiGroups: [""]
-    resources: ["nodes"]
-    verbs: ["get", "list", "watch"]
-  - apiGroups: [""]
-    resources: ["pods"]
-    verbs: ["get", "list", "watch"]
-  - apiGroups: [""]
-    resources: ["services"]
-    verbs: ["get", "list", "watch"]
-
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: sssonector
-  labels:
-    app: sssonector
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: sssonector
-subjects:
-  - kind: ServiceAccount
-    name: sssonector
-    namespace: default
+  - {}

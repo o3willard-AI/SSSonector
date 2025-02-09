@@ -1,330 +1,304 @@
 # SSSonector Troubleshooting Guide
 
-## Common Issues and Solutions
+This guide provides solutions for common issues that may arise when running and maintaining SSSonector.
 
-### 1. Connection Issues
+## Service Control Issues
 
-#### Symptoms
-- Connection timeouts
-- Connection refused errors
-- TLS handshake failures
+### Service Won't Start
 
-#### Diagnostic Steps
-1. Check network connectivity:
+1. Check socket permissions:
 ```bash
-# Test basic connectivity
-ping <remote-host>
+ls -l /var/run/sssonector.sock
+```
+- Socket should have correct ownership and permissions (typically 660)
+- Directory should be writable by the service user
 
-# Check port availability
-nc -zv <remote-host> <port>
+2. Check service status:
+```bash
+sssonectorctl status
+```
+- Look for specific error messages
+- Verify service state
 
-# Verify TLS certificate
-openssl s_client -connect <host>:<port>
+3. Common causes:
+- Socket file already exists (remove stale socket)
+- Insufficient permissions
+- Port conflicts
+- Configuration errors
+
+### Connection Refused
+
+1. Verify socket exists:
+```bash
+ls -l /var/run/sssonector.sock
 ```
 
-2. Verify configuration:
+2. Check service is running:
 ```bash
-# Check configuration syntax
-sssonectorctl validate --config /path/to/config.json
-
-# Test configuration
-sssonectorctl test --config /path/to/config.json
+ps aux | grep sssonector
 ```
 
-3. Review logs:
-```bash
-# Check service logs
-journalctl -u sssonector.service -f
+3. Common causes:
+- Service not running
+- Wrong socket path
+- Permission issues
+- SELinux/AppArmor restrictions
 
-# Enable debug logging
-sssonectorctl debug --enable
+### Command Timeouts
+
+1. Check service load:
+```bash
+sssonectorctl metrics
 ```
 
-#### Common Solutions
-1. Certificate issues:
-- Verify certificate paths
-- Check certificate expiration
-- Validate trust chain
-- Ensure proper permissions
+2. Verify system resources:
+```bash
+top
+df -h
+```
 
-2. Network issues:
-- Check firewall rules
-- Verify DNS resolution
-- Validate network routes
-- Check proxy settings
-
-3. Configuration issues:
-- Validate JSON syntax
-- Check file permissions
-- Verify environment variables
-- Review rate limits
-
-### 2. Performance Issues
-
-#### Symptoms
-- High latency
-- Low throughput
+3. Common causes:
+- High system load
 - Resource exhaustion
-- Connection drops
+- Deadlocks
+- Network issues
 
-#### Diagnostic Steps
-1. Monitor system resources:
+## Configuration Issues
+
+### Invalid Configuration
+
+1. Validate config file:
 ```bash
-# Check CPU/Memory usage
-top -b -n 1
-
-# Monitor network traffic
-iftop -i <interface>
-
-# Track open files/connections
-lsof -p <pid>
+sssonectorctl validate --config=/etc/sssonector/config.json
 ```
 
-2. Profile the application:
+2. Check config permissions:
 ```bash
-# Enable profiling
-export SSSONECTOR_PROFILE=1
-
-# Collect CPU profile
-go tool pprof http://localhost:6060/debug/pprof/profile
-
-# Analyze memory usage
-go tool pprof http://localhost:6060/debug/pprof/heap
+ls -l /etc/sssonector/config.json
 ```
 
-3. Check metrics:
+3. Common issues:
+- Syntax errors
+- Invalid values
+- Missing required fields
+- Permission problems
+
+### Hot Reload Failures
+
+1. Check reload status:
 ```bash
-# Query Prometheus metrics
+sssonectorctl reload
+```
+
+2. Verify config changes:
+```bash
+diff /etc/sssonector/config.json /etc/sssonector/config.json.bak
+```
+
+3. Common causes:
+- Invalid new configuration
+- Service in wrong state
+- Resource constraints
+- Lock contention
+
+## Monitoring Issues
+
+### Missing Metrics
+
+1. Check monitoring status:
+```bash
+sssonectorctl metrics
+```
+
+2. Verify Prometheus endpoint:
+```bash
 curl http://localhost:9090/metrics
-
-# Check SNMP stats
-snmpwalk -v2c -c public localhost:161
 ```
 
-#### Common Solutions
-1. Resource constraints:
-- Adjust buffer sizes
-- Configure rate limits
-- Tune system limits
-- Optimize memory usage
+3. Common causes:
+- Monitoring not enabled
+- Wrong port configuration
+- Network restrictions
+- Permission issues
 
-2. Network bottlenecks:
-- Check network capacity
-- Monitor packet loss
-- Adjust MTU settings
-- Configure QoS
+### Health Check Failures
 
-3. Configuration optimization:
-- Tune connection pools
-- Adjust timeouts
-- Configure retries
-- Optimize TLS settings
-
-### 3. Security Issues
-
-#### Symptoms
-- Authentication failures
-- Authorization errors
-- Certificate warnings
-- Access denied
-
-#### Diagnostic Steps
-1. Check security settings:
+1. Run health check:
 ```bash
-# Verify file permissions
-ls -l /etc/sssonector/
-
-# Check SELinux context
-sestatus
-semanage fcontext -l | grep sssonector
-
-# Review AppArmor profile
-aa-status
+sssonectorctl health
 ```
 
-2. Validate certificates:
+2. Check component status:
 ```bash
-# Check certificate validity
-openssl x509 -in cert.pem -text -noout
-
-# Verify trust chain
-openssl verify -CAfile ca.pem cert.pem
-
-# Check CRL status
-openssl crl -in crl.pem -text -noout
+sssonectorctl status
 ```
 
-3. Audit access:
+3. Common issues:
+- Resource exhaustion
+- Network connectivity
+- Configuration problems
+- Component failures
+
+## Security Issues
+
+### Certificate Problems
+
+1. Check certificate status:
 ```bash
-# Review audit logs
-ausearch -m avc -ts recent
-
-# Check authentication logs
-journalctl -u sssonector.service | grep auth
+sssonectorctl status
 ```
 
-#### Common Solutions
-1. Certificate management:
-- Rotate expired certificates
-- Update trust store
-- Fix permissions
-- Configure auto-rotation
-
-2. Access control:
-- Update ACL rules
-- Configure RBAC
-- Fix SELinux labels
-- Adjust AppArmor profile
-
-3. Authentication:
-- Update credentials
-- Fix token issues
-- Configure SSO
-- Enable audit logging
-
-### 4. Configuration Issues
-
-#### Symptoms
-- Validation errors
-- Missing settings
-- Version conflicts
-- Hot reload failures
-
-#### Diagnostic Steps
-1. Validate configuration:
+2. Verify certificate files:
 ```bash
-# Check syntax
-jq . /etc/sssonector/config.json
-
-# Validate schema
-sssonectorctl validate --schema
-
-# Test configuration
-sssonectorctl test --dry-run
+ls -l /etc/sssonector/certs/
 ```
 
-2. Check versions:
+3. Common causes:
+- Expired certificates
+- Missing CA certificates
+- Permission issues
+- Wrong certificate paths
+
+### Authentication Failures
+
+1. Check auth logs:
 ```bash
-# List configurations
-sssonectorctl config list
-
-# Show version history
-sssonectorctl config history
-
-# Compare versions
-sssonectorctl config diff v1.0.0 v1.1.0
+journalctl -u sssonector
 ```
 
-3. Monitor changes:
+2. Verify credentials:
 ```bash
-# Watch configuration changes
-sssonectorctl config watch
-
-# Check audit log
-sssonectorctl audit log
+sssonectorctl verify-auth
 ```
 
-#### Common Solutions
-1. Schema issues:
-- Fix JSON syntax
-- Update schema version
-- Add missing fields
-- Remove invalid options
+3. Common issues:
+- Invalid credentials
+- Expired certificates
+- Wrong authentication method
+- Permission problems
 
-2. Version management:
-- Roll back changes
-- Fix conflicts
-- Update references
-- Clean old versions
+## Network Issues
 
-3. Hot reload:
-- Check file permissions
-- Fix watch paths
-- Update handlers
-- Configure notifications
+### Tunnel Problems
 
-## Debugging Tools
-
-### 1. Built-in Tools
-
+1. Check tunnel status:
 ```bash
-# Enable debug mode
-sssonectorctl debug --enable
-
-# Collect diagnostics
-sssonectorctl diag collect
-
-# Monitor metrics
-sssonectorctl metrics watch
-
-# Trace connections
-sssonectorctl trace --duration 5m
+sssonectorctl status
 ```
 
-### 2. System Tools
-
+2. Verify network interface:
 ```bash
-# Network debugging
-tcpdump -i any port <port>
-wireshark -i any -f "port <port>"
-
-# Resource monitoring
-htop
-iotop
-vmstat
+ip link show
 ```
 
-### 3. Development Tools
+3. Common causes:
+- Interface conflicts
+- Route problems
+- Firewall rules
+- MTU issues
 
+### Performance Issues
+
+1. Check rate limiting:
 ```bash
-# Go debugging
-dlv attach <pid>
-go tool trace trace.out
-go tool pprof profile.out
+sssonectorctl metrics
 ```
 
-## Best Practices
+2. Monitor network performance:
+```bash
+iftop -i tun0
+```
 
-### 1. Monitoring
+3. Common issues:
+- Rate limiting too aggressive
+- Network congestion
+- Resource constraints
+- Configuration problems
 
-- Set up alerts for key metrics
-- Monitor resource usage trends
-- Track error rates
-- Configure log aggregation
+## System Integration
 
-### 2. Maintenance
+### Systemd Issues
 
-- Regular certificate rotation
-- Configuration backups
-- Log rotation
-- Performance tuning
+1. Check service status:
+```bash
+systemctl status sssonector
+```
 
-### 3. Documentation
+2. View service logs:
+```bash
+journalctl -u sssonector -n 100
+```
 
-- Keep runbooks updated
-- Document configuration changes
-- Maintain troubleshooting guides
-- Update architecture diagrams
+3. Common problems:
+- Wrong service configuration
+- Permission issues
+- Dependency failures
+- Resource limits
+
+### Platform-Specific Issues
+
+#### Linux
+- SELinux/AppArmor profiles
+- Namespace configuration
+- Capability requirements
+- CGroup constraints
+
+#### Windows
+- Service registration
+- Network adapter permissions
+- Registry access
+- Windows Firewall rules
+
+#### macOS
+- System extensions
+- Network extension permissions
+- Keychain access
+- Gatekeeper restrictions
+
+## Debugging Tips
+
+1. Enable debug logging:
+```bash
+sssonectorctl set-log-level debug
+```
+
+2. Collect diagnostics:
+```bash
+sssonectorctl diagnostics
+```
+
+3. Monitor real-time:
+```bash
+sssonectorctl monitor --follow
+```
+
+4. Generate support bundle:
+```bash
+sssonectorctl support-bundle
+```
+
+## Common Error Codes
+
+- `not_running`: Service is not running
+- `already_running`: Service is already running
+- `invalid_command`: Invalid command received
+- `invalid_config`: Invalid configuration
+- `internal_error`: Internal service error
 
 ## Getting Help
 
-### 1. Community Resources
+1. Check documentation:
+- Implementation guide
+- API reference
+- Configuration guide
 
-- GitHub Issues
-- Stack Overflow
-- Mailing Lists
-- Chat Channels
+2. Generate debug info:
+```bash
+sssonectorctl debug-info > debug.txt
+```
 
-### 2. Enterprise Support
-
-- Support Portal
-- Technical Account Manager
-- Emergency Contacts
-- Escalation Procedures
-
-### 3. Documentation
-
-- [Architecture Guide](ARCHITECTURE.md)
-- [API Documentation](../config/API.md)
-- [Security Guide](../security/README.md)
-- [Configuration Guide](../admin/configuration_management.md)
+3. Contact support:
+- Include debug info
+- Describe steps to reproduce
+- Provide configuration
+- Include relevant logs

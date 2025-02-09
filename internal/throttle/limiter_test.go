@@ -1,122 +1,190 @@
 package throttle
 
 import (
+	"bytes"
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/o3willard-AI/SSSonector/internal/config"
+	"go.uber.org/zap"
 )
 
-func TestTokenBucket(t *testing.T) {
-	t.Run("Basic", func(t *testing.T) {
-		rateKb := float64(100)  // 100 KB/s
-		burstKb := float64(200) // 200 KB burst
-		bucket := NewTokenBucket(rateKb*1024, burstKb*1024)
+func TestLimiterWithTCPOverhead(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	cfg := &config.AppConfig{
+		Throttle: config.ThrottleConfig{
+			Enabled: true,
+			Rate:    1000, // 1000 bytes/s
+			Burst:   100,  // 100 bytes burst
+		},
+	}
 
-		// Should allow burst
-		assert.True(t, bucket.Take(burstKb*1024))
+	reader := bytes.NewReader(make([]byte, 2000))
+	writer := &bytes.Buffer{}
+	limiter := NewLimiter(cfg, reader, writer, logger)
 
-		// Should not allow more than burst
-		assert.False(t, bucket.Take(1))
+	// Test that effective rate includes TCP overhead
+	metrics := limiter.GetMetrics()
+	expectedRate := float64(cfg.Throttle.Rate) * tcpOverheadFactor
+	if metrics.InRate != expectedRate {
+		t.Errorf("Expected effective rate %f, got %f", expectedRate, metrics.InRate)
+	}
 
-		// Wait for tokens to refill
-		time.Sleep(time.Second)
-
-		// Should allow rate
-		assert.True(t, bucket.Take(rateKb*1024))
-	})
-
-	t.Run("Rate", func(t *testing.T) {
-		rateKb := float64(100)  // 100 KB/s
-		burstKb := float64(200) // 200 KB burst
-		bucket := NewTokenBucket(rateKb*1024, burstKb*1024)
-
-		// Take initial burst
-		assert.True(t, bucket.Take(burstKb*1024))
-
-		// Wait for tokens to refill
-		time.Sleep(time.Second)
-
-		// Should allow rate per second
-		for i := 0; i < 10; i++ {
-			assert.True(t, bucket.Take(rateKb*1024/10))
-			time.Sleep(100 * time.Millisecond)
-		}
-	})
-
-	t.Run("Update", func(t *testing.T) {
-		rateKb := float64(100)  // 100 KB/s
-		burstKb := float64(200) // 200 KB burst
-		bucket := NewTokenBucket(rateKb*1024, burstKb*1024)
-
-		// Take initial burst
-		assert.True(t, bucket.Take(burstKb*1024))
-
-		// Update to higher rate/burst
-		newRateKb := float64(200)  // 200 KB/s
-		newBurstKb := float64(400) // 400 KB burst
-		bucket.Update(newRateKb*1024, newBurstKb*1024)
-
-		// Wait for tokens to refill
-		time.Sleep(time.Second)
-
-		// Should allow new rate
-		assert.True(t, bucket.Take(newRateKb*1024))
-	})
+	// Test burst is 100ms worth of data
+	expectedBurst := expectedRate * 0.1 // 100ms
+	if metrics.InBurst != expectedBurst {
+		t.Errorf("Expected burst %f, got %f", expectedBurst, metrics.InBurst)
+	}
 }
 
-func TestRateLimitedIO(t *testing.T) {
-	t.Run("Reader", func(t *testing.T) {
-		data := make([]byte, 1024*1024)                                    // 1 MB
-		reader := NewRateLimitedReader(&testReader{data: data}, 1024*1024) // 1 MB/s
+func TestLimiterRateEnforcement(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	cfg := &config.AppConfig{
+		Throttle: config.ThrottleConfig{
+			Enabled: true,
+			Rate:    1000, // 1000 bytes/s
+			Burst:   100,  // 100 bytes burst
+		},
+	}
 
-		buf := make([]byte, 1024*100) // 100 KB chunks
-		start := time.Now()
+	data := make([]byte, 2000)
+	reader := bytes.NewReader(data)
+	writer := &bytes.Buffer{}
+	limiter := NewLimiter(cfg, reader, writer, logger)
 
-		// Read 1 MB in 100 KB chunks
-		for i := 0; i < 10; i++ {
-			n, err := reader.Read(buf)
-			assert.NoError(t, err)
-			assert.Equal(t, len(buf), n)
-		}
+	// Test read rate limiting
+	start := time.Now()
+	buf := make([]byte, 1500)
+	n, err := limiter.Read(buf)
+	elapsed := time.Since(start)
 
-		// Should take ~1 second
-		elapsed := time.Since(start)
-		assert.InDelta(t, 1.0, elapsed.Seconds(), 0.1)
-	})
+	if err != nil {
+		t.Fatalf("Read failed: %v", err)
+	}
 
-	t.Run("Writer", func(t *testing.T) {
-		data := make([]byte, 1024*1024)                          // 1 MB
-		writer := NewRateLimitedWriter(&testWriter{}, 1024*1024) // 1 MB/s
-
-		start := time.Now()
-
-		// Write 1 MB
-		n, err := writer.Write(data)
-		assert.NoError(t, err)
-		assert.Equal(t, len(data), n)
-
-		// Should take ~1 second
-		elapsed := time.Since(start)
-		assert.InDelta(t, 1.0, elapsed.Seconds(), 0.1)
-	})
+	// Should take at least 1.5 seconds to read 1500 bytes at 1000 bytes/s
+	if elapsed < 1500*time.Millisecond {
+		t.Errorf("Rate limit not enforced: read %d bytes in %v", n, elapsed)
+	}
 }
 
-// Test helpers
+func TestLimiterTimeout(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	cfg := &config.AppConfig{
+		Throttle: config.ThrottleConfig{
+			Enabled: true,
+			Rate:    10, // Very low rate to trigger timeout
+			Burst:   1,
+		},
+	}
 
-type testReader struct {
-	data []byte
-	pos  int
+	data := make([]byte, 1000)
+	reader := bytes.NewReader(data)
+	writer := &bytes.Buffer{}
+	limiter := NewLimiter(cfg, reader, writer, logger)
+
+	// Try to read more data than possible within timeout
+	buf := make([]byte, 1000)
+	_, err := limiter.Read(buf)
+
+	if err == nil {
+		t.Error("Expected timeout error, got nil")
+	}
 }
 
-func (r *testReader) Read(p []byte) (n int, err error) {
-	n = copy(p, r.data[r.pos:])
-	r.pos += n
-	return n, nil
+func TestLimiterMetrics(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	cfg := &config.AppConfig{
+		Throttle: config.ThrottleConfig{
+			Enabled: true,
+			Rate:    1000,
+			Burst:   100,
+		},
+	}
+
+	reader := bytes.NewReader(make([]byte, 2000))
+	writer := &bytes.Buffer{}
+	limiter := NewLimiter(cfg, reader, writer, logger)
+
+	// Trigger some limit hits
+	buf := make([]byte, 2000)
+	limiter.Read(buf)
+
+	metrics := limiter.GetMetrics()
+	if metrics.InLimitHits == 0 {
+		t.Error("Expected non-zero limit hits")
+	}
+
+	// Test rate values
+	baseRate := float64(cfg.Throttle.Rate)
+	expectedEffectiveRate := baseRate * tcpOverheadFactor
+	if metrics.InRate != expectedEffectiveRate {
+		t.Errorf("Expected effective rate %f, got %f", expectedEffectiveRate, metrics.InRate)
+	}
 }
 
-type testWriter struct{}
+func TestLimiterUpdate(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	cfg := &config.AppConfig{
+		Throttle: config.ThrottleConfig{
+			Enabled: true,
+			Rate:    1000,
+			Burst:   100,
+		},
+	}
 
-func (w *testWriter) Write(p []byte) (n int, err error) {
-	return len(p), nil
+	reader := bytes.NewReader(make([]byte, 2000))
+	writer := &bytes.Buffer{}
+	limiter := NewLimiter(cfg, reader, writer, logger)
+
+	// Update configuration
+	newCfg := &config.AppConfig{
+		Throttle: config.ThrottleConfig{
+			Enabled: true,
+			Rate:    2000,
+			Burst:   200,
+		},
+	}
+	limiter.Update(newCfg)
+
+	metrics := limiter.GetMetrics()
+	expectedRate := float64(newCfg.Throttle.Rate) * tcpOverheadFactor
+	if metrics.InRate != expectedRate {
+		t.Errorf("Expected updated rate %f, got %f", expectedRate, metrics.InRate)
+	}
+
+	expectedBurst := expectedRate * 0.1 // 100ms
+	if metrics.InBurst != expectedBurst {
+		t.Errorf("Expected updated burst %f, got %f", expectedBurst, metrics.InBurst)
+	}
+}
+
+func TestLimiterDisabled(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	cfg := &config.AppConfig{
+		Throttle: config.ThrottleConfig{
+			Enabled: false,
+			Rate:    1000,
+			Burst:   100,
+		},
+	}
+
+	data := make([]byte, 2000)
+	reader := bytes.NewReader(data)
+	writer := &bytes.Buffer{}
+	limiter := NewLimiter(cfg, reader, writer, logger)
+
+	// Read should complete immediately when disabled
+	start := time.Now()
+	buf := make([]byte, 1500)
+	_, err := limiter.Read(buf)
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("Read failed: %v", err)
+	}
+
+	if elapsed > 100*time.Millisecond {
+		t.Error("Rate limiting applied when disabled")
+	}
 }

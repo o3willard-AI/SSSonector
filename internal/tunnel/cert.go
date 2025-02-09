@@ -13,11 +13,11 @@ import (
 // CertManager handles TLS certificate management
 type CertManager struct {
 	logger *zap.Logger
-	config *config.TunnelConfig
+	config *config.AppConfig
 }
 
 // NewCertManager creates a new certificate manager
-func NewCertManager(logger *zap.Logger, cfg *config.TunnelConfig) *CertManager {
+func NewCertManager(logger *zap.Logger, cfg *config.AppConfig) *CertManager {
 	return &CertManager{
 		logger: logger,
 		config: cfg,
@@ -26,15 +26,15 @@ func NewCertManager(logger *zap.Logger, cfg *config.TunnelConfig) *CertManager {
 
 // GetServerTLSConfig returns the TLS configuration for server mode
 func (m *CertManager) GetServerTLSConfig() (*tls.Config, error) {
-	cert, err := tls.LoadX509KeyPair(m.config.CertFile, m.config.KeyFile)
+	cert, err := tls.LoadX509KeyPair(m.config.Config.Auth.CertFile, m.config.Config.Auth.KeyFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load server certificate: %w", err)
 	}
 
 	var clientCAs *x509.CertPool
-	if m.config.CAFile != "" {
+	if m.config.Config.Auth.CAFile != "" {
 		clientCAs = x509.NewCertPool()
-		caCert, err := os.ReadFile(m.config.CAFile)
+		caCert, err := os.ReadFile(m.config.Config.Auth.CAFile)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read CA certificate: %w", err)
 		}
@@ -59,15 +59,15 @@ func (m *CertManager) GetServerTLSConfig() (*tls.Config, error) {
 
 // GetClientTLSConfig returns the TLS configuration for client mode
 func (m *CertManager) GetClientTLSConfig() (*tls.Config, error) {
-	cert, err := tls.LoadX509KeyPair(m.config.CertFile, m.config.KeyFile)
+	cert, err := tls.LoadX509KeyPair(m.config.Config.Auth.CertFile, m.config.Config.Auth.KeyFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load client certificate: %w", err)
 	}
 
 	var rootCAs *x509.CertPool
-	if m.config.CAFile != "" {
+	if m.config.Config.Auth.CAFile != "" {
 		rootCAs = x509.NewCertPool()
-		caCert, err := os.ReadFile(m.config.CAFile)
+		caCert, err := os.ReadFile(m.config.Config.Auth.CAFile)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read CA certificate: %w", err)
 		}
@@ -86,20 +86,20 @@ func (m *CertManager) GetClientTLSConfig() (*tls.Config, error) {
 			tls.TLS_AES_256_GCM_SHA384,
 			tls.TLS_CHACHA20_POLY1305_SHA256,
 		},
-		ServerName: m.config.ServerAddress,
+		ServerName: m.config.Config.Network.Interface,
 	}, nil
 }
 
 // VerifyCertificates verifies that all required certificates exist and are valid
 func (m *CertManager) VerifyCertificates() error {
 	// Check certificate and key
-	if _, err := tls.LoadX509KeyPair(m.config.CertFile, m.config.KeyFile); err != nil {
+	if _, err := tls.LoadX509KeyPair(m.config.Config.Auth.CertFile, m.config.Config.Auth.KeyFile); err != nil {
 		return fmt.Errorf("invalid certificate/key pair: %w", err)
 	}
 
 	// Check CA certificate if specified
-	if m.config.CAFile != "" {
-		caCert, err := os.ReadFile(m.config.CAFile)
+	if m.config.Config.Auth.CAFile != "" {
+		caCert, err := os.ReadFile(m.config.Config.Auth.CAFile)
 		if err != nil {
 			return fmt.Errorf("failed to read CA certificate: %w", err)
 		}

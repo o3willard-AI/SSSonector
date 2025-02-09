@@ -1,9 +1,12 @@
 package tunnel
 
 import (
+	"net"
 	"path/filepath"
 
+	"github.com/o3willard-AI/SSSonector/internal/adapter"
 	"github.com/o3willard-AI/SSSonector/internal/config"
+	"github.com/o3willard-AI/SSSonector/internal/monitor"
 	"go.uber.org/zap"
 )
 
@@ -26,9 +29,9 @@ func UpdateCertificatePaths(cfg *config.AppConfig, baseDir string) error {
 	}
 
 	// Update certificate paths
-	cfg.Tunnel.CertFile = resolvePath(cfg.Tunnel.CertFile)
-	cfg.Tunnel.KeyFile = resolvePath(cfg.Tunnel.KeyFile)
-	cfg.Tunnel.CAFile = resolvePath(cfg.Tunnel.CAFile)
+	cfg.Config.Auth.CertFile = resolvePath(cfg.Config.Auth.CertFile)
+	cfg.Config.Auth.KeyFile = resolvePath(cfg.Config.Auth.KeyFile)
+	cfg.Config.Auth.CAFile = resolvePath(cfg.Config.Auth.CAFile)
 
 	return nil
 }
@@ -52,8 +55,8 @@ func NewServer(cfg *config.AppConfig, manager config.ConfigManager, logger *zap.
 // Start starts the tunnel server
 func (s *Server) Start() error {
 	s.logger.Info("Starting tunnel server",
-		zap.String("address", s.config.Tunnel.ListenAddress),
-		zap.Int("port", s.config.Tunnel.ListenPort),
+		zap.String("address", s.config.Config.Network.Interface),
+		zap.Int("port", 8080),
 	)
 
 	// TODO: Implement server start
@@ -87,8 +90,8 @@ func NewClient(cfg *config.AppConfig, manager config.ConfigManager, logger *zap.
 // Start starts the tunnel client
 func (c *Client) Start() error {
 	c.logger.Info("Starting tunnel client",
-		zap.String("server", c.config.Tunnel.ServerAddress),
-		zap.Int("port", c.config.Tunnel.ServerPort),
+		zap.String("server", c.config.Config.Network.Interface),
+		zap.Int("port", 8080),
 	)
 
 	// TODO: Implement client start
@@ -101,4 +104,40 @@ func (c *Client) Stop() error {
 
 	// TODO: Implement client stop
 	return nil
+}
+
+// tunnelImpl represents a tunnel implementation
+type tunnelImpl struct {
+	conn    net.Conn
+	adapter adapter.Interface
+	config  *config.AppConfig
+	monitor *monitor.Monitor
+}
+
+// New creates a new tunnel
+func New(conn net.Conn, adapter adapter.Interface, cfg *config.AppConfig, monitor *monitor.Monitor) (Tunnel, error) {
+	return &tunnelImpl{
+		conn:    conn,
+		adapter: adapter,
+		config:  cfg,
+		monitor: monitor,
+	}, nil
+}
+
+// Start starts the tunnel
+func (t *tunnelImpl) Start() error {
+	// Wrap adapter in net.Conn interface
+	adapterConn := NewAdapterWrapper(t.adapter)
+
+	// Create transfer to handle data between connection and adapter
+	transfer := NewTransfer(t.conn, adapterConn, t.config, nil)
+	return transfer.Start()
+}
+
+// Stop stops the tunnel
+func (t *tunnelImpl) Stop() error {
+	if err := t.conn.Close(); err != nil {
+		return err
+	}
+	return t.adapter.Close()
 }

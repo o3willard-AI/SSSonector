@@ -3,112 +3,188 @@ package control
 import (
 	"encoding/json"
 	"fmt"
-	"io"
-	"time"
+	"net"
+	"os"
+	"path/filepath"
 
 	"github.com/o3willard-AI/SSSonector/internal/service"
 )
 
-// ControlInterface provides control interface functionality
-type ControlInterface struct {
-	service service.Service
-	reader  io.Reader
-	writer  io.Writer
+// ControlServer represents a control server
+type ControlServer struct {
+	service    service.Service
+	socket     net.Listener
+	socketPath string
 }
 
-// NewControlInterface creates a new control interface
-func NewControlInterface(svc service.Service, r io.Reader, w io.Writer) *ControlInterface {
-	return &ControlInterface{
+// NewControlServer creates a new control server
+func NewControlServer(svc service.Service) (*ControlServer, error) {
+	return &ControlServer{
 		service: svc,
-		reader:  r,
-		writer:  w,
-	}
+	}, nil
 }
 
-// HandleCommand handles a control command
-func (c *ControlInterface) HandleCommand(cmd service.ServiceCommand) (string, error) {
-	var response string
-	var err error
+// SetSocketPath sets the control socket path
+func (c *ControlServer) SetSocketPath(path string) {
+	c.socketPath = path
+}
 
-	switch cmd.Command {
+// handleCommand handles a control command
+func (c *ControlServer) handleCommand(cmd service.ServiceCommand) (*service.ServiceResponse, error) {
+	switch cmd {
 	case service.CmdStatus:
 		status, err := c.service.Status()
 		if err != nil {
-			return "", err
+			return nil, err
 		}
-		response = status
+		return &service.ServiceResponse{
+			Success: true,
+			Data:    status,
+		}, nil
 
 	case service.CmdMetrics:
-		metrics, err := c.service.GetMetrics()
+		metrics, err := c.service.Metrics()
 		if err != nil {
-			return "", err
+			return nil, err
 		}
-		data, err := json.Marshal(metrics)
-		if err != nil {
-			return "", err
-		}
-		response = string(data)
+		return &service.ServiceResponse{
+			Success: true,
+			Data:    metrics,
+		}, nil
 
 	case service.CmdHealth:
-		err = c.service.Health()
-		if err != nil {
-			return "", err
+		if err := c.service.Health(); err != nil {
+			return nil, err
 		}
-		response = "healthy"
+		return &service.ServiceResponse{
+			Success: true,
+			Message: "Service is healthy",
+		}, nil
+
+	case service.CmdStart:
+		if err := c.service.Start(); err != nil {
+			return nil, err
+		}
+		return &service.ServiceResponse{
+			Success: true,
+			Message: "Service started",
+		}, nil
+
+	case service.CmdStop:
+		if err := c.service.Stop(); err != nil {
+			return nil, err
+		}
+		return &service.ServiceResponse{
+			Success: true,
+			Message: "Service stopped",
+		}, nil
+
+	case service.CmdReload:
+		if err := c.service.Reload(); err != nil {
+			return nil, err
+		}
+		return &service.ServiceResponse{
+			Success: true,
+			Message: "Configuration reloaded",
+		}, nil
 
 	default:
-		response, err = c.service.ExecuteCommand(cmd)
-		if err != nil {
-			return "", err
+		return nil, service.NewServiceError(service.ErrInvalidCommand, fmt.Sprintf("Unknown command: %s", cmd))
+	}
+}
+
+// handleConnection handles a client connection
+func (c *ControlServer) handleConnection(conn net.Conn) {
+	defer conn.Close()
+
+	// Read command
+	buf := make([]byte, 4096)
+	n, err := conn.Read(buf)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to read command: %v\n", err)
+		return
+	}
+
+	// Parse command
+	var cmd service.ServiceCommand
+	if err := json.Unmarshal(buf[:n], &cmd); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to parse command: %v\n", err)
+		return
+	}
+
+	// Handle command
+	resp, err := c.handleCommand(cmd)
+	if err != nil {
+		resp = &service.ServiceResponse{
+			Success: false,
+			Message: err.Error(),
 		}
 	}
 
-	return response, nil
-}
-
-// SendResponse sends a response
-func (c *ControlInterface) SendResponse(response string) error {
-	_, err := fmt.Fprintln(c.writer, response)
-	return err
-}
-
-// ReadCommand reads a command
-func (c *ControlInterface) ReadCommand() (service.ServiceCommand, error) {
-	var cmd service.ServiceCommand
-	decoder := json.NewDecoder(c.reader)
-	err := decoder.Decode(&cmd)
+	// Send response
+	data, err := json.Marshal(resp)
 	if err != nil {
-		return cmd, err
+		fmt.Fprintf(os.Stderr, "Failed to marshal response: %v\n", err)
+		return
 	}
-	return cmd, nil
+
+	if _, err := conn.Write(data); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to send response: %v\n", err)
+	}
 }
 
-// Close closes the control interface
-func (c *ControlInterface) Close() error {
-	if closer, ok := c.reader.(io.Closer); ok {
-		closer.Close()
+// Start starts the control server
+func (c *ControlServer) Start() error {
+	if c.socketPath == "" {
+		c.socketPath = filepath.Join(os.TempDir(), "sssonector.sock")
 	}
-	if closer, ok := c.writer.(io.Closer); ok {
-		closer.Close()
+
+	// Create socket directory if it doesn't exist
+	if err := os.MkdirAll(filepath.Dir(c.socketPath), 0755); err != nil {
+		return fmt.Errorf("failed to create socket directory: %w", err)
+	}
+
+	// Remove existing socket if it exists
+	if err := os.Remove(c.socketPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to remove existing socket: %w", err)
+	}
+
+	// Create socket
+	listener, err := net.Listen("unix", c.socketPath)
+	if err != nil {
+		return fmt.Errorf("failed to create control socket: %w", err)
+	}
+	c.socket = listener
+
+	// Handle connections
+	go func() {
+		for {
+			conn, err := c.socket.Accept()
+			if err != nil {
+				if !isClosedError(err) {
+					fmt.Fprintf(os.Stderr, "Failed to accept connection: %v\n", err)
+				}
+				return
+			}
+			go c.handleConnection(conn)
+		}
+	}()
+
+	return nil
+}
+
+// Stop stops the control server
+func (c *ControlServer) Stop() error {
+	if c.socket != nil {
+		return c.socket.Close()
 	}
 	return nil
 }
 
-// WaitForCommand waits for a command with timeout
-func (c *ControlInterface) WaitForCommand(timeout time.Duration) (service.ServiceCommand, error) {
-	done := make(chan struct{})
-	var cmd service.ServiceCommand
-	var err error
-
-	go func() {
-		cmd, err = c.ReadCommand()
-		close(done)
-	}()
-
-	select {
-	case <-done:
-		return cmd, err
-	case <-time.After(timeout):
-		return cmd, fmt.Errorf("timeout waiting for command")
+// isClosedError checks if the error is due to closed connection
+func isClosedError(err error) bool {
+	if err == nil {
+		return false
 	}
+	return err.Error() == "use of closed network connection"
 }
