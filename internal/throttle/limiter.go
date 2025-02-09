@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"sync"
+	"time"
 
 	"golang.org/x/time/rate"
 )
@@ -19,11 +20,17 @@ type Limiter struct {
 
 // NewLimiter creates a new bandwidth limiter
 func NewLimiter(reader io.Reader, writer io.Writer, uploadKbps, downloadKbps int64) *Limiter {
+	// Account for TCP overhead (~5%) and use smaller burst size
+	adjustedDownloadRate := rate.Limit(float64(downloadKbps*1024) * 1.05) // 5% overhead
+	adjustedUploadRate := rate.Limit(float64(uploadKbps*1024) * 1.05)     // 5% overhead
+	downloadBurst := int(float64(downloadKbps*1024) * 0.1)                // 100ms worth of data
+	uploadBurst := int(float64(uploadKbps*1024) * 0.1)                    // 100ms worth of data
+
 	return &Limiter{
 		reader:   reader,
 		writer:   writer,
-		inLimit:  rate.NewLimiter(rate.Limit(downloadKbps*1024), int(downloadKbps*1024)), // burst = 1 second worth
-		outLimit: rate.NewLimiter(rate.Limit(uploadKbps*1024), int(uploadKbps*1024)),     // burst = 1 second worth
+		inLimit:  rate.NewLimiter(adjustedDownloadRate, downloadBurst),
+		outLimit: rate.NewLimiter(adjustedUploadRate, uploadBurst),
 	}
 }
 
@@ -36,8 +43,14 @@ func (l *Limiter) Read(p []byte) (n int, err error) {
 		return l.reader.Read(p)
 	}
 
-	// Wait before reading to ensure we don't exceed the rate limit
-	if err := l.inLimit.WaitN(context.Background(), len(p)); err != nil {
+	// Use context with timeout to prevent indefinite waiting
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := l.inLimit.WaitN(ctx, len(p)); err != nil {
+		if err == context.DeadlineExceeded {
+			return 0, io.ErrShortBuffer // Return recoverable error
+		}
 		return 0, err
 	}
 
@@ -53,8 +66,14 @@ func (l *Limiter) Write(p []byte) (n int, err error) {
 		return l.writer.Write(p)
 	}
 
-	// Wait before writing to ensure we don't exceed the rate limit
-	if err := l.outLimit.WaitN(context.Background(), len(p)); err != nil {
+	// Use context with timeout to prevent indefinite waiting
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := l.outLimit.WaitN(ctx, len(p)); err != nil {
+		if err == context.DeadlineExceeded {
+			return 0, io.ErrShortBuffer // Return recoverable error
+		}
 		return 0, err
 	}
 
@@ -65,16 +84,20 @@ func (l *Limiter) Write(p []byte) (n int, err error) {
 func (l *Limiter) SetUploadLimit(kbps int64) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.outLimit.SetLimit(rate.Limit(kbps * 1024))
-	l.outLimit.SetBurst(int(kbps * 1024))
+	adjustedRate := rate.Limit(float64(kbps*1024) * 1.05) // 5% overhead
+	burst := int(float64(kbps*1024) * 0.1)                // 100ms worth of data
+	l.outLimit.SetLimit(adjustedRate)
+	l.outLimit.SetBurst(burst)
 }
 
 // SetDownloadLimit updates the download bandwidth limit
 func (l *Limiter) SetDownloadLimit(kbps int64) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.inLimit.SetLimit(rate.Limit(kbps * 1024))
-	l.inLimit.SetBurst(int(kbps * 1024))
+	adjustedRate := rate.Limit(float64(kbps*1024) * 1.05) // 5% overhead
+	burst := int(float64(kbps*1024) * 0.1)                // 100ms worth of data
+	l.inLimit.SetLimit(adjustedRate)
+	l.inLimit.SetBurst(burst)
 }
 
 // GetUploadLimit returns the current upload bandwidth limit in Kbps

@@ -1,47 +1,63 @@
 # Rate Limiting Implementation Guide
 
-This document details the rate limiting implementation in SSSonector v2.0.0, including configuration examples and best practices.
+This document details the rate limiting implementation in SSSonector v2.1.0, including configuration examples and best practices.
 
 ## Overview
 
-SSSonector implements a token bucket rate limiting algorithm with the following features:
+SSSonector implements an enhanced rate limiting system with the following features:
 - Independent ingress and egress rate limiting
-- Configurable burst allowance
+- TCP overhead compensation
+- Optimized burst control
 - Per-connection and global limits
 - Dynamic rate adjustment
 - SNMP monitoring integration
 
 ## Implementation Details
 
-### Token Bucket Algorithm
+### Rate Limiting Implementation
 
-The rate limiter uses a token bucket implementation with the following characteristics:
+The rate limiter uses golang.org/x/time/rate with the following enhancements:
 
-1. Token Generation
-   - Tokens are generated at a fixed rate (rate limit)
-   - Each token represents one byte of data transfer
-   - Tokens accumulate up to the burst limit
+1. TCP Overhead Compensation
+   - Automatically adds 5% to configured rates for TCP overhead
+   - Ensures actual throughput matches configured limits
+   - Compensates for protocol headers and retransmissions
 
-2. Packet Processing
-   - Each packet consumes tokens equal to its size
-   - If insufficient tokens are available, the packet is delayed
-   - Bursts are allowed up to the configured burst limit
+2. Burst Control
+   - Burst size set to 100ms worth of data (reduced from 1s)
+   - Provides better latency control and fairness
+   - Prevents large traffic spikes while maintaining performance
+
+3. Timeout Handling
+   - 5-second timeout on rate limit waits
+   - Prevents indefinite blocking on congestion
+   - Returns recoverable errors for retry logic
 
 ### Code Structure
 
 ```go
 type Limiter struct {
-    rate       int64         // Tokens per second
-    burst      int64         // Maximum burst size
-    tokens     int64         // Current token count
-    lastUpdate time.Time     // Last token update time
-    mu         sync.Mutex    // Mutex for thread safety
+    reader   io.Reader
+    writer   io.Writer
+    inLimit  *rate.Limiter  // Download rate limiter
+    outLimit *rate.Limiter  // Upload rate limiter
+    mu       sync.RWMutex   // Thread safety for updates
 }
 
-type RateLimiter interface {
-    Allow(n int64) bool      // Check if n bytes can be transferred
-    Wait(ctx context.Context, n int64) error  // Wait for n tokens
-    Update(newRate int64)    // Update rate limit
+// NewLimiter creates a rate limiter with TCP overhead compensation
+func NewLimiter(reader io.Reader, writer io.Writer, uploadKbps, downloadKbps int64) *Limiter {
+    const (
+        tcpOverhead = 1.05  // 5% overhead
+        burstFactor = 0.1   // 100ms worth of data
+    )
+    return &Limiter{
+        reader:   reader,
+        writer:   writer,
+        inLimit:  rate.NewLimiter(rate.Limit(downloadKbps*1024*tcpOverhead), 
+                                 int(downloadKbps*1024*burstFactor)),
+        outLimit: rate.NewLimiter(rate.Limit(uploadKbps*1024*tcpOverhead), 
+                                 int(uploadKbps*1024*burstFactor)),
+    }
 }
 ```
 
@@ -51,18 +67,18 @@ type RateLimiter interface {
 ```yaml
 throttle:
   enabled: true
-  rate_limit: 1048576    # 1 MB/s
-  burst_limit: 2097152   # 2 MB burst
+  rate_limit: 1048576    # 1 MB/s (actual: ~1.05 MB/s with TCP overhead)
+  burst_limit: 104858    # 100ms worth of data
 ```
 
 ### Example 2: Asymmetric Rate Limiting
 ```yaml
 throttle:
   enabled: true
-  upload_rate: 5242880   # 5 MB/s upload
-  upload_burst: 10485760 # 10 MB upload burst
-  download_rate: 10485760 # 10 MB/s download
-  download_burst: 20971520 # 20 MB download burst
+  upload_rate: 5242880   # 5 MB/s upload (actual: ~5.25 MB/s)
+  upload_burst: 524288   # 100ms worth of data
+  download_rate: 10485760 # 10 MB/s download (actual: ~10.5 MB/s)
+  download_burst: 1048576 # 100ms worth of data
   per_connection: true
 ```
 
@@ -71,7 +87,7 @@ throttle:
 throttle:
   enabled: true
   rate_limit: 1048576    # Base rate: 1 MB/s
-  burst_limit: 2097152   # Base burst: 2 MB
+  burst_limit: 104858    # 100ms worth of data
   dynamic:
     enabled: true
     min_rate: 524288     # Minimum: 512 KB/s
@@ -92,11 +108,11 @@ tunnel:
   max_clients: 10
 throttle:
   enabled: true
-  global_rate: 52428800  # 50 MB/s total
-  global_burst: 104857600 # 100 MB burst total
+  global_rate: 52428800  # 50 MB/s total (actual: ~52.5 MB/s)
+  global_burst: 5242880  # 100ms worth of data
   per_client:
     rate: 5242880        # 5 MB/s per client
-    burst: 10485760      # 10 MB burst per client
+    burst: 524288        # 100ms worth of data
   fair_queue: true       # Enable fair queuing
 monitor:
   enabled: true
@@ -113,8 +129,8 @@ tunnel:
   server_port: 8443
 throttle:
   enabled: true
-  rate_limit: 104857600  # 100 MB/s
-  burst_limit: 209715200 # 200 MB burst
+  rate_limit: 104857600  # 100 MB/s (actual: ~105 MB/s)
+  burst_limit: 10485760  # 100ms worth of data
   buffer:
     size: 65536          # 64 KB buffer
     count: 1000          # 1000 buffers in pool
@@ -124,25 +140,6 @@ throttle:
 monitor:
   enabled: true
   update_interval: 1
-```
-
-### Example 3: Adaptive Rate Limiting
-```yaml
-throttle:
-  enabled: true
-  adaptive:
-    enabled: true
-    target_latency: "50ms"
-    max_rate: 104857600   # 100 MB/s
-    min_rate: 1048576     # 1 MB/s
-    measurement_window: "1s"
-    adjustment_interval: "100ms"
-    increase_factor: 1.1   # 10% increase
-    decrease_factor: 0.9   # 10% decrease
-  monitoring:
-    latency_threshold: "100ms"
-    congestion_threshold: 0.8
-    alert_interval: "1m"
 ```
 
 ## Performance Tuning
@@ -181,40 +178,26 @@ monitor:
       limit_hits: .1.3.6.1.4.1.54321.1.3.3
 ```
 
-### Prometheus Integration
-```yaml
-monitor:
-  prometheus:
-    enabled: true
-    port: 9091
-    metrics:
-      - name: "sssonector_rate_current"
-        help: "Current transfer rate"
-        type: "gauge"
-      - name: "sssonector_rate_limit_hits"
-        help: "Number of rate limit hits"
-        type: "counter"
-```
-
 ## Troubleshooting
 
 ### Common Issues
 
-1. Poor Performance
+1. Rate Limiting Behavior
 ```bash
-# Check current rate
+# Check current rate (includes TCP overhead)
 snmpget -v2c -c public localhost:10161 .1.3.6.1.4.1.54321.1.3.1.0
 
-# Monitor rate limit hits
-watch -n 1 'snmpget -v2c -c public localhost:10161 .1.3.6.1.4.1.54321.1.3.3.0'
+# Monitor actual throughput
+iperf3 -c <server> -t 30 -J
 
-# View detailed metrics
+# Verify TCP overhead compensation
+# Actual throughput should be ~5% higher than configured rate
 sssonector -metrics
 ```
 
 2. High Latency
 ```bash
-# Monitor buffer usage
+# Monitor burst usage
 snmpwalk -v2c -c public localhost:10161 .1.3.6.1.4.1.54321.1.5
 
 # Check system resources
@@ -233,16 +216,16 @@ tail -f /var/log/sssonector/rate.log
 ## Best Practices
 
 1. Rate Limit Selection
-   - Start with conservative limits
+   - Account for 5% TCP overhead in planning
    - Monitor actual usage patterns
    - Adjust based on network capacity
    - Consider client requirements
 
 2. Burst Configuration
-   - Set burst limit 2-3x base rate
-   - Monitor burst utilization
-   - Adjust based on application needs
-   - Consider network latency
+   - Use 100ms worth of data for burst size
+   - Smaller bursts provide better latency control
+   - TCP overhead is automatically compensated
+   - Monitor actual throughput with SNMP
 
 3. Performance Optimization
    - Use appropriate buffer sizes
