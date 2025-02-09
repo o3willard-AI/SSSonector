@@ -2,10 +2,9 @@ package throttle
 
 import (
 	"io"
-	"time"
 )
 
-// RateLimitedReader wraps an io.Reader with rate limiting
+// RateLimitedReader implements io.Reader with rate limiting
 type RateLimitedReader struct {
 	reader io.Reader
 	bucket *TokenBucket
@@ -15,20 +14,21 @@ type RateLimitedReader struct {
 func NewRateLimitedReader(reader io.Reader, bytesPerSecond float64) *RateLimitedReader {
 	return &RateLimitedReader{
 		reader: reader,
-		bucket: NewTokenBucket(bytesPerSecond, bytesPerSecond), // capacity = 1 second worth
+		bucket: NewTokenBucket(bytesPerSecond, bytesPerSecond),
 	}
 }
 
-// Read implements io.Reader with rate limiting
+// Read implements io.Reader
 func (r *RateLimitedReader) Read(p []byte) (n int, err error) {
+	// Take tokens for the requested bytes
 	if !r.bucket.Take(float64(len(p))) {
-		time.Sleep(time.Second / 10) // Sleep briefly and try again
-		return 0, nil
+		r.bucket.WaitN(float64(len(p)))
 	}
+
 	return r.reader.Read(p)
 }
 
-// RateLimitedWriter wraps an io.Writer with rate limiting
+// RateLimitedWriter implements io.Writer with rate limiting
 type RateLimitedWriter struct {
 	writer io.Writer
 	bucket *TokenBucket
@@ -38,15 +38,30 @@ type RateLimitedWriter struct {
 func NewRateLimitedWriter(writer io.Writer, bytesPerSecond float64) *RateLimitedWriter {
 	return &RateLimitedWriter{
 		writer: writer,
-		bucket: NewTokenBucket(bytesPerSecond, bytesPerSecond), // capacity = 1 second worth
+		bucket: NewTokenBucket(bytesPerSecond, bytesPerSecond),
 	}
 }
 
-// Write implements io.Writer with rate limiting
+// Write implements io.Writer
 func (w *RateLimitedWriter) Write(p []byte) (n int, err error) {
+	// Take tokens for the bytes to write
 	if !w.bucket.Take(float64(len(p))) {
-		time.Sleep(time.Second / 10) // Sleep briefly and try again
-		return 0, nil
+		w.bucket.WaitN(float64(len(p)))
 	}
+
 	return w.writer.Write(p)
+}
+
+// RateLimitedReadWriter implements io.ReadWriter with rate limiting
+type RateLimitedReadWriter struct {
+	*RateLimitedReader
+	*RateLimitedWriter
+}
+
+// NewRateLimitedReadWriter creates a new rate-limited read-writer
+func NewRateLimitedReadWriter(rw io.ReadWriter, bytesPerSecond float64) *RateLimitedReadWriter {
+	return &RateLimitedReadWriter{
+		RateLimitedReader: NewRateLimitedReader(rw, bytesPerSecond),
+		RateLimitedWriter: NewRateLimitedWriter(rw, bytesPerSecond),
+	}
 }
