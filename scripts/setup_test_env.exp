@@ -1,0 +1,48 @@
+#!/usr/bin/expect
+
+set timeout 30
+set password "101abn"
+
+# Connect to monitor node
+spawn ssh sblanken@192.168.50.212
+
+expect "password:"
+send "$password\r"
+expect "$ "
+
+# Generate SSH key if it doesn't exist
+send "if [ ! -f ~/.ssh/id_rsa ]; then ssh-keygen -t rsa -N \"\" -f ~/.ssh/id_rsa; fi\r"
+expect "$ "
+
+# Copy SSH key to server node
+send "ssh-copy-id -i ~/.ssh/id_rsa.pub sblanken@192.168.50.210\r"
+expect "password:"
+send "$password\r"
+expect "$ "
+
+# Copy SSH key to client node
+send "ssh-copy-id -i ~/.ssh/id_rsa.pub sblanken@192.168.50.211\r"
+expect "password:"
+send "$password\r"
+expect "$ "
+
+# Create test directories and set permissions
+send "ssh sblanken@192.168.50.210 'sudo mkdir -p /home/test/data && sudo chown -R sblanken:sblanken /home/test'\r"
+expect "password:"
+send "$password\r"
+expect "$ "
+
+send "ssh sblanken@192.168.50.211 'sudo mkdir -p /home/test/data && sudo chown -R sblanken:sblanken /home/test'\r"
+expect "password:"
+send "$password\r"
+expect "$ "
+
+# Copy test data
+send "scp /home/test/data/test_100mb.dat sblanken@192.168.50.210:/home/test/data/\r"
+expect "$ "
+
+send "scp /home/test/data/test_100mb.dat sblanken@192.168.50.211:/home/test/data/\r"
+expect "$ "
+
+send "exit\r"
+expect eof

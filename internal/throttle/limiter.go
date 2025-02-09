@@ -7,15 +7,40 @@ import (
 	"time"
 
 	"golang.org/x/time/rate"
+
+	"github.com/o3willard-AI/SSSonector/internal/config"
 )
 
-// Limiter implements bandwidth throttling
+// Limiter implements bandwidth throttling and config.ConfigWatcher
 type Limiter struct {
 	reader   io.Reader
 	writer   io.Writer
 	inLimit  *rate.Limiter
 	outLimit *rate.Limiter
 	mu       sync.RWMutex
+	enabled  bool
+}
+
+// OnConfigUpdate implements config.ConfigWatcher
+func (l *Limiter) OnConfigUpdate(cfg *config.Config) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	l.enabled = cfg.Throttle.Enabled
+	if l.enabled {
+		// Update rate limits with new configuration
+		adjustedUploadRate := rate.Limit(float64(cfg.Tunnel.UploadKbps*1024) * 1.05)
+		adjustedDownloadRate := rate.Limit(float64(cfg.Tunnel.DownloadKbps*1024) * 1.05)
+		uploadBurst := int(float64(cfg.Tunnel.UploadKbps*1024) * 0.1)
+		downloadBurst := int(float64(cfg.Tunnel.DownloadKbps*1024) * 0.1)
+
+		l.outLimit.SetLimit(adjustedUploadRate)
+		l.outLimit.SetBurst(uploadBurst)
+		l.inLimit.SetLimit(adjustedDownloadRate)
+		l.inLimit.SetBurst(downloadBurst)
+	}
+
+	return nil
 }
 
 // NewLimiter creates a new bandwidth limiter
@@ -31,6 +56,7 @@ func NewLimiter(reader io.Reader, writer io.Writer, uploadKbps, downloadKbps int
 		writer:   writer,
 		inLimit:  rate.NewLimiter(adjustedDownloadRate, downloadBurst),
 		outLimit: rate.NewLimiter(adjustedUploadRate, uploadBurst),
+		enabled:  true, // Enable throttling by default
 	}
 }
 
@@ -39,7 +65,7 @@ func (l *Limiter) Read(p []byte) (n int, err error) {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 
-	if l.inLimit == nil {
+	if !l.enabled || l.inLimit == nil {
 		return l.reader.Read(p)
 	}
 
@@ -62,7 +88,7 @@ func (l *Limiter) Write(p []byte) (n int, err error) {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 
-	if l.outLimit == nil {
+	if !l.enabled || l.outLimit == nil {
 		return l.writer.Write(p)
 	}
 

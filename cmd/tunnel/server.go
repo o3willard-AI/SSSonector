@@ -16,36 +16,48 @@ import (
 
 // Server represents a tunnel server
 type Server struct {
-	config   *config.Config
-	listener net.Listener
-	monitor  *monitor.Monitor
+	configManager *config.ConfigManager
+	listener      net.Listener
+	monitor       *monitor.Monitor
+	done          chan struct{}
 }
 
 // NewServer creates a new tunnel server
-func NewServer(cfg *config.Config) (*Server, error) {
-	// Initialize monitoring
+func NewServer(configPath string) (*Server, error) {
+	// Initialize monitoring with default config first
+	defaultCfg := config.DefaultConfig()
 	monCfg := &monitor.Config{
-		LogFile:       cfg.Monitor.LogFile,
-		SNMPEnabled:   cfg.Monitor.SNMPEnabled,
-		SNMPPort:      cfg.Monitor.SNMPPort,
-		SNMPCommunity: cfg.Monitor.SNMPCommunity,
-		SNMPAddress:   cfg.Monitor.SNMPAddress,
+		LogFile:       defaultCfg.Monitor.LogFile,
+		SNMPEnabled:   defaultCfg.Monitor.SNMPEnabled,
+		SNMPPort:      defaultCfg.Monitor.SNMPPort,
+		SNMPCommunity: defaultCfg.Monitor.SNMPCommunity,
+		SNMPAddress:   defaultCfg.Monitor.SNMPAddress,
 	}
 	mon, err := monitor.New(monCfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize monitoring: %w", err)
 	}
 
+	// Create config manager
+	configManager, err := config.NewConfigManager(configPath, mon.Logger())
+	if err != nil {
+		mon.Stop()
+		return nil, fmt.Errorf("failed to create config manager: %w", err)
+	}
+
 	return &Server{
-		config:  cfg,
-		monitor: mon,
+		configManager: configManager,
+		monitor:       mon,
+		done:          make(chan struct{}),
 	}, nil
 }
 
 // Start starts the tunnel server
 func (s *Server) Start() error {
+	cfg := s.configManager.GetConfig()
+
 	// Create TLS config
-	cert, err := tls.LoadX509KeyPair(s.config.Tunnel.CertFile, s.config.Tunnel.KeyFile)
+	cert, err := tls.LoadX509KeyPair(cfg.Tunnel.CertFile, cfg.Tunnel.KeyFile)
 	if err != nil {
 		return fmt.Errorf("failed to load certificates: %w", err)
 	}
@@ -56,7 +68,7 @@ func (s *Server) Start() error {
 	}
 
 	// Create TLS listener
-	listenAddr := fmt.Sprintf("%s:%d", s.config.Tunnel.ListenAddress, s.config.Tunnel.ListenPort)
+	listenAddr := fmt.Sprintf("%s:%d", cfg.Tunnel.ListenAddress, cfg.Tunnel.ListenPort)
 	listener, err := tls.Listen("tcp", listenAddr, tlsConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create listener: %w", err)
@@ -70,29 +82,33 @@ func (s *Server) Start() error {
 
 	s.monitor.Info("Server started",
 		zap.String("address", listenAddr),
-		zap.Bool("snmp_enabled", s.config.Monitor.SNMPEnabled))
+		zap.Bool("snmp_enabled", cfg.Monitor.SNMPEnabled))
 
 	// Accept connections
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			s.monitor.Error("Failed to accept connection", zap.Error(err))
-			continue
-		}
+	go s.acceptConnections(listener)
 
-		go s.handleConnection(conn)
-	}
+	// Wait for shutdown
+	<-s.done
+	return nil
 }
 
 // Stop stops the tunnel server
 func (s *Server) Stop() error {
 	s.monitor.Info("Stopping tunnel server")
 
+	// Signal shutdown
+	close(s.done)
+
 	// Close listener first to stop accepting new connections
 	if s.listener != nil {
 		if err := s.listener.Close(); err != nil {
 			s.monitor.Error("Failed to close listener", zap.Error(err))
 		}
+	}
+
+	// Stop config manager
+	if err := s.configManager.Close(); err != nil {
+		s.monitor.Error("Failed to close config manager", zap.Error(err))
 	}
 
 	// Stop monitoring last to ensure all cleanup metrics are collected
@@ -104,10 +120,35 @@ func (s *Server) Stop() error {
 	return nil
 }
 
+// acceptConnections handles incoming connections
+func (s *Server) acceptConnections(listener net.Listener) {
+	for {
+		select {
+		case <-s.done:
+			return
+		default:
+			conn, err := listener.Accept()
+			if err != nil {
+				if !isClosedError(err) {
+					s.monitor.Error("Failed to accept connection", zap.Error(err))
+				}
+				continue
+			}
+			go s.handleConnection(conn)
+		}
+	}
+}
+
+// isClosedError checks if the error is due to closed listener
+func isClosedError(err error) bool {
+	return err.Error() == "use of closed network connection"
+}
+
 // handleConnection handles a client connection
 func (s *Server) handleConnection(conn net.Conn) {
 	defer conn.Close()
 
+	cfg := s.configManager.GetConfig()
 	remoteAddr := conn.RemoteAddr().String()
 	s.monitor.Info("New client connection", zap.String("remote_addr", remoteAddr))
 
@@ -140,8 +181,8 @@ func (s *Server) handleConnection(conn net.Conn) {
 	// Configure adapter
 	adapterCfg := &adapter.Config{
 		Name:    tunName,
-		Address: s.config.Network.Address,
-		MTU:     s.config.Network.MTU,
+		Address: cfg.Network.Address,
+		MTU:     cfg.Network.MTU,
 	}
 	if err := iface.Configure(adapterCfg); err != nil {
 		s.monitor.Error("Failed to configure adapter",
@@ -152,13 +193,16 @@ func (s *Server) handleConnection(conn net.Conn) {
 
 	s.monitor.Info("TUN interface configured",
 		zap.String("name", tunName),
-		zap.String("address", s.config.Network.Address),
-		zap.Int("mtu", s.config.Network.MTU))
+		zap.String("address", cfg.Network.Address),
+		zap.Int("mtu", cfg.Network.MTU))
 
-	// Create throttler
+	// Create throttler with hot reload support
 	throttler := throttle.NewLimiter(conn, conn,
-		s.config.Tunnel.UploadKbps*1024,
-		s.config.Tunnel.DownloadKbps*1024)
+		cfg.Tunnel.UploadKbps*1024,
+		cfg.Tunnel.DownloadKbps*1024)
+
+	// Register throttler for config updates
+	s.configManager.RegisterWatcher(throttler)
 
 	// Create and start tunnel
 	tun, err := tunnel.New(conn, iface, throttler, s.monitor)

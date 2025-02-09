@@ -63,30 +63,65 @@ func main() {
 		cfg.UpdateCertificatePaths(keyFile)
 	}
 
-	// Create signal channel for graceful shutdown
+	// Create signal channel for graceful shutdown and reload
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 
 	// Start server or client based on mode
-	var instance interface {
-		Start() error
-		Stop() error
-	}
-
-	var initErr error
+	// Create instance based on mode
 	switch cfg.Mode {
 	case "server":
-		instance, initErr = NewServer(cfg)
+		if err := runServer(configFile, sigCh); err != nil {
+			log.Fatalf("Server error: %v", err)
+		}
 	case "client":
-		instance, initErr = NewClient(cfg)
+		instance, initErr := NewClient(cfg)
+		if initErr != nil {
+			log.Fatalf("Failed to create client: %v", initErr)
+		}
+		if err := runInstance(instance, sigCh); err != nil {
+			log.Fatalf("Client error: %v", err)
+		}
 	default:
 		log.Fatalf("Invalid mode: %s", cfg.Mode)
 	}
+}
 
-	if initErr != nil {
-		log.Fatalf("Failed to create %s: %v", cfg.Mode, initErr)
+func runServer(configPath string, sigCh chan os.Signal) error {
+	// Create server with config path for hot reloading
+	server, err := NewServer(configPath)
+	if err != nil {
+		return fmt.Errorf("failed to create server: %w", err)
 	}
 
+	// Start server in a goroutine
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- server.Start()
+	}()
+
+	// Wait for signal or error
+	for {
+		select {
+		case sig := <-sigCh:
+			switch sig {
+			case syscall.SIGHUP:
+				fmt.Println("\nReloading configuration...")
+				// ConfigManager will handle the reload
+			case syscall.SIGINT, syscall.SIGTERM:
+				fmt.Println("\nShutting down...")
+				return server.Stop()
+			}
+		case err := <-errCh:
+			return err
+		}
+	}
+}
+
+func runInstance(instance interface {
+	Start() error
+	Stop() error
+}, sigCh chan os.Signal) error {
 	// Start instance in a goroutine
 	errCh := make(chan error, 1)
 	go func() {
@@ -97,11 +132,9 @@ func main() {
 	select {
 	case <-sigCh:
 		fmt.Println("\nShutting down...")
-		instance.Stop()
-	case runErr := <-errCh:
-		if runErr != nil {
-			log.Fatalf("Error running %s: %v", cfg.Mode, runErr)
-		}
+		return instance.Stop()
+	case err := <-errCh:
+		return err
 	}
 }
 

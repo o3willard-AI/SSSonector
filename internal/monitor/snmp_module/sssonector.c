@@ -7,18 +7,18 @@
 #include <time.h>
 
 // Base OID for SSL-TUNNEL-MIB (enterprises.2021.10)
-static oid sssonector_oid[] = {1,3,6,1,4,1,2021,10};
+static oid sssonector_oid[] = {1,3,6,1,4,1,2021,54321};
 
 // Stats OIDs (enterprises.2021.10.1.3.X)
-static oid bytes_received_oid[] = {1,3,6,1,4,1,2021,10,1,3,1,0};  // bytesReceived
-static oid bytes_sent_oid[] = {1,3,6,1,4,1,2021,10,1,3,2,0};      // bytesSent
-static oid packets_lost_oid[] = {1,3,6,1,4,1,2021,10,1,3,3,0};    // packetsLost
-static oid latency_oid[] = {1,3,6,1,4,1,2021,10,1,3,4,0};         // latency
-static oid uptime_oid[] = {1,3,6,1,4,1,2021,10,1,3,5,0};          // uptime
-static oid cpu_usage_oid[] = {1,3,6,1,4,1,2021,10,1,3,6,0};       // cpuUsage
-static oid memory_usage_oid[] = {1,3,6,1,4,1,2021,10,1,3,7,0};    // memoryUsage
-static oid active_connections_oid[] = {1,3,6,1,4,1,2021,10,1,3,8,0}; // activeConnections
-static oid total_connections_oid[] = {1,3,6,1,4,1,2021,10,1,3,9,0};  // totalConnections
+static oid bytes_received_oid[] = {1,3,6,1,4,1,2021,54321,1,3,1};
+static oid bytes_sent_oid[] = {1,3,6,1,4,1,2021,54321,1,3,2};
+static oid packets_lost_oid[] = {1,3,6,1,4,1,2021,54321,1,3,3};
+static oid latency_oid[] = {1,3,6,1,4,1,2021,54321,1,3,4};
+static oid uptime_oid[] = {1,3,6,1,4,1,2021,54321,1,3,5};
+static oid cpu_usage_oid[] = {1,3,6,1,4,1,2021,54321,1,3,6};
+static oid memory_usage_oid[] = {1,3,6,1,4,1,2021,54321,1,3,7};
+static oid active_connections_oid[] = {1,3,6,1,4,1,2021,54321,1,3,8};
+static oid total_connections_oid[] = {1,3,6,1,4,1,2021,54321,1,3,9};
 
 // Shared memory key for metrics
 #define SHM_KEY 0x534E4D50  // "SNMP" in hex
@@ -65,6 +65,7 @@ static int init_shared_memory(void) {
     metrics->active_connections = 5;
     metrics->total_connections = 42;
     
+    snmp_log(LOG_INFO, "Shared memory initialized with test data\n");
     return 1;
 }
 
@@ -83,6 +84,7 @@ static int handle_bytes_received(netsnmp_mib_handler *handler,
                                netsnmp_handler_registration *reginfo,
                                netsnmp_agent_request_info *reqinfo,
                                netsnmp_request_info *requests) {
+    snmp_log(LOG_INFO, "Handling bytes_received request\n");
     if (!metrics) return SNMP_ERR_GENERR;
     if (reqinfo->mode == MODE_GET) {
         return handle_counter64(metrics->bytes_received, requests);
@@ -94,6 +96,7 @@ static int handle_bytes_sent(netsnmp_mib_handler *handler,
                            netsnmp_handler_registration *reginfo,
                            netsnmp_agent_request_info *reqinfo,
                            netsnmp_request_info *requests) {
+    snmp_log(LOG_INFO, "Handling bytes_sent request\n");
     if (!metrics) return SNMP_ERR_GENERR;
     if (reqinfo->mode == MODE_GET) {
         return handle_counter64(metrics->bytes_sent, requests);
@@ -105,6 +108,7 @@ static int handle_packets_lost(netsnmp_mib_handler *handler,
                              netsnmp_handler_registration *reginfo,
                              netsnmp_agent_request_info *reqinfo,
                              netsnmp_request_info *requests) {
+    snmp_log(LOG_INFO, "Handling packets_lost request\n");
     if (!metrics) return SNMP_ERR_GENERR;
     if (reqinfo->mode == MODE_GET) {
         return handle_counter64(metrics->packets_lost, requests);
@@ -116,6 +120,7 @@ static int handle_latency(netsnmp_mib_handler *handler,
                          netsnmp_handler_registration *reginfo,
                          netsnmp_agent_request_info *reqinfo,
                          netsnmp_request_info *requests) {
+    snmp_log(LOG_INFO, "Handling latency request\n");
     if (!metrics) return SNMP_ERR_GENERR;
     if (reqinfo->mode == MODE_GET) {
         snmp_set_var_typed_value(requests->requestvb, ASN_INTEGER,
@@ -130,6 +135,7 @@ static int handle_uptime(netsnmp_mib_handler *handler,
                         netsnmp_handler_registration *reginfo,
                         netsnmp_agent_request_info *reqinfo,
                         netsnmp_request_info *requests) {
+    snmp_log(LOG_INFO, "Handling uptime request\n");
     if (!metrics) return SNMP_ERR_GENERR;
     if (reqinfo->mode == MODE_GET) {
         metrics->uptime = time(NULL) - metrics->start_time;
@@ -145,6 +151,7 @@ static int handle_cpu_usage(netsnmp_mib_handler *handler,
                           netsnmp_handler_registration *reginfo,
                           netsnmp_agent_request_info *reqinfo,
                           netsnmp_request_info *requests) {
+    snmp_log(LOG_INFO, "Handling cpu_usage request\n");
     if (!metrics) return SNMP_ERR_GENERR;
     if (reqinfo->mode == MODE_GET) {
         snmp_set_var_typed_value(requests->requestvb, ASN_OCTET_STR,
@@ -159,6 +166,7 @@ static int handle_memory_usage(netsnmp_mib_handler *handler,
                              netsnmp_handler_registration *reginfo,
                              netsnmp_agent_request_info *reqinfo,
                              netsnmp_request_info *requests) {
+    snmp_log(LOG_INFO, "Handling memory_usage request\n");
     if (!metrics) return SNMP_ERR_GENERR;
     if (reqinfo->mode == MODE_GET) {
         snmp_set_var_typed_value(requests->requestvb, ASN_OCTET_STR,
@@ -173,6 +181,7 @@ static int handle_active_connections(netsnmp_mib_handler *handler,
                                    netsnmp_handler_registration *reginfo,
                                    netsnmp_agent_request_info *reqinfo,
                                    netsnmp_request_info *requests) {
+    snmp_log(LOG_INFO, "Handling active_connections request\n");
     if (!metrics) return SNMP_ERR_GENERR;
     if (reqinfo->mode == MODE_GET) {
         snmp_set_var_typed_value(requests->requestvb, ASN_GAUGE,
@@ -187,6 +196,7 @@ static int handle_total_connections(netsnmp_mib_handler *handler,
                                   netsnmp_handler_registration *reginfo,
                                   netsnmp_agent_request_info *reqinfo,
                                   netsnmp_request_info *requests) {
+    snmp_log(LOG_INFO, "Handling total_connections request\n");
     if (!metrics) return SNMP_ERR_GENERR;
     if (reqinfo->mode == MODE_GET) {
         return handle_counter64(metrics->total_connections, requests);
@@ -196,56 +206,78 @@ static int handle_total_connections(netsnmp_mib_handler *handler,
 
 // Initialize the module
 void init_sssonector(void) {
+    snmp_log(LOG_INFO, "Initializing SSonector SNMP Module\n");
+    
     if (!init_shared_memory()) {
         snmp_log(LOG_ERR, "Failed to initialize shared memory\n");
         return;
     }
 
     // Register all metrics
-    netsnmp_register_scalar(
-        netsnmp_create_handler_registration("bytesReceived",
-            handle_bytes_received, bytes_received_oid,
-            OID_LENGTH(bytes_received_oid), HANDLER_CAN_RONLY));
+    netsnmp_handler_registration *reg;
 
-    netsnmp_register_scalar(
-        netsnmp_create_handler_registration("bytesSent",
-            handle_bytes_sent, bytes_sent_oid,
-            OID_LENGTH(bytes_sent_oid), HANDLER_CAN_RONLY));
+    reg = netsnmp_create_handler_registration(
+        "bytesReceived", handle_bytes_received,
+        bytes_received_oid, OID_LENGTH(bytes_received_oid),
+        HANDLER_CAN_RONLY);
+    if (netsnmp_register_scalar(reg) != MIB_REGISTERED_OK)
+        snmp_log(LOG_ERR, "Failed to register bytesReceived\n");
 
-    netsnmp_register_scalar(
-        netsnmp_create_handler_registration("packetsLost",
-            handle_packets_lost, packets_lost_oid,
-            OID_LENGTH(packets_lost_oid), HANDLER_CAN_RONLY));
+    reg = netsnmp_create_handler_registration(
+        "bytesSent", handle_bytes_sent,
+        bytes_sent_oid, OID_LENGTH(bytes_sent_oid),
+        HANDLER_CAN_RONLY);
+    if (netsnmp_register_scalar(reg) != MIB_REGISTERED_OK)
+        snmp_log(LOG_ERR, "Failed to register bytesSent\n");
 
-    netsnmp_register_scalar(
-        netsnmp_create_handler_registration("latency",
-            handle_latency, latency_oid,
-            OID_LENGTH(latency_oid), HANDLER_CAN_RONLY));
+    reg = netsnmp_create_handler_registration(
+        "packetsLost", handle_packets_lost,
+        packets_lost_oid, OID_LENGTH(packets_lost_oid),
+        HANDLER_CAN_RONLY);
+    if (netsnmp_register_scalar(reg) != MIB_REGISTERED_OK)
+        snmp_log(LOG_ERR, "Failed to register packetsLost\n");
 
-    netsnmp_register_scalar(
-        netsnmp_create_handler_registration("uptime",
-            handle_uptime, uptime_oid,
-            OID_LENGTH(uptime_oid), HANDLER_CAN_RONLY));
+    reg = netsnmp_create_handler_registration(
+        "latency", handle_latency,
+        latency_oid, OID_LENGTH(latency_oid),
+        HANDLER_CAN_RONLY);
+    if (netsnmp_register_scalar(reg) != MIB_REGISTERED_OK)
+        snmp_log(LOG_ERR, "Failed to register latency\n");
 
-    netsnmp_register_scalar(
-        netsnmp_create_handler_registration("cpuUsage",
-            handle_cpu_usage, cpu_usage_oid,
-            OID_LENGTH(cpu_usage_oid), HANDLER_CAN_RONLY));
+    reg = netsnmp_create_handler_registration(
+        "uptime", handle_uptime,
+        uptime_oid, OID_LENGTH(uptime_oid),
+        HANDLER_CAN_RONLY);
+    if (netsnmp_register_scalar(reg) != MIB_REGISTERED_OK)
+        snmp_log(LOG_ERR, "Failed to register uptime\n");
 
-    netsnmp_register_scalar(
-        netsnmp_create_handler_registration("memoryUsage",
-            handle_memory_usage, memory_usage_oid,
-            OID_LENGTH(memory_usage_oid), HANDLER_CAN_RONLY));
+    reg = netsnmp_create_handler_registration(
+        "cpuUsage", handle_cpu_usage,
+        cpu_usage_oid, OID_LENGTH(cpu_usage_oid),
+        HANDLER_CAN_RONLY);
+    if (netsnmp_register_scalar(reg) != MIB_REGISTERED_OK)
+        snmp_log(LOG_ERR, "Failed to register cpuUsage\n");
 
-    netsnmp_register_scalar(
-        netsnmp_create_handler_registration("activeConnections",
-            handle_active_connections, active_connections_oid,
-            OID_LENGTH(active_connections_oid), HANDLER_CAN_RONLY));
+    reg = netsnmp_create_handler_registration(
+        "memoryUsage", handle_memory_usage,
+        memory_usage_oid, OID_LENGTH(memory_usage_oid),
+        HANDLER_CAN_RONLY);
+    if (netsnmp_register_scalar(reg) != MIB_REGISTERED_OK)
+        snmp_log(LOG_ERR, "Failed to register memoryUsage\n");
 
-    netsnmp_register_scalar(
-        netsnmp_create_handler_registration("totalConnections",
-            handle_total_connections, total_connections_oid,
-            OID_LENGTH(total_connections_oid), HANDLER_CAN_RONLY));
+    reg = netsnmp_create_handler_registration(
+        "activeConnections", handle_active_connections,
+        active_connections_oid, OID_LENGTH(active_connections_oid),
+        HANDLER_CAN_RONLY);
+    if (netsnmp_register_scalar(reg) != MIB_REGISTERED_OK)
+        snmp_log(LOG_ERR, "Failed to register activeConnections\n");
 
-    snmp_log(LOG_INFO, "SSonector SNMP Module initialized with MIB support\n");
+    reg = netsnmp_create_handler_registration(
+        "totalConnections", handle_total_connections,
+        total_connections_oid, OID_LENGTH(total_connections_oid),
+        HANDLER_CAN_RONLY);
+    if (netsnmp_register_scalar(reg) != MIB_REGISTERED_OK)
+        snmp_log(LOG_ERR, "Failed to register totalConnections\n");
+
+    snmp_log(LOG_INFO, "SSonector SNMP Module initialization complete\n");
 }
