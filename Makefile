@@ -1,102 +1,190 @@
-.PHONY: all build clean dist install test deb rpm win mac
+# SSSonector Makefile
 
-all: build
+# Build variables
+BINARY_NAME=sssonector
+VERSION=$(shell git describe --tags --always --dirty)
+BUILD_TIME=$(shell date -u '+%Y-%m-%d_%H:%M:%S')
+COMMIT_HASH=$(shell git rev-parse HEAD)
+LDFLAGS=-ldflags "-X main.Version=$(VERSION) -X main.BuildTime=$(BUILD_TIME) -X main.CommitHash=$(COMMIT_HASH)"
 
-build:
-	export GOPROXY=https://proxy.golang.org,direct && \
-	go get gopkg.in/yaml.v2@v2.4.0 && \
-	go get github.com/sirupsen/logrus@v1.9.3 && \
-	go get golang.org/x/crypto@v0.17.0 && \
-	go get golang.org/x/sys@v0.15.0 && \
-	go mod download && \
-	go mod tidy && \
-	mkdir -p build && \
-	go build -o build/sssonector ./cmd/tunnel && \
-	chmod 755 build/sssonector
+# Go commands
+GOCMD=go
+GOBUILD=$(GOCMD) build
+GOCLEAN=$(GOCMD) clean
+GOTEST=$(GOCMD) test
+GOGET=$(GOCMD) get
+GOMOD=$(GOCMD) mod
 
+# Directories
+CMD_DIR=./cmd
+DIST_DIR=./dist
+PACKAGE_DIR=./packages
+
+# Supported platforms
+PLATFORMS=linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
+
+# Default target
+.PHONY: all
+all: clean deps test build
+
+# Clean build artifacts
+.PHONY: clean
 clean:
-	rm -rf build dist
+	@echo "Cleaning..."
+	@rm -rf $(DIST_DIR)
+	@rm -rf $(PACKAGE_DIR)
+	@$(GOCLEAN)
 
-deb: build
-	mkdir -p build/deb/DEBIAN
-	mkdir -p build/deb/usr/bin
-	mkdir -p build/deb/etc/sssonector
-	cp build/sssonector build/deb/usr/bin/
-	cp -r configs/* build/deb/etc/sssonector/
-	echo "Package: sssonector\nVersion: 1.0.0\nArchitecture: amd64\nMaintainer: o3willard-AI\nDescription: SSL tunneling application" > build/deb/DEBIAN/control
-	dpkg-deb --build build/deb dist/sssonector_1.0.0_amd64.deb
+# Install dependencies
+.PHONY: deps
+deps:
+	@echo "Installing dependencies..."
+	@$(GOMOD) download
+	@$(GOMOD) verify
 
-rpm: build
-	@if which rpmbuild > /dev/null; then \
-		mkdir -p build/rpm/{BUILD,RPMS,SOURCES,SPECS,SRPMS,BUILDROOT}; \
-		mkdir -p build/rpm/BUILDROOT/sssonector-1.0.0-1.x86_64/usr/bin; \
-		mkdir -p build/rpm/BUILDROOT/sssonector-1.0.0-1.x86_64/etc/sssonector; \
-		cp build/sssonector build/rpm/BUILDROOT/sssonector-1.0.0-1.x86_64/usr/bin/; \
-		cp -r configs/* build/rpm/BUILDROOT/sssonector-1.0.0-1.x86_64/etc/sssonector/; \
-		echo "Name: sssonector\nVersion: 1.0.0\nRelease: 1\nSummary: SSL tunneling application\nLicense: MIT\n\n%description\nSSL tunneling application\n\n%files\n/usr/bin/sssonector\n/etc/sssonector/*" > build/rpm/SPECS/sssonector.spec; \
-		rpmbuild -bb --define "_topdir $(PWD)/build/rpm" build/rpm/SPECS/sssonector.spec; \
-		mkdir -p dist; \
-		cp build/rpm/RPMS/x86_64/sssonector-1.0.0-1.x86_64.rpm dist/ 2>/dev/null || true; \
-	else \
-		echo "Skipping RPM build - rpmbuild not installed"; \
-	fi
-
-win: build
-	@if which makensis > /dev/null; then \
-		mkdir -p build/win; \
-		cp build/sssonector build/win/sssonector.exe; \
-		cp -r configs build/win/; \
-		makensis installers/windows.nsi; \
-		mkdir -p dist; \
-		cp build/sssonector-1.0.0-setup.exe dist/ 2>/dev/null || true; \
-	else \
-		echo "Skipping Windows build - makensis not installed"; \
-	fi
-
-mac: build
-	@if which pkgbuild > /dev/null; then \
-		mkdir -p build/macos/root/usr/local/bin; \
-		mkdir -p build/macos/root/etc/sssonector; \
-		cp build/sssonector build/macos/root/usr/local/bin/; \
-		cp -r configs/* build/macos/root/etc/sssonector/; \
-		mkdir -p dist; \
-		pkgbuild --root build/macos/root \
-			--identifier com.o3willard-ai.sssonector \
-			--version 1.0.0 \
-			--install-location / \
-			dist/sssonector-1.0.0-macos.pkg; \
-	else \
-		echo "Skipping macOS build - pkgbuild not installed"; \
-	fi
-
-dist: build
-	mkdir -p dist/v1.0.0
-	cp build/sssonector dist/v1.0.0/
-	cp -r configs dist/v1.0.0/
-	cp README.md dist/v1.0.0/
-	cd dist/v1.0.0 && tar czf ../sssonector-1.0.0.tar.gz .
-	cd dist/v1.0.0 && zip -r ../sssonector-1.0.0.zip .
-	$(MAKE) deb
-	$(MAKE) rpm
-	$(MAKE) win
-	$(MAKE) mac
-	cd dist && sha256sum sssonector-1.0.0.tar.gz sssonector-1.0.0.zip > checksums.txt
-	@if [ -f dist/sssonector_1.0.0_amd64.deb ]; then cd dist && sha256sum sssonector_1.0.0_amd64.deb >> checksums.txt; fi
-	@if [ -f dist/sssonector-1.0.0-1.x86_64.rpm ]; then cd dist && sha256sum sssonector-1.0.0-1.x86_64.rpm >> checksums.txt; fi
-	@if [ -f dist/sssonector-1.0.0-setup.exe ]; then cd dist && sha256sum sssonector-1.0.0-setup.exe >> checksums.txt; fi
-	@if [ -f dist/sssonector-1.0.0-macos.pkg ]; then cd dist && sha256sum sssonector-1.0.0-macos.pkg >> checksums.txt; fi
-	mkdir -p dist/v1.0.0
-	@if [ -f dist/sssonector_1.0.0_amd64.deb ]; then cp dist/sssonector_1.0.0_amd64.deb dist/v1.0.0/; fi
-	@if [ -f dist/sssonector-1.0.0-1.x86_64.rpm ]; then cp dist/sssonector-1.0.0-1.x86_64.rpm dist/v1.0.0/; fi
-	@if [ -f dist/sssonector-1.0.0-setup.exe ]; then cp dist/sssonector-1.0.0-setup.exe dist/v1.0.0/; fi
-	@if [ -f dist/sssonector-1.0.0-macos.pkg ]; then cp dist/sssonector-1.0.0-macos.pkg dist/v1.0.0/; fi
-
-install: build
-	sudo mkdir -p /usr/bin
-	sudo cp build/sssonector /usr/bin/
-	sudo chmod 755 /usr/bin/sssonector
-	sudo mkdir -p /etc/sssonector
-	sudo cp -r configs/* /etc/sssonector/
-
+# Run tests
+.PHONY: test
 test:
-	go test -v ./...
+	@echo "Running tests..."
+	@$(GOTEST) -v ./...
+
+# Run integration tests
+.PHONY: test-integration
+test-integration:
+	@echo "Running integration tests..."
+	@$(GOTEST) -v -tags=integration ./test/integration/...
+
+# Run benchmarks
+.PHONY: bench
+bench:
+	@echo "Running benchmarks..."
+	@$(GOTEST) -bench=. -benchmem ./...
+
+# Build for current platform
+.PHONY: build
+build:
+	@echo "Building $(BINARY_NAME)..."
+	@mkdir -p $(DIST_DIR)
+	@$(GOBUILD) $(LDFLAGS) -o $(DIST_DIR)/$(BINARY_NAME) $(CMD_DIR)/$(BINARY_NAME)
+	@$(GOBUILD) $(LDFLAGS) -o $(DIST_DIR)/$(BINARY_NAME)ctl $(CMD_DIR)/$(BINARY_NAME)ctl
+
+# Cross-compile for all platforms
+.PHONY: release
+release: clean deps test
+	@echo "Building release packages..."
+	@mkdir -p $(PACKAGE_DIR)
+	@for platform in $(PLATFORMS); do \
+		GOOS=$${platform%/*} \
+		GOARCH=$${platform#*/} \
+		OUTPUT_NAME=$(BINARY_NAME)_$${platform%/*}_$${platform#*/} \
+		OUTPUT_DIR=$(PACKAGE_DIR)/$${platform%/*}_$${platform#*/} \
+		; \
+		echo "Building for $$GOOS/$$GOARCH..." ; \
+		mkdir -p $$OUTPUT_DIR ; \
+		GOOS=$$GOOS GOARCH=$$GOARCH $(GOBUILD) $(LDFLAGS) \
+			-o $$OUTPUT_DIR/$(BINARY_NAME)$${GOOS:+_}$${GOOS:+.exe} \
+			$(CMD_DIR)/$(BINARY_NAME) ; \
+		GOOS=$$GOOS GOARCH=$$GOARCH $(GOBUILD) $(LDFLAGS) \
+			-o $$OUTPUT_DIR/$(BINARY_NAME)ctl$${GOOS:+_}$${GOOS:+.exe} \
+			$(CMD_DIR)/$(BINARY_NAME)ctl ; \
+		cp -r config/ $$OUTPUT_DIR/ ; \
+		cp -r security/ $$OUTPUT_DIR/ ; \
+		cp -r init/ $$OUTPUT_DIR/ ; \
+		cp README.md LICENSE $$OUTPUT_DIR/ ; \
+		cd $(PACKAGE_DIR) && \
+		tar czf $$OUTPUT_NAME.tar.gz $${platform%/*}_$${platform#*/} && \
+		cd - ; \
+	done
+
+# Install development tools
+.PHONY: dev-tools
+dev-tools:
+	@echo "Installing development tools..."
+	@$(GOGET) github.com/golangci/golangci-lint/cmd/golangci-lint
+	@$(GOGET) golang.org/x/tools/cmd/goimports
+	@$(GOGET) github.com/golang/mock/mockgen
+
+# Run linter
+.PHONY: lint
+lint:
+	@echo "Running linter..."
+	@golangci-lint run
+
+# Format code
+.PHONY: fmt
+fmt:
+	@echo "Formatting code..."
+	@goimports -w .
+
+# Generate mocks
+.PHONY: generate
+generate:
+	@echo "Generating mocks..."
+	@go generate ./...
+
+# Build Docker image
+.PHONY: docker
+docker:
+	@echo "Building Docker image..."
+	@docker build -t sssonector:$(VERSION) .
+
+# Run security audit
+.PHONY: audit
+audit:
+	@echo "Running security audit..."
+	@go list -json -m all | nancy sleuth
+
+# Create release tag
+.PHONY: tag
+tag:
+	@echo "Creating release tag $(VERSION)..."
+	@git tag -a $(VERSION) -m "Release $(VERSION)"
+	@git push origin $(VERSION)
+
+# Install locally
+.PHONY: install
+install: build
+	@echo "Installing locally..."
+	@sudo cp $(DIST_DIR)/$(BINARY_NAME) /usr/local/bin/
+	@sudo cp $(DIST_DIR)/$(BINARY_NAME)ctl /usr/local/bin/
+	@sudo mkdir -p /etc/$(BINARY_NAME)
+	@sudo cp -r config/* /etc/$(BINARY_NAME)/
+	@sudo mkdir -p /var/lib/$(BINARY_NAME)
+	@sudo chown -R root:root /etc/$(BINARY_NAME)
+	@sudo chmod -R 644 /etc/$(BINARY_NAME)
+	@sudo chmod 755 /etc/$(BINARY_NAME)
+	@sudo chown -R root:root /var/lib/$(BINARY_NAME)
+	@sudo chmod -R 644 /var/lib/$(BINARY_NAME)
+	@sudo chmod 755 /var/lib/$(BINARY_NAME)
+
+# Uninstall locally
+.PHONY: uninstall
+uninstall:
+	@echo "Uninstalling..."
+	@sudo rm -f /usr/local/bin/$(BINARY_NAME)
+	@sudo rm -f /usr/local/bin/$(BINARY_NAME)ctl
+	@sudo rm -rf /etc/$(BINARY_NAME)
+	@sudo rm -rf /var/lib/$(BINARY_NAME)
+
+# Show help
+.PHONY: help
+help:
+	@echo "Available targets:"
+	@echo "  all            - Clean, install dependencies, run tests, and build"
+	@echo "  clean          - Remove build artifacts"
+	@echo "  deps           - Install dependencies"
+	@echo "  test           - Run unit tests"
+	@echo "  test-integration - Run integration tests"
+	@echo "  bench          - Run benchmarks"
+	@echo "  build          - Build for current platform"
+	@echo "  release        - Build release packages for all platforms"
+	@echo "  dev-tools      - Install development tools"
+	@echo "  lint           - Run linter"
+	@echo "  fmt            - Format code"
+	@echo "  generate       - Generate mocks"
+	@echo "  docker         - Build Docker image"
+	@echo "  audit          - Run security audit"
+	@echo "  tag            - Create release tag"
+	@echo "  install        - Install locally"
+	@echo "  uninstall      - Uninstall locally"
+	@echo "  help           - Show this help"

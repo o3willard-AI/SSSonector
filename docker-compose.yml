@@ -1,0 +1,104 @@
+version: '3.8'
+
+services:
+  sssonector:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: sssonector:latest
+    container_name: sssonector
+    restart: unless-stopped
+    ports:
+      - "8080:8080"  # HTTP API
+      - "8443:8443"  # HTTPS API
+    volumes:
+      - ./config:/etc/sssonector:ro
+      - ./security:/etc/sssonector/security:ro
+      - sssonector-data:/var/lib/sssonector
+      - sssonector-logs:/var/log/sssonector
+    environment:
+      - SSSONECTOR_CONFIG=/etc/sssonector/config.json
+      - SSSONECTOR_LOG_LEVEL=info
+      - SSSONECTOR_LOG_FORMAT=json
+      - SSSONECTOR_METRICS_ENABLED=true
+    networks:
+      - sssonector-net
+    healthcheck:
+      test: ["CMD", "sssonectorctl", "health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: sssonector-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus:/etc/prometheus:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    networks:
+      - sssonector-net
+    depends_on:
+      - sssonector
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: sssonector-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin  # Change in production
+      - GF_USERS_ALLOW_SIGN_UP=false
+    networks:
+      - sssonector-net
+    depends_on:
+      - prometheus
+
+volumes:
+  sssonector-data:
+    driver: local
+  sssonector-logs:
+    driver: local
+  prometheus-data:
+    driver: local
+  grafana-data:
+    driver: local
+
+networks:
+  sssonector-net:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.28.0.0/16
