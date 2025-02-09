@@ -1,9 +1,9 @@
-//go:build linux
-
 package daemon
 
 import (
 	"fmt"
+	"os"
+	"time"
 
 	"github.com/o3willard-AI/SSSonector/internal/security"
 	"github.com/o3willard-AI/SSSonector/internal/service"
@@ -17,6 +17,9 @@ type LinuxDaemon struct {
 	cgroup   *CgroupManager
 	ns       *NamespaceManager
 	security *security.SecurityManager
+	status   service.ServiceStatus
+	logger   *zap.Logger
+	options  service.ServiceOptions
 }
 
 // NewLinux creates a new Linux daemon instance
@@ -45,13 +48,22 @@ func NewLinux(opts service.ServiceOptions, logger *zap.Logger) (*LinuxDaemon, er
 		return nil, fmt.Errorf("failed to create security manager: %w", err)
 	}
 
-	return &LinuxDaemon{
+	d := &LinuxDaemon{
 		Daemon:   baseDaemon,
 		systemd:  systemd,
 		cgroup:   cgroup,
 		ns:       ns,
 		security: securityMgr,
-	}, nil
+		logger:   logger,
+		options:  opts,
+		status: service.ServiceStatus{
+			Name:      opts.Name,
+			State:     service.StateStopped,
+			StartTime: time.Now(),
+		},
+	}
+
+	return d, nil
 }
 
 // Start initializes the Linux daemon process
@@ -94,6 +106,8 @@ func (d *LinuxDaemon) Start() error {
 		return fmt.Errorf("failed to notify systemd: %w", err)
 	}
 
+	d.status.State = service.StateRunning
+	d.status.PID = os.Getpid()
 	return nil
 }
 
@@ -116,44 +130,119 @@ func (d *LinuxDaemon) Stop() error {
 		return fmt.Errorf("failed to stop base daemon: %w", err)
 	}
 
+	d.status.State = service.StateStopped
 	d.logger.Info("Linux daemon stopped successfully")
 	return nil
 }
 
-// Reload handles configuration reload
+// Reload reloads the daemon configuration
 func (d *LinuxDaemon) Reload() error {
+	d.status.State = service.StateReloading
+
 	// Notify systemd we're reloading
 	if err := d.systemd.NotifyReloading(); err != nil {
 		return fmt.Errorf("failed to notify systemd of reload: %w", err)
 	}
 
-	// Perform reload logic here
-	// ...
+	// Reload security settings
+	if err := d.security.Apply(); err != nil {
+		return fmt.Errorf("failed to reload security settings: %w", err)
+	}
 
-	// Notify systemd we're ready again
+	// Reload cgroup settings
+	if err := d.cgroup.Reload(); err != nil {
+		return fmt.Errorf("failed to reload cgroup settings: %w", err)
+	}
+
+	// Notify systemd we're ready
 	if err := d.systemd.NotifyReady(); err != nil {
 		return fmt.Errorf("failed to notify systemd after reload: %w", err)
 	}
 
+	d.status.State = service.StateRunning
+	d.status.LastReload = time.Now()
 	return nil
 }
 
-// UpdateStatus sends a status update to systemd
-func (d *LinuxDaemon) UpdateStatus(status string) error {
-	return d.systemd.UpdateStatus(status)
+// Status returns the current daemon status
+func (d *LinuxDaemon) Status() (string, error) {
+	return d.status.State, nil
 }
 
-// LogError logs an error to the systemd journal
-func (d *LinuxDaemon) LogError(msg string, err error) {
-	d.systemd.LogError(msg, err)
+// GetPID returns the daemon process ID
+func (d *LinuxDaemon) GetPID() (int, error) {
+	return d.status.PID, nil
 }
 
-// LogInfo logs an info message to the systemd journal
-func (d *LinuxDaemon) LogInfo(msg string) {
-	d.systemd.LogInfo(msg)
+// IsRunning returns whether the daemon is running
+func (d *LinuxDaemon) IsRunning() (bool, error) {
+	return d.status.State == service.StateRunning, nil
 }
 
-// IsSystemd returns true if running under systemd
-func (d *LinuxDaemon) IsSystemd() bool {
-	return d.systemd.IsSystemd()
+// GetMetrics returns daemon metrics
+func (d *LinuxDaemon) GetMetrics() (service.ServiceMetrics, error) {
+	stats, err := d.cgroup.GetStats()
+	if err != nil {
+		return service.ServiceMetrics{}, fmt.Errorf("failed to get cgroup stats: %w", err)
+	}
+
+	metrics := service.ServiceMetrics{
+		StartTime:   d.status.StartTime,
+		Platform:    "linux",
+		LastError:   d.status.Error,
+		CPUUsage:    stats.CPU.Usage,
+		MemoryUsage: stats.Memory.Usage,
+	}
+	return metrics, nil
+}
+
+// Health checks daemon health
+func (d *LinuxDaemon) Health() error {
+	if !d.systemd.IsSystemd() {
+		return fmt.Errorf("daemon not running under systemd")
+	}
+	return nil
+}
+
+// ExecuteCommand executes a daemon command
+func (d *LinuxDaemon) ExecuteCommand(cmd service.ServiceCommand) (string, error) {
+	switch cmd.Command {
+	case service.CmdStatus:
+		return d.Status()
+	case service.CmdReload:
+		return "", d.Reload()
+	case service.CmdMetrics:
+		metrics, err := d.GetMetrics()
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("%+v", metrics), nil
+	case service.CmdHealth:
+		return "", d.Health()
+	default:
+		return "", fmt.Errorf("unknown command: %s", cmd.Command)
+	}
+}
+
+// GetLogs returns daemon logs
+func (d *LinuxDaemon) GetLogs(lines int) ([]string, error) {
+	// Not implemented
+	return nil, nil
+}
+
+// SendSignal sends a signal to the daemon
+func (d *LinuxDaemon) SendSignal(signal string) error {
+	// Not implemented
+	return nil
+}
+
+// Configure configures the daemon
+func (d *LinuxDaemon) Configure(opts service.ServiceOptions) error {
+	// Not implemented
+	return nil
+}
+
+// GetOptions returns daemon options
+func (d *LinuxDaemon) GetOptions() service.ServiceOptions {
+	return d.options
 }
