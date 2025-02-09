@@ -1,110 +1,105 @@
 package daemon
 
 import (
+	"context"
 	"fmt"
-	"io/ioutil"
 	"os"
-	"strconv"
+	"os/signal"
 	"syscall"
 
-	"github.com/o3willard-AI/SSSonector/internal/service"
 	"go.uber.org/zap"
 )
 
-// UnixDaemon extends base daemon with Unix-specific functionality
+// UnixDaemon represents a Unix daemon
 type UnixDaemon struct {
 	*Daemon
-	logger *zap.Logger
+	pidFile string
 }
 
-// NewUnix creates a new Unix daemon instance
-func NewUnix(opts service.ServiceOptions, logger *zap.Logger) (*UnixDaemon, error) {
-	baseDaemon, err := New(opts, logger)
+// NewUnixDaemon creates a new Unix daemon
+func NewUnixDaemon(logger *zap.Logger, pidFile string) (*UnixDaemon, error) {
+	daemon, err := NewDaemon(logger)
 	if err != nil {
 		return nil, err
 	}
 
 	return &UnixDaemon{
-		Daemon: baseDaemon,
-		logger: logger,
+		Daemon:  daemon,
+		pidFile: pidFile,
 	}, nil
 }
 
-// StartUnix initializes the Unix daemon process
-func (d *UnixDaemon) StartUnix() error {
-	// Call base daemon start
-	if err := d.Daemon.Start(); err != nil {
-		return err
-	}
+// Start starts the Unix daemon
+func (d *UnixDaemon) Start() error {
+	// Create context with signal handling
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Set up signal handling
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigChan
+		cancel()
+	}()
 
 	// Write PID file
-	pidFile := d.GetOptions().PIDFile
-	if pidFile != "" {
-		pid := os.Getpid()
-		if err := ioutil.WriteFile(pidFile, []byte(strconv.Itoa(pid)), 0644); err != nil {
-			return fmt.Errorf("failed to write PID file: %w", err)
-		}
-	}
-
-	return nil
-}
-
-// StopUnix cleans up Unix daemon resources
-func (d *UnixDaemon) StopUnix() error {
-	// Call base daemon stop
-	if err := d.Daemon.Stop(); err != nil {
+	if err := d.writePIDFile(); err != nil {
 		return err
 	}
 
+	// Start daemon
+	if err := d.Daemon.Start(ctx); err != nil {
+		return err
+	}
+
+	// Wait for context cancellation
+	<-ctx.Done()
+
+	// Stop daemon
+	return d.Stop()
+}
+
+// Stop stops the Unix daemon
+func (d *UnixDaemon) Stop() error {
 	// Remove PID file
-	pidFile := d.GetOptions().PIDFile
-	if pidFile != "" {
-		if err := os.Remove(pidFile); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("failed to remove PID file: %w", err)
-		}
+	if err := d.removePIDFile(); err != nil {
+		return err
+	}
+
+	// Stop daemon
+	return d.Daemon.Stop()
+}
+
+// Reload reloads the daemon configuration
+func (d *UnixDaemon) Reload() error {
+	// Reload cgroup manager
+	if err := d.cgManager.Reload(); err != nil {
+		return fmt.Errorf("failed to reload cgroup manager: %w", err)
 	}
 
 	return nil
 }
 
-// GetPID returns the daemon process ID from PID file
-func (d *UnixDaemon) GetPID() (int, error) {
-	pidFile := d.GetOptions().PIDFile
-	if pidFile == "" {
-		return 0, fmt.Errorf("PID file not configured")
+// writePIDFile writes the daemon's PID to a file
+func (d *UnixDaemon) writePIDFile() error {
+	if d.pidFile == "" {
+		return nil
 	}
 
-	data, err := ioutil.ReadFile(pidFile)
-	if err != nil {
-		return 0, fmt.Errorf("failed to read PID file: %w", err)
-	}
-
-	pid, err := strconv.Atoi(string(data))
-	if err != nil {
-		return 0, fmt.Errorf("invalid PID file content: %w", err)
-	}
-
-	return pid, nil
+	pid := os.Getpid()
+	return os.WriteFile(d.pidFile, []byte(fmt.Sprintf("%d", pid)), 0644)
 }
 
-// IsRunning checks if daemon process is running
-func (d *UnixDaemon) IsRunning() (bool, error) {
-	pid, err := d.GetPID()
-	if err != nil {
-		return false, err
+// removePIDFile removes the daemon's PID file
+func (d *UnixDaemon) removePIDFile() error {
+	if d.pidFile == "" {
+		return nil
 	}
 
-	// Check if process exists
-	process, err := os.FindProcess(pid)
-	if err != nil {
-		return false, nil
+	if err := os.Remove(d.pidFile); err != nil && !os.IsNotExist(err) {
+		return err
 	}
 
-	// Send signal 0 to check if process is running
-	err = process.Signal(syscall.Signal(0))
-	if err != nil {
-		return false, nil
-	}
-
-	return true, nil
+	return nil
 }
