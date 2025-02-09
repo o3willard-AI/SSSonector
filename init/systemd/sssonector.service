@@ -1,0 +1,63 @@
+[Unit]
+Description=SSSonector Secure Tunnel Service
+Documentation=https://github.com/o3willard-AI/SSSonector/docs
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+NotifyAccess=main
+ExecStart=/usr/local/bin/sssonector -config /etc/sssonector/config.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5s
+
+# Service hardening
+User=sssonector
+Group=sssonector
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+LockPersonality=true
+MemoryDenyWriteExecute=true
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHome=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+ReadOnlyPaths=/etc/sssonector
+ReadWritePaths=/var/lib/sssonector /var/run/sssonector
+RemoveIPC=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+UMask=0027
+
+# Resource limits
+LimitNOFILE=65535
+LimitNPROC=4096
+TasksMax=4096
+
+# Runtime directories
+RuntimeDirectory=sssonector
+RuntimeDirectoryMode=0750
+
+# State directories
+StateDirectory=sssonector
+StateDirectoryMode=0750
+
+# Configuration directories
+ConfigurationDirectory=sssonector
+ConfigurationDirectoryMode=0750
+
+[Install]
+WantedBy=multi-user.target
