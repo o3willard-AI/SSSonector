@@ -1,176 +1,173 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
-	"gopkg.in/yaml.v2"
+	"go.uber.org/zap"
 )
 
-// expandEnvVars replaces ${var} or $var in the string according to the values
-// of the current environment variables.
-func expandEnvVars(s string) string {
-	return os.ExpandEnv(s)
+// Loader handles configuration loading and validation
+type Loader struct {
+	logger *zap.Logger
 }
 
-// LoadConfig loads and validates the configuration from a YAML file
-func LoadConfig(path string) (*Config, error) {
+// NewLoader creates a new configuration loader
+func NewLoader(logger *zap.Logger) *Loader {
+	return &Loader{
+		logger: logger,
+	}
+}
+
+// LoadFromFile loads configuration from a file
+func (l *Loader) LoadFromFile(path string) (*AppConfig, error) {
 	// Read configuration file
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read config file: %v", err)
+		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
 
-	// Parse YAML
-	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("failed to parse config file: %v", err)
+	// Parse configuration
+	cfg := DefaultConfig()
+	if err := json.Unmarshal(data, cfg); err != nil {
+		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
-
-	// Expand environment variables in certificate paths
-	cfg.Tunnel.CertFile = expandEnvVars(cfg.Tunnel.CertFile)
-	cfg.Tunnel.KeyFile = expandEnvVars(cfg.Tunnel.KeyFile)
-	cfg.Tunnel.CAFile = expandEnvVars(cfg.Tunnel.CAFile)
 
 	// Validate configuration
-	if err := validateConfig(&cfg); err != nil {
-		return nil, fmt.Errorf("invalid configuration: %v", err)
+	if err := l.validateConfig(cfg); err != nil {
+		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
 
-	// Set default values if needed
-	setDefaults(&cfg)
+	// Update paths to be absolute
+	if err := l.resolveConfigPaths(cfg, filepath.Dir(path)); err != nil {
+		return nil, fmt.Errorf("failed to resolve paths: %w", err)
+	}
 
-	return &cfg, nil
+	return cfg, nil
 }
 
-// validateConfig performs validation of the configuration
-func validateConfig(cfg *Config) error {
+// validateConfig validates the configuration
+func (l *Loader) validateConfig(cfg *AppConfig) error {
 	// Validate mode
-	if cfg.Mode != "server" && cfg.Mode != "client" {
-		return fmt.Errorf("invalid mode: %s (must be 'server' or 'client')", cfg.Mode)
+	if cfg.Mode != ModeServer && cfg.Mode != ModeClient {
+		return fmt.Errorf("invalid mode: %s", cfg.Mode)
 	}
 
-	// Validate network settings
-	if cfg.Network.Interface == "" {
-		return fmt.Errorf("network interface not specified")
-	}
-	if cfg.Network.Address == "" {
-		return fmt.Errorf("network address not specified")
-	}
-	if cfg.Network.MTU < 1280 || cfg.Network.MTU > 9000 {
-		return fmt.Errorf("invalid MTU value: %d (must be between 1280 and 9000)", cfg.Network.MTU)
+	// Validate network configuration
+	if cfg.Network.MTU < 576 || cfg.Network.MTU > 65535 {
+		return fmt.Errorf("invalid MTU: %d", cfg.Network.MTU)
 	}
 
-	// Validate tunnel settings
-	if err := validateTunnelConfig(&cfg.Tunnel, cfg.Mode); err != nil {
-		return fmt.Errorf("invalid tunnel configuration: %v", err)
-	}
-
-	// Validate monitor settings
-	if err := validateMonitorConfig(&cfg.Monitor); err != nil {
-		return fmt.Errorf("invalid monitor configuration: %v", err)
-	}
-
-	return nil
-}
-
-// validateTunnelConfig validates tunnel-specific configuration
-func validateTunnelConfig(cfg *TunnelConfig, mode string) error {
-	// Validate certificate paths
-	if cfg.CertFile == "" {
-		return fmt.Errorf("certificate file not specified")
-	}
-	if cfg.KeyFile == "" {
-		return fmt.Errorf("private key file not specified")
-	}
-	if cfg.CAFile == "" {
-		return fmt.Errorf("CA certificate file not specified")
-	}
-
-	// Validate server-specific settings
-	if mode == "server" {
-		if cfg.ListenAddress == "" {
-			return fmt.Errorf("server listen address not specified")
+	// Validate tunnel configuration
+	if cfg.Mode == ModeServer {
+		if cfg.Tunnel.ListenPort <= 0 || cfg.Tunnel.ListenPort > 65535 {
+			return fmt.Errorf("invalid listen port: %d", cfg.Tunnel.ListenPort)
 		}
-		if cfg.ListenPort <= 0 || cfg.ListenPort > 65535 {
-			return fmt.Errorf("invalid server listen port: %d", cfg.ListenPort)
-		}
-		if cfg.MaxClients <= 0 {
-			return fmt.Errorf("invalid max clients value: %d", cfg.MaxClients)
+	} else {
+		if cfg.Tunnel.ServerPort <= 0 || cfg.Tunnel.ServerPort > 65535 {
+			return fmt.Errorf("invalid server port: %d", cfg.Tunnel.ServerPort)
 		}
 	}
 
-	// Validate client-specific settings
-	if mode == "client" {
-		if cfg.ServerAddress == "" {
-			return fmt.Errorf("server address not specified")
+	// Validate monitor configuration
+	if cfg.Monitor.Enabled {
+		if cfg.Monitor.SNMPEnabled {
+			if cfg.Monitor.SNMPPort <= 0 || cfg.Monitor.SNMPPort > 65535 {
+				return fmt.Errorf("invalid SNMP port: %d", cfg.Monitor.SNMPPort)
+			}
 		}
-		if cfg.ServerPort <= 0 || cfg.ServerPort > 65535 {
-			return fmt.Errorf("invalid server port: %d", cfg.ServerPort)
-		}
-	}
-
-	// Validate rate limiting settings
-	if cfg.UploadKbps < 0 {
-		return fmt.Errorf("invalid upload rate limit: %d", cfg.UploadKbps)
-	}
-	if cfg.DownloadKbps < 0 {
-		return fmt.Errorf("invalid download rate limit: %d", cfg.DownloadKbps)
-	}
-
-	return nil
-}
-
-// validateMonitorConfig validates monitoring configuration
-func validateMonitorConfig(cfg *MonitorConfig) error {
-	if cfg.LogFile == "" {
-		return fmt.Errorf("log file not specified")
-	}
-
-	// Create log directory if it doesn't exist
-	logDir := filepath.Dir(cfg.LogFile)
-	if err := os.MkdirAll(logDir, 0755); err != nil {
-		return fmt.Errorf("failed to create log directory: %v", err)
-	}
-
-	// Validate SNMP settings if enabled
-	if cfg.SNMPEnabled {
-		if cfg.SNMPPort <= 0 || cfg.SNMPPort > 65535 {
-			return fmt.Errorf("invalid SNMP port: %d", cfg.SNMPPort)
-		}
-		if cfg.SNMPCommunity == "" {
-			return fmt.Errorf("SNMP community string not specified")
+		if cfg.Monitor.Prometheus.Enabled {
+			if cfg.Monitor.Prometheus.Port <= 0 || cfg.Monitor.Prometheus.Port > 65535 {
+				return fmt.Errorf("invalid Prometheus port: %d", cfg.Monitor.Prometheus.Port)
+			}
 		}
 	}
 
 	return nil
 }
 
-// setDefaults sets default values for optional configuration fields
-func setDefaults(cfg *Config) {
-	// Set default MTU if not specified
-	if cfg.Network.MTU == 0 {
-		cfg.Network.MTU = 1500
-	}
-
-	// Set default server settings
-	if cfg.Mode == "server" {
-		if cfg.Tunnel.MaxClients == 0 {
-			cfg.Tunnel.MaxClients = 10
+// resolveConfigPaths resolves relative paths in configuration
+func (l *Loader) resolveConfigPaths(cfg *AppConfig, baseDir string) error {
+	// Helper function to resolve path
+	resolvePath := func(path string) string {
+		if path == "" || filepath.IsAbs(path) {
+			return path
 		}
+		return filepath.Join(baseDir, path)
 	}
 
-	// Set default rate limits if not specified
-	if cfg.Tunnel.UploadKbps == 0 {
-		cfg.Tunnel.UploadKbps = 10240 // 10 Mbps
-	}
-	if cfg.Tunnel.DownloadKbps == 0 {
-		cfg.Tunnel.DownloadKbps = 10240 // 10 Mbps
+	// Resolve certificate paths
+	cfg.Tunnel.CertFile = resolvePath(cfg.Tunnel.CertFile)
+	cfg.Tunnel.KeyFile = resolvePath(cfg.Tunnel.KeyFile)
+	cfg.Tunnel.CAFile = resolvePath(cfg.Tunnel.CAFile)
+
+	// Resolve log file path
+	cfg.Monitor.LogFile = resolvePath(cfg.Monitor.LogFile)
+
+	return nil
+}
+
+// SaveToFile saves configuration to a file
+func (l *Loader) SaveToFile(cfg *AppConfig, path string) error {
+	// Create parent directory if it doesn't exist
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return fmt.Errorf("failed to create config directory: %w", err)
 	}
 
-	// Set default SNMP port if enabled but not specified
-	if cfg.Monitor.SNMPEnabled && cfg.Monitor.SNMPPort == 0 {
-		cfg.Monitor.SNMPPort = 161
+	// Marshal configuration
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal config: %w", err)
 	}
+
+	// Write configuration file
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return fmt.Errorf("failed to write config file: %w", err)
+	}
+
+	return nil
+}
+
+// LoadFromEnv loads configuration from environment variables
+func (l *Loader) LoadFromEnv() (*AppConfig, error) {
+	cfg := DefaultConfig()
+
+	// Helper function to get environment variable
+	getEnv := func(key, defaultValue string) string {
+		if value := os.Getenv(key); value != "" {
+			return value
+		}
+		return defaultValue
+	}
+
+	// Load mode
+	if mode := getEnv("SSSONECTOR_MODE", ""); mode != "" {
+		cfg.Mode = Mode(strings.ToLower(mode))
+	}
+
+	// Load network configuration
+	cfg.Network.Interface = getEnv("SSSONECTOR_NETWORK_INTERFACE", cfg.Network.Interface)
+	cfg.Network.IPAddress = getEnv("SSSONECTOR_NETWORK_IP", cfg.Network.IPAddress)
+	cfg.Network.SubnetMask = getEnv("SSSONECTOR_NETWORK_MASK", cfg.Network.SubnetMask)
+
+	// Load tunnel configuration
+	cfg.Tunnel.ServerAddress = getEnv("SSSONECTOR_TUNNEL_SERVER", cfg.Tunnel.ServerAddress)
+	cfg.Tunnel.Protocol = getEnv("SSSONECTOR_TUNNEL_PROTOCOL", cfg.Tunnel.Protocol)
+	cfg.Tunnel.Encryption = getEnv("SSSONECTOR_TUNNEL_ENCRYPTION", cfg.Tunnel.Encryption)
+
+	// Load monitor configuration
+	if enabled := getEnv("SSSONECTOR_MONITOR_ENABLED", ""); enabled != "" {
+		cfg.Monitor.Enabled = enabled == "true"
+	}
+	cfg.Monitor.LogLevel = getEnv("SSSONECTOR_LOG_LEVEL", cfg.Monitor.LogLevel)
+
+	// Validate configuration
+	if err := l.validateConfig(cfg); err != nil {
+		return nil, fmt.Errorf("invalid configuration: %w", err)
+	}
+
+	return cfg, nil
 }

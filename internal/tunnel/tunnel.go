@@ -1,217 +1,104 @@
 package tunnel
 
 import (
-	"fmt"
-	"io"
-	"net"
-	"sync"
-	"time"
+	"path/filepath"
 
-	"github.com/o3willard-AI/SSSonector/internal/adapter"
-	"github.com/o3willard-AI/SSSonector/internal/monitor"
-	"github.com/o3willard-AI/SSSonector/internal/throttle"
+	"github.com/o3willard-AI/SSSonector/internal/config"
+	"go.uber.org/zap"
 )
 
-const (
-	maxRetries    = 3    // Maximum number of retries for I/O operations
-	retryInterval = 50   // Base retry interval in milliseconds
-	maxBackoff    = 1000 // Maximum backoff in milliseconds
-)
-
-// Tunnel represents an SSL tunnel connection
-type Tunnel struct {
-	conn      net.Conn
-	adapter   adapter.Interface
-	throttler *throttle.Limiter
-	done      chan struct{}
-	wg        sync.WaitGroup
-	monitor   *monitor.Monitor
+// Tunnel defines the interface for tunnel operations
+type Tunnel interface {
+	// Start starts the tunnel
+	Start() error
+	// Stop stops the tunnel
+	Stop() error
 }
 
-// New creates a new tunnel instance
-func New(conn net.Conn, adapter adapter.Interface, throttler *throttle.Limiter, mon *monitor.Monitor) (*Tunnel, error) {
-	return &Tunnel{
-		conn:      conn,
-		adapter:   adapter,
-		throttler: throttler,
-		done:      make(chan struct{}),
-		monitor:   mon,
-	}, nil
-}
-
-// Start begins tunnel operation
-func (t *Tunnel) Start() error {
-	// Wait for adapter to be ready with exponential backoff
-	backoff := retryInterval
-	for i := 0; i < maxRetries; i++ {
-		if t.adapter.IsUp() {
-			break
+// UpdateCertificatePaths updates certificate paths to be absolute
+func UpdateCertificatePaths(cfg *config.AppConfig, baseDir string) error {
+	// Helper function to resolve path
+	resolvePath := func(path string) string {
+		if path == "" || filepath.IsAbs(path) {
+			return path
 		}
-		if i == maxRetries-1 {
-			return fmt.Errorf("timeout waiting for adapter to be ready")
-		}
-		time.Sleep(time.Duration(backoff) * time.Millisecond)
-		backoff = min(backoff*2, maxBackoff)
+		return filepath.Join(baseDir, path)
 	}
 
-	// Start network to tunnel transfer with worker pool
-	t.wg.Add(2) // Add for both directions at once
-	go t.networkToTunnel()
-	go t.tunnelToNetwork()
+	// Update certificate paths
+	cfg.Tunnel.CertFile = resolvePath(cfg.Tunnel.CertFile)
+	cfg.Tunnel.KeyFile = resolvePath(cfg.Tunnel.KeyFile)
+	cfg.Tunnel.CAFile = resolvePath(cfg.Tunnel.CAFile)
 
 	return nil
 }
 
-// Stop shuts down the tunnel
-func (t *Tunnel) Stop() {
-	select {
-	case <-t.done:
-		// Already closed
-		return
-	default:
-		close(t.done)
-		t.wg.Wait()
+// Server represents a tunnel server
+type Server struct {
+	config  *config.AppConfig
+	manager config.ConfigManager
+	logger  *zap.Logger
+}
+
+// NewServer creates a new tunnel server
+func NewServer(cfg *config.AppConfig, manager config.ConfigManager, logger *zap.Logger) *Server {
+	return &Server{
+		config:  cfg,
+		manager: manager,
+		logger:  logger,
 	}
 }
 
-// Done returns a channel that's closed when the tunnel is stopped
-func (t *Tunnel) Done() <-chan struct{} {
-	return t.done
+// Start starts the tunnel server
+func (s *Server) Start() error {
+	s.logger.Info("Starting tunnel server",
+		zap.String("address", s.config.Tunnel.ListenAddress),
+		zap.Int("port", s.config.Tunnel.ListenPort),
+	)
+
+	// TODO: Implement server start
+	return nil
 }
 
-func (t *Tunnel) networkToTunnel() {
-	defer t.wg.Done()
+// Stop stops the tunnel server
+func (s *Server) Stop() error {
+	s.logger.Info("Stopping tunnel server")
 
-	mtu := t.adapter.GetMTU()
-	buf := make([]byte, mtu)
+	// TODO: Implement server stop
+	return nil
+}
 
-	for {
-		select {
-		case <-t.done:
-			return
-		default:
-			var n int
-			var err error
-			if t.throttler != nil {
-				n, err = t.throttler.Read(buf)
-			} else {
-				n, err = t.conn.Read(buf)
-			}
-			if err != nil {
-				if err != io.EOF {
-					if t.monitor != nil {
-						t.monitor.GetMetrics().UpdateErrorMetrics(1, err.Error(), 0, 0)
-					}
-					return
-				}
-				// For EOF, continue reading after a short delay
-				time.Sleep(10 * time.Millisecond)
-				continue
-			}
+// Client represents a tunnel client
+type Client struct {
+	config  *config.AppConfig
+	manager config.ConfigManager
+	logger  *zap.Logger
+}
 
-			if n > 0 {
-				// Write data in chunks to avoid buffer overflow
-				written := 0
-				for written < n {
-					chunkSize := min(mtu, n-written)
-					w, err := t.adapter.Write(buf[written : written+chunkSize])
-					if err != nil {
-						if t.monitor != nil {
-							t.monitor.GetMetrics().UpdateErrorMetrics(1, err.Error(), 0, 0)
-						}
-						return
-					}
-					written += w
-
-					// Update metrics after successful write
-					if t.monitor != nil {
-						t.monitor.GetMetrics().UpdateNetworkMetrics(
-							0,
-							int64(w),
-							0,
-							1,
-						)
-					}
-				}
-			}
-		}
+// NewClient creates a new tunnel client
+func NewClient(cfg *config.AppConfig, manager config.ConfigManager, logger *zap.Logger) *Client {
+	return &Client{
+		config:  cfg,
+		manager: manager,
+		logger:  logger,
 	}
 }
 
-func (t *Tunnel) tunnelToNetwork() {
-	defer t.wg.Done()
+// Start starts the tunnel client
+func (c *Client) Start() error {
+	c.logger.Info("Starting tunnel client",
+		zap.String("server", c.config.Tunnel.ServerAddress),
+		zap.Int("port", c.config.Tunnel.ServerPort),
+	)
 
-	mtu := t.adapter.GetMTU()
-	buf := make([]byte, mtu)
-
-	for {
-		select {
-		case <-t.done:
-			return
-		default:
-			var n int
-			var readErr error
-			backoff := retryInterval
-
-			for i := 0; i < maxRetries; i++ {
-				n, readErr = t.adapter.Read(buf)
-				if readErr == nil && n > 0 {
-					break
-				}
-				if readErr == io.EOF {
-					time.Sleep(10 * time.Millisecond)
-					continue
-				}
-				if i == maxRetries-1 {
-					if readErr != io.EOF {
-						if t.monitor != nil {
-							t.monitor.GetMetrics().UpdateErrorMetrics(1, readErr.Error(), int64(i+1), 0)
-						}
-					}
-					return
-				}
-				time.Sleep(time.Duration(backoff) * time.Millisecond)
-				backoff = min(backoff*2, maxBackoff)
-			}
-
-			if n > 0 {
-				// Write data in chunks to avoid buffer overflow
-				written := 0
-				for written < n {
-					chunkSize := min(mtu, n-written)
-					var w int
-					var err error
-					if t.throttler != nil {
-						w, err = t.throttler.Write(buf[written : written+chunkSize])
-					} else {
-						w, err = t.conn.Write(buf[written : written+chunkSize])
-					}
-					if err != nil {
-						if t.monitor != nil {
-							t.monitor.GetMetrics().UpdateErrorMetrics(1, err.Error(), 0, 0)
-						}
-						return
-					}
-					written += w
-
-					// Update metrics after successful write
-					if t.monitor != nil {
-						t.monitor.GetMetrics().UpdateNetworkMetrics(
-							int64(w),
-							0,
-							1,
-							0,
-						)
-					}
-				}
-			}
-		}
-	}
+	// TODO: Implement client start
+	return nil
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
+// Stop stops the tunnel client
+func (c *Client) Stop() error {
+	c.logger.Info("Stopping tunnel client")
+
+	// TODO: Implement client stop
+	return nil
 }
