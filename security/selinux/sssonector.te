@@ -1,0 +1,106 @@
+policy_module(sssonector, 1.0.0)
+
+require {
+    type sssonector_t;
+    type sssonector_exec_t;
+    type sssonector_conf_t;
+    type sssonector_var_lib_t;
+    type sssonector_var_run_t;
+    type sssonector_port_t;
+    type sysfs_t;
+    type proc_t;
+    type proc_net_t;
+    type kernel_t;
+    type net_conf_t;
+    type unreserved_port_t;
+    class file { create getattr open read write unlink setattr };
+    class dir { add_name create getattr open read remove_name search write };
+    class sock_file { create getattr unlink write };
+    class unix_stream_socket { accept bind connect create listen };
+    class tcp_socket { accept bind connect create getattr getopt listen setopt };
+    class netlink_route_socket { bind create getattr nlmsg_read write read };
+    class tun_socket { attach_queue create getattr setattr };
+    class capability { net_admin net_raw setgid setuid sys_admin };
+    class process { fork transition signal };
+}
+
+# Type definitions
+type sssonector_t;
+type sssonector_exec_t;
+type sssonector_conf_t;
+type sssonector_var_lib_t;
+type sssonector_var_run_t;
+type sssonector_port_t;
+
+# Domain transition
+domain_type(sssonector_t)
+domain_entry_file(sssonector_t, sssonector_exec_t)
+role system_r types sssonector_t;
+
+# File contexts
+files_type(sssonector_conf_t)
+files_type(sssonector_var_lib_t)
+files_type(sssonector_var_run_t)
+
+# Network ports
+portcon tcp 8443 system_u:object_r:sssonector_port_t:s0
+
+# Allow domain transition
+allow init_t sssonector_exec_t:file { execute getattr open read };
+allow init_t sssonector_t:process transition;
+type_transition init_t sssonector_exec_t:process sssonector_t;
+
+# Configuration access
+allow sssonector_t sssonector_conf_t:dir { getattr open read search };
+allow sssonector_t sssonector_conf_t:file { getattr open read };
+
+# Runtime directory access
+allow sssonector_t sssonector_var_run_t:dir { add_name create getattr open read remove_name search write };
+allow sssonector_t sssonector_var_run_t:file { create getattr open read write unlink };
+allow sssonector_t sssonector_var_run_t:sock_file { create getattr unlink write };
+
+# State directory access
+allow sssonector_t sssonector_var_lib_t:dir { add_name create getattr open read remove_name search write };
+allow sssonector_t sssonector_var_lib_t:file { create getattr open read write unlink };
+
+# Network access
+allow sssonector_t self:tcp_socket { accept bind connect create getattr getopt listen setopt };
+allow sssonector_t sssonector_port_t:tcp_socket name_bind;
+allow sssonector_t unreserved_port_t:tcp_socket name_connect;
+
+# Netlink socket access
+allow sssonector_t self:netlink_route_socket { bind create getattr nlmsg_read write read };
+
+# TUN/TAP device access
+allow sssonector_t self:tun_socket { attach_queue create getattr setattr };
+
+# Process capabilities
+allow sssonector_t self:capability { net_admin net_raw setgid setuid sys_admin };
+
+# Process operations
+allow sssonector_t self:process { fork signal };
+
+# System access
+allow sssonector_t proc_t:dir { getattr open read search };
+allow sssonector_t proc_net_t:file { getattr open read };
+allow sssonector_t sysfs_t:dir { getattr open read search };
+allow sssonector_t sysfs_t:file { getattr open read };
+allow sssonector_t kernel_t:system module_request;
+allow sssonector_t net_conf_t:file { getattr open read };
+
+# Network namespace transitions
+allow sssonector_t self:process { setns };
+allow sssonector_t proc_t:file { open read };
+
+# Mount namespace operations
+allow sssonector_t self:capability sys_admin;
+allow sssonector_t proc_t:filesystem mount;
+
+# IPC operations
+allow sssonector_t self:unix_stream_socket { accept bind connect create listen };
+
+# Logging
+logging_send_syslog_msg(sssonector_t)
+
+# Systemd integration
+init_daemon_domain(sssonector_t, sssonector_exec_t)
