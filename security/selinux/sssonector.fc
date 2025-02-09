@@ -1,0 +1,21 @@
+# Binary files
+/usr/local/bin/sssonector          -- gen_context(system_u:object_r:sssonector_exec_t,s0)
+/usr/local/bin/sssonectorctl       -- gen_context(system_u:object_r:sssonector_exec_t,s0)
+
+# Configuration files
+/etc/sssonector(/.*)?              gen_context(system_u:object_r:sssonector_conf_t,s0)
+/etc/sssonector/certs(/.*)?        gen_context(system_u:object_r:sssonector_conf_t,s0)
+
+# State directory
+/var/lib/sssonector(/.*)?          gen_context(system_u:object_r:sssonector_var_lib_t,s0)
+
+# Runtime files
+/var/run/sssonector(/.*)?          gen_context(system_u:object_r:sssonector_var_run_t,s0)
+/var/run/sssonector\.pid           -- gen_context(system_u:object_r:sssonector_var_run_t,s0)
+/var/run/sssonector\.sock          -- gen_context(system_u:object_r:sssonector_var_run_t,s0)
+
+# Log files
+/var/log/sssonector(/.*)?          gen_context(system_u:object_r:sssonector_log_t,s0)
+
+# Systemd unit file
+/usr/lib/systemd/system/sssonector\.service    -- gen_context(system_u:object_r:sssonector_unit_file_t,s0)
