@@ -2,6 +2,7 @@ package integration
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -19,16 +20,23 @@ func TestDaemonIntegration(t *testing.T) {
 	logger, err := zap.NewDevelopment()
 	require.NoError(t, err)
 
+	// Create test directories
+	dirs := CreateTestDirs(t)
+
+	// Create test user
+	username := "sssonector-test"
+	CreateTestUser(t, username)
+
 	t.Run("DaemonLifecycle", func(t *testing.T) {
 		// Create daemon
 		opts := service.ServiceOptions{
 			Name:        "sssonector-test",
-			ConfigPath:  "/etc/sssonector/config.yaml",
-			PIDFile:     "/var/run/sssonector-test.pid",
-			LogFile:     "/var/log/sssonector-test.log",
-			User:        "sssonector",
-			Group:       "sssonector",
-			WorkingDir:  "/var/lib/sssonector",
+			ConfigPath:  filepath.Join(dirs.Config, "config.yaml"),
+			PIDFile:     filepath.Join(dirs.Run, "sssonector-test.pid"),
+			LogFile:     filepath.Join(dirs.Log, "sssonector-test.log"),
+			User:        username,
+			Group:       username,
+			WorkingDir:  dirs.Lib,
 			Environment: []string{"ENV=test"},
 		}
 
@@ -49,6 +57,8 @@ func TestDaemonIntegration(t *testing.T) {
 		require.NoError(t, err)
 		require.NotZero(t, metrics.StartTime)
 		require.Equal(t, "linux", metrics.Platform)
+		require.NotZero(t, metrics.UptimeSeconds)
+		require.Zero(t, metrics.ErrorCount)
 
 		// Check health
 		err = d.Health()
@@ -68,8 +78,8 @@ func TestDaemonIntegration(t *testing.T) {
 		// Create daemon
 		opts := service.ServiceOptions{
 			Name:    "sssonector-test",
-			PIDFile: "/var/run/sssonector-test.pid",
-			LogFile: "/var/log/sssonector-test.log",
+			PIDFile: filepath.Join(dirs.Run, "sssonector-test.pid"),
+			LogFile: filepath.Join(dirs.Log, "sssonector-test.log"),
 		}
 
 		d, err := daemon.NewLinux(opts, logger)
@@ -99,8 +109,8 @@ func TestDaemonIntegration(t *testing.T) {
 		// Create daemon
 		opts := service.ServiceOptions{
 			Name:    "sssonector-test",
-			PIDFile: "/var/run/sssonector-test.pid",
-			LogFile: "/var/log/sssonector-test.log",
+			PIDFile: filepath.Join(dirs.Run, "sssonector-test.pid"),
+			LogFile: filepath.Join(dirs.Log, "sssonector-test.log"),
 		}
 
 		d, err := daemon.NewLinux(opts, logger)
@@ -133,14 +143,16 @@ func TestDaemonIntegration(t *testing.T) {
 		require.NoError(t, err)
 		require.Contains(t, response, "CPUUsage")
 		require.Contains(t, response, "MemoryUsage")
+		require.Contains(t, response, "UptimeSeconds")
+		require.Contains(t, response, "ConnectionCount")
 	})
 
 	t.Run("DaemonRecovery", func(t *testing.T) {
 		// Create daemon
 		opts := service.ServiceOptions{
 			Name:    "sssonector-test",
-			PIDFile: "/var/run/sssonector-test.pid",
-			LogFile: "/var/log/sssonector-test.log",
+			PIDFile: filepath.Join(dirs.Run, "sssonector-test.pid"),
+			LogFile: filepath.Join(dirs.Log, "sssonector-test.log"),
 		}
 
 		d, err := daemon.NewLinux(opts, logger)
@@ -162,5 +174,11 @@ func TestDaemonIntegration(t *testing.T) {
 		status, err := d.Status()
 		require.NoError(t, err)
 		require.Equal(t, service.StateRunning, status)
+
+		// Check metrics after recovery
+		metrics, err := d.GetMetrics()
+		require.NoError(t, err)
+		require.NotZero(t, metrics.ErrorCount)
+		require.NotEmpty(t, metrics.LastError)
 	})
 }
