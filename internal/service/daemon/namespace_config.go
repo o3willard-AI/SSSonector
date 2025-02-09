@@ -74,10 +74,12 @@ type UserNamespaceConfig struct {
 
 // NetworkNamespaceConfig represents network namespace configuration
 type NetworkNamespaceConfig struct {
-	Enabled bool
-	Type    string // none, bridge, host
-	Name    string // network interface name
-	DNS     []string
+	Enabled   bool
+	Type      string // none, bridge, host
+	Name      string // network interface name
+	IPAddress string // IP address with CIDR (e.g., "10.0.0.2/24")
+	Gateway   string // Gateway IP address
+	DNS       []string
 }
 
 // IDMap represents a UID/GID mapping
@@ -154,10 +156,12 @@ func GetDefaultNamespaceConfig() *NamespaceConfig {
 			},
 		},
 		Network: NetworkNamespaceConfig{
-			Enabled: true,
-			Type:    "bridge",
-			Name:    "sssonector0",
-			DNS:     []string{"8.8.8.8", "8.8.4.4"},
+			Enabled:   true,
+			Type:      "bridge",
+			Name:      "sssonector0",
+			IPAddress: "10.0.0.2/24",
+			Gateway:   "10.0.0.1",
+			DNS:       []string{"8.8.8.8", "8.8.4.4"},
 		},
 	}
 }

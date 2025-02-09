@@ -1,149 +1,82 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
-	"log"
 	"os"
-	"os/signal"
 	"path/filepath"
-	"syscall"
 
 	"github.com/o3willard-AI/SSSonector/internal/config"
+	"github.com/o3willard-AI/SSSonector/internal/tunnel"
+	"go.uber.org/zap"
 )
 
 var (
-	configFile      string
-	testWithoutCert bool
-	genCertsOnly    bool
-	keyFile         string
-	keygen          bool
-	validateCerts   bool
+	configPath string
+	logger     *zap.Logger
 )
 
 func init() {
-	flag.StringVar(&configFile, "config", "", "Path to configuration file")
-	flag.BoolVar(&testWithoutCert, "test-without-certs", false, "Run with temporary certificates")
-	flag.BoolVar(&genCertsOnly, "generate-certs-only", false, "Generate certificates without starting service")
-	flag.StringVar(&keyFile, "keyfile", "", "Specify certificate directory")
-	flag.BoolVar(&keygen, "keygen", false, "Generate production certificates")
-	flag.BoolVar(&validateCerts, "validate-certs", false, "Validate existing certificates")
+	// Parse command line flags
+	flag.StringVar(&configPath, "config", "", "path to configuration file")
+	flag.Parse()
+
+	// Initialize logger
+	var err error
+	logger, err = zap.NewProduction()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to initialize logger: %v\n", err)
+		os.Exit(1)
+	}
 }
 
 func main() {
-	flag.Parse()
+	// Create context
+	ctx := context.Background()
 
 	// Load configuration
-	if configFile == "" {
-		configFile = filepath.Join(os.Getenv("HOME"), ".config", "sssonector", "config.yaml")
-	}
-
-	cfg, loadErr := config.LoadConfig(configFile)
-	if loadErr != nil {
-		log.Fatalf("Failed to load configuration: %v", loadErr)
-	}
-
-	// Handle certificate operations
-	if genCertsOnly || keygen {
-		if certErr := generateCertificates(cfg); certErr != nil {
-			log.Fatalf("Failed to generate certificates: %v", certErr)
-		}
-		return
-	}
-
-	if validateCerts {
-		if validateErr := validateCertificates(cfg); validateErr != nil {
-			log.Fatalf("Failed to validate certificates: %v", validateErr)
-		}
-		return
-	}
-
-	// Update certificate paths if keyfile specified
-	if keyFile != "" {
-		cfg.UpdateCertificatePaths(keyFile)
-	}
-
-	// Create signal channel for graceful shutdown and reload
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
-
-	// Start server or client based on mode
-	// Create instance based on mode
-	switch cfg.Mode {
-	case "server":
-		if err := runServer(configFile, sigCh); err != nil {
-			log.Fatalf("Server error: %v", err)
-		}
-	case "client":
-		instance, initErr := NewClient(cfg)
-		if initErr != nil {
-			log.Fatalf("Failed to create client: %v", initErr)
-		}
-		if err := runInstance(instance, sigCh); err != nil {
-			log.Fatalf("Client error: %v", err)
-		}
-	default:
-		log.Fatalf("Invalid mode: %s", cfg.Mode)
-	}
-}
-
-func runServer(configPath string, sigCh chan os.Signal) error {
-	// Create server with config path for hot reloading
-	server, err := NewServer(configPath)
+	loader := config.NewLoader(logger)
+	cfg, err := loader.LoadFromFile(configPath)
 	if err != nil {
-		return fmt.Errorf("failed to create server: %w", err)
+		logger.Fatal("Failed to load configuration",
+			zap.String("path", configPath),
+			zap.Error(err),
+		)
 	}
 
-	// Start server in a goroutine
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- server.Start()
-	}()
+	// Create configuration store and validator
+	store := config.NewFileStore(filepath.Dir(configPath), logger)
+	validator := config.NewValidator(logger)
 
-	// Wait for signal or error
-	for {
-		select {
-		case sig := <-sigCh:
-			switch sig {
-			case syscall.SIGHUP:
-				fmt.Println("\nReloading configuration...")
-				// ConfigManager will handle the reload
-			case syscall.SIGINT, syscall.SIGTERM:
-				fmt.Println("\nShutting down...")
-				return server.Stop()
-			}
-		case err := <-errCh:
-			return err
-		}
+	// Create configuration manager
+	manager := config.NewManager(configPath, store, validator, logger)
+
+	// Update certificate paths
+	if err := tunnel.UpdateCertificatePaths(cfg, filepath.Dir(configPath)); err != nil {
+		logger.Fatal("Failed to update certificate paths", zap.Error(err))
 	}
-}
 
-func runInstance(instance interface {
-	Start() error
-	Stop() error
-}, sigCh chan os.Signal) error {
-	// Start instance in a goroutine
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- instance.Start()
-	}()
-
-	// Wait for signal or error
-	select {
-	case <-sigCh:
-		fmt.Println("\nShutting down...")
-		return instance.Stop()
-	case err := <-errCh:
-		return err
+	// Create and run tunnel
+	var t interface {
+		Run(context.Context) error
 	}
-}
 
-func generateCertificates(cfg *config.Config) error {
-	// Certificate generation logic
-	return nil
-}
+	switch cfg.Mode {
+	case config.ModeServer:
+		t, err = NewServer(cfg, manager, logger)
+	case config.ModeClient:
+		t, err = NewClient(cfg, manager, logger)
+	default:
+		logger.Fatal("Invalid mode", zap.String("mode", string(cfg.Mode)))
+	}
 
-func validateCertificates(cfg *config.Config) error {
-	// Certificate validation logic
-	return nil
+	if err != nil {
+		logger.Fatal("Failed to create tunnel", zap.Error(err))
+	}
+
+	// Run tunnel
+	if err := t.Run(ctx); err != nil {
+		logger.Fatal("Failed to run tunnel", zap.Error(err))
+	}
 }
