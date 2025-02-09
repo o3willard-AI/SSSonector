@@ -38,7 +38,7 @@ func (d *UnixDaemon) StartUnix() error {
 	}
 
 	// Write PID file
-	pidFile := d.GetPidFile()
+	pidFile := d.GetOptions().PIDFile
 	if pidFile != "" {
 		pid := os.Getpid()
 		if err := ioutil.WriteFile(pidFile, []byte(strconv.Itoa(pid)), 0644); err != nil {
@@ -57,7 +57,7 @@ func (d *UnixDaemon) StopUnix() error {
 	}
 
 	// Remove PID file
-	pidFile := d.GetPidFile()
+	pidFile := d.GetOptions().PIDFile
 	if pidFile != "" {
 		if err := os.Remove(pidFile); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("failed to remove PID file: %w", err)
@@ -69,7 +69,7 @@ func (d *UnixDaemon) StopUnix() error {
 
 // GetPID returns the daemon process ID from PID file
 func (d *UnixDaemon) GetPID() (int, error) {
-	pidFile := d.GetPidFile()
+	pidFile := d.GetOptions().PIDFile
 	if pidFile == "" {
 		return 0, fmt.Errorf("PID file not configured")
 	}
