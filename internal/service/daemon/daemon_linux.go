@@ -10,9 +10,9 @@ import (
 	"go.uber.org/zap"
 )
 
-// LinuxDaemon extends the base daemon with Linux-specific functionality
+// LinuxDaemon extends the Unix daemon with Linux-specific functionality
 type LinuxDaemon struct {
-	*Daemon
+	*UnixDaemon
 	systemd  *SystemdManager
 	cgroup   *CgroupManager
 	ns       *NamespaceManager
@@ -24,7 +24,7 @@ type LinuxDaemon struct {
 
 // NewLinux creates a new Linux daemon instance
 func NewLinux(opts service.ServiceOptions, logger *zap.Logger) (*LinuxDaemon, error) {
-	baseDaemon, err := New(opts, logger)
+	unixDaemon, err := NewUnix(opts, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -49,13 +49,13 @@ func NewLinux(opts service.ServiceOptions, logger *zap.Logger) (*LinuxDaemon, er
 	}
 
 	d := &LinuxDaemon{
-		Daemon:   baseDaemon,
-		systemd:  systemd,
-		cgroup:   cgroup,
-		ns:       ns,
-		security: securityMgr,
-		logger:   logger,
-		options:  opts,
+		UnixDaemon: unixDaemon,
+		systemd:    systemd,
+		cgroup:     cgroup,
+		ns:         ns,
+		security:   securityMgr,
+		logger:     logger,
+		options:    opts,
 		status: service.ServiceStatus{
 			Name:      opts.Name,
 			State:     service.StateStopped,
@@ -68,8 +68,8 @@ func NewLinux(opts service.ServiceOptions, logger *zap.Logger) (*LinuxDaemon, er
 
 // Start initializes the Linux daemon process
 func (d *LinuxDaemon) Start() error {
-	// Initialize base daemon
-	if err := d.Daemon.Start(); err != nil {
+	// Initialize Unix daemon
+	if err := d.UnixDaemon.StartUnix(); err != nil {
 		return err
 	}
 
@@ -125,9 +125,9 @@ func (d *LinuxDaemon) Stop() error {
 			zap.Error(err))
 	}
 
-	// Stop base daemon
-	if err := d.Daemon.Stop(); err != nil {
-		return fmt.Errorf("failed to stop base daemon: %w", err)
+	// Stop Unix daemon
+	if err := d.UnixDaemon.StopUnix(); err != nil {
+		return fmt.Errorf("failed to stop Unix daemon: %w", err)
 	}
 
 	d.status.State = service.StateStopped
@@ -164,21 +164,6 @@ func (d *LinuxDaemon) Reload() error {
 	return nil
 }
 
-// Status returns the current daemon status
-func (d *LinuxDaemon) Status() (string, error) {
-	return d.status.State, nil
-}
-
-// GetPID returns the daemon process ID
-func (d *LinuxDaemon) GetPID() (int, error) {
-	return d.status.PID, nil
-}
-
-// IsRunning returns whether the daemon is running
-func (d *LinuxDaemon) IsRunning() (bool, error) {
-	return d.status.State == service.StateRunning, nil
-}
-
 // GetMetrics returns daemon metrics
 func (d *LinuxDaemon) GetMetrics() (service.ServiceMetrics, error) {
 	stats, err := d.cgroup.GetStats()
@@ -202,47 +187,4 @@ func (d *LinuxDaemon) Health() error {
 		return fmt.Errorf("daemon not running under systemd")
 	}
 	return nil
-}
-
-// ExecuteCommand executes a daemon command
-func (d *LinuxDaemon) ExecuteCommand(cmd service.ServiceCommand) (string, error) {
-	switch cmd.Command {
-	case service.CmdStatus:
-		return d.Status()
-	case service.CmdReload:
-		return "", d.Reload()
-	case service.CmdMetrics:
-		metrics, err := d.GetMetrics()
-		if err != nil {
-			return "", err
-		}
-		return fmt.Sprintf("%+v", metrics), nil
-	case service.CmdHealth:
-		return "", d.Health()
-	default:
-		return "", fmt.Errorf("unknown command: %s", cmd.Command)
-	}
-}
-
-// GetLogs returns daemon logs
-func (d *LinuxDaemon) GetLogs(lines int) ([]string, error) {
-	// Not implemented
-	return nil, nil
-}
-
-// SendSignal sends a signal to the daemon
-func (d *LinuxDaemon) SendSignal(signal string) error {
-	// Not implemented
-	return nil
-}
-
-// Configure configures the daemon
-func (d *LinuxDaemon) Configure(opts service.ServiceOptions) error {
-	// Not implemented
-	return nil
-}
-
-// GetOptions returns daemon options
-func (d *LinuxDaemon) GetOptions() service.ServiceOptions {
-	return d.options
 }
