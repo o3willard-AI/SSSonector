@@ -5,6 +5,7 @@ package daemon
 import (
 	"fmt"
 
+	"github.com/o3willard-AI/SSSonector/internal/security"
 	"github.com/o3willard-AI/SSSonector/internal/service"
 	"go.uber.org/zap"
 )
@@ -12,7 +13,10 @@ import (
 // LinuxDaemon extends the base daemon with Linux-specific functionality
 type LinuxDaemon struct {
 	*Daemon
-	systemd *SystemdManager
+	systemd  *SystemdManager
+	cgroup   *CgroupManager
+	ns       *NamespaceManager
+	security *security.SecurityManager
 }
 
 // NewLinux creates a new Linux daemon instance
@@ -22,11 +26,31 @@ func NewLinux(opts service.ServiceOptions, logger *zap.Logger) (*LinuxDaemon, er
 		return nil, err
 	}
 
+	// Initialize systemd manager
 	systemd := NewSystemdManager(logger)
 
+	// Initialize cgroup manager
+	cgroup, err := NewCgroupManager(logger, "sssonector")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create cgroup manager: %w", err)
+	}
+
+	// Initialize namespace manager
+	ns := NewNamespaceManager(logger)
+
+	// Initialize security manager
+	securityOpts := security.GetDefaultOptions()
+	securityMgr, err := security.NewSecurityManager(securityOpts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create security manager: %w", err)
+	}
+
 	return &LinuxDaemon{
-		Daemon:  baseDaemon,
-		systemd: systemd,
+		Daemon:   baseDaemon,
+		systemd:  systemd,
+		cgroup:   cgroup,
+		ns:       ns,
+		security: securityMgr,
 	}, nil
 }
 
@@ -47,6 +71,24 @@ func (d *LinuxDaemon) Start() error {
 		return fmt.Errorf("failed to start systemd management: %w", err)
 	}
 
+	// Initialize cgroup with default configuration
+	if err := d.cgroup.Start(GetDefaultConfig()); err != nil {
+		return fmt.Errorf("failed to initialize cgroup: %w", err)
+	}
+
+	// Configure and setup namespaces
+	if err := d.ns.Configure(GetDefaultNamespaceConfig()); err != nil {
+		return fmt.Errorf("failed to configure namespaces: %w", err)
+	}
+	if err := d.ns.SetupNamespaces(); err != nil {
+		return fmt.Errorf("failed to setup namespaces: %w", err)
+	}
+
+	// Apply security hardening
+	if err := d.security.Apply(); err != nil {
+		return fmt.Errorf("failed to apply security hardening: %w", err)
+	}
+
 	// Notify systemd we're ready
 	if err := d.systemd.NotifyReady(); err != nil {
 		return fmt.Errorf("failed to notify systemd: %w", err)
@@ -57,6 +99,12 @@ func (d *LinuxDaemon) Start() error {
 
 // Stop cleans up Linux daemon resources
 func (d *LinuxDaemon) Stop() error {
+	// Stop cgroup
+	if err := d.cgroup.Stop(); err != nil {
+		d.logger.Error("Failed to stop cgroup",
+			zap.Error(err))
+	}
+
 	// Stop systemd management
 	if err := d.systemd.Stop(); err != nil {
 		d.logger.Error("Failed to stop systemd management",
@@ -68,6 +116,7 @@ func (d *LinuxDaemon) Stop() error {
 		return fmt.Errorf("failed to stop base daemon: %w", err)
 	}
 
+	d.logger.Info("Linux daemon stopped successfully")
 	return nil
 }
 
