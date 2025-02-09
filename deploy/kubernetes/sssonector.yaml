@@ -1,0 +1,242 @@
+---
+# ConfigMap for SSSonector configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sssonector-config
+  labels:
+    app: sssonector
+data:
+  config.json: |
+    {
+      "mode": "server",
+      "network": {
+        "interface": "eth0",
+        "mtu": 1500
+      },
+      "tunnel": {
+        "protocol": "tcp",
+        "encryption": "aes-256-gcm",
+        "compression": "none"
+      },
+      "monitor": {
+        "enabled": true,
+        "interval": 60,
+        "log_level": "info",
+        "metrics_enabled": true
+      }
+    }
+
+---
+# Secret for TLS certificates
+apiVersion: v1
+kind: Secret
+metadata:
+  name: sssonector-certs
+  labels:
+    app: sssonector
+type: Opaque
+data:
+  server.crt: ${BASE64_SERVER_CERT}
+  server.key: ${BASE64_SERVER_KEY}
+  ca.crt: ${BASE64_CA_CERT}
+
+---
+# Service for SSSonector API
+apiVersion: v1
+kind: Service
+metadata:
+  name: sssonector
+  labels:
+    app: sssonector
+spec:
+  type: LoadBalancer
+  ports:
+    - name: http-api
+      port: 8080
+      targetPort: 8080
+      protocol: TCP
+    - name: https-api
+      port: 8443
+      targetPort: 8443
+      protocol: TCP
+  selector:
+    app: sssonector
+
+---
+# Deployment for SSSonector
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sssonector
+  labels:
+    app: sssonector
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: sssonector
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: sssonector
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: sssonector
+          image: sssonector:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http-api
+              containerPort: 8080
+              protocol: TCP
+            - name: https-api
+              containerPort: 8443
+              protocol: TCP
+          env:
+            - name: SSSONECTOR_CONFIG
+              value: /etc/sssonector/config.json
+            - name: SSSONECTOR_LOG_LEVEL
+              value: info
+            - name: SSSONECTOR_LOG_FORMAT
+              value: json
+            - name: SSSONECTOR_METRICS_ENABLED
+              value: "true"
+          volumeMounts:
+            - name: config
+              mountPath: /etc/sssonector/config.json
+              subPath: config.json
+              readOnly: true
+            - name: certs
+              mountPath: /etc/sssonector/certs
+              readOnly: true
+            - name: data
+              mountPath: /var/lib/sssonector
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+      volumes:
+        - name: config
+          configMap:
+            name: sssonector-config
+        - name: certs
+          secret:
+            secretName: sssonector-certs
+        - name: data
+          persistentVolumeClaim:
+            claimName: sssonector-data
+
+---
+# PersistentVolumeClaim for SSSonector data
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: sssonector-data
+  labels:
+    app: sssonector
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: standard
+
+---
+# HorizontalPodAutoscaler for SSSonector
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: sssonector
+  labels:
+    app: sssonector
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: sssonector
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 80
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+
+---
+# NetworkPolicy for SSSonector
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sssonector
+  labels:
+    app: sssonector
+spec:
+  podSelector:
+    matchLabels:
+      app: sssonector
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - ports:
+        - port: 8080
+          protocol: TCP
+        - port: 8443
+          protocol: TCP
+  egress:
+    - {}
+
+---
+# PodDisruptionBudget for SSSonector
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: sssonector
+  labels:
+    app: sssonector
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: sssonector
