@@ -7,22 +7,11 @@ import (
 	"go.uber.org/zap"
 )
 
-// CgroupStats represents cgroup statistics
-type CgroupStats struct {
-	CPU struct {
-		Usage float64 // CPU usage percentage
-	}
-	Memory struct {
-		Usage uint64 // Memory usage in bytes
-	}
-}
-
-// CgroupManager manages Linux control groups
+// CgroupManager manages Linux cgroups
 type CgroupManager struct {
 	logger *zap.Logger
 	name   string
 	path   string
-	stats  CgroupStats
 }
 
 // NewCgroupManager creates a new cgroup manager
@@ -36,34 +25,24 @@ func NewCgroupManager(logger *zap.Logger, name string) (*CgroupManager, error) {
 }
 
 // Start initializes cgroup management
-func (c *CgroupManager) Start(config interface{}) error {
+func (m *CgroupManager) Start(config *CgroupConfig) error {
 	// Create cgroup
-	if err := c.createCgroup(); err != nil {
+	if err := m.createCgroup(); err != nil {
 		return fmt.Errorf("failed to create cgroup: %w", err)
 	}
 
 	// Apply configuration
-	if err := c.applyConfig(config); err != nil {
-		return fmt.Errorf("failed to apply config: %w", err)
-	}
-
-	// Start monitoring
-	if err := c.startMonitoring(); err != nil {
-		return fmt.Errorf("failed to start monitoring: %w", err)
+	if err := m.applyConfig(config); err != nil {
+		return fmt.Errorf("failed to apply cgroup config: %w", err)
 	}
 
 	return nil
 }
 
 // Stop cleans up cgroup resources
-func (c *CgroupManager) Stop() error {
-	// Stop monitoring
-	if err := c.stopMonitoring(); err != nil {
-		return fmt.Errorf("failed to stop monitoring: %w", err)
-	}
-
+func (m *CgroupManager) Stop() error {
 	// Remove cgroup
-	if err := c.removeCgroup(); err != nil {
+	if err := m.removeCgroup(); err != nil {
 		return fmt.Errorf("failed to remove cgroup: %w", err)
 	}
 
@@ -71,77 +50,130 @@ func (c *CgroupManager) Stop() error {
 }
 
 // Reload reloads cgroup configuration
-func (c *CgroupManager) Reload() error {
-	// Stop monitoring
-	if err := c.stopMonitoring(); err != nil {
-		return fmt.Errorf("failed to stop monitoring: %w", err)
+func (m *CgroupManager) Reload() error {
+	// Apply default configuration
+	if err := m.applyConfig(GetDefaultConfig()); err != nil {
+		return fmt.Errorf("failed to reload cgroup config: %w", err)
 	}
 
-	// Apply configuration
-	if err := c.applyConfig(nil); err != nil {
-		return fmt.Errorf("failed to apply config: %w", err)
+	return nil
+}
+
+// createCgroup creates the cgroup
+func (m *CgroupManager) createCgroup() error {
+	// Implementation omitted
+	return nil
+}
+
+// removeCgroup removes the cgroup
+func (m *CgroupManager) removeCgroup() error {
+	// Implementation omitted
+	return nil
+}
+
+// applyConfig applies cgroup configuration
+func (m *CgroupManager) applyConfig(config *CgroupConfig) error {
+	// Apply memory limits
+	if err := m.applyMemoryConfig(&config.Memory); err != nil {
+		return fmt.Errorf("failed to apply memory config: %w", err)
 	}
 
-	// Restart monitoring
-	if err := c.startMonitoring(); err != nil {
-		return fmt.Errorf("failed to restart monitoring: %w", err)
+	// Apply CPU limits
+	if err := m.applyCPUConfig(&config.CPU); err != nil {
+		return fmt.Errorf("failed to apply CPU config: %w", err)
 	}
 
+	// Apply I/O limits
+	if err := m.applyIOConfig(&config.IO); err != nil {
+		return fmt.Errorf("failed to apply I/O config: %w", err)
+	}
+
+	// Apply PID limits
+	if err := m.applyPIDConfig(&config.PIDs); err != nil {
+		return fmt.Errorf("failed to apply PID config: %w", err)
+	}
+
+	return nil
+}
+
+// applyMemoryConfig applies memory configuration
+func (m *CgroupManager) applyMemoryConfig(config *MemoryConfig) error {
+	// Implementation omitted
+	return nil
+}
+
+// applyCPUConfig applies CPU configuration
+func (m *CgroupManager) applyCPUConfig(config *CPUConfig) error {
+	// Implementation omitted
+	return nil
+}
+
+// applyIOConfig applies I/O configuration
+func (m *CgroupManager) applyIOConfig(config *IOConfig) error {
+	// Implementation omitted
+	return nil
+}
+
+// applyPIDConfig applies PID configuration
+func (m *CgroupManager) applyPIDConfig(config *PIDConfig) error {
+	// Implementation omitted
 	return nil
 }
 
 // GetStats returns cgroup statistics
-func (c *CgroupManager) GetStats() (CgroupStats, error) {
-	// Read CPU usage
-	cpuUsage, err := c.readCPUUsage()
+func (m *CgroupManager) GetStats() (*CgroupStats, error) {
+	// Read CPU stats
+	cpuStats, err := m.getCPUStats()
 	if err != nil {
-		return c.stats, fmt.Errorf("failed to read CPU usage: %w", err)
+		return nil, err
 	}
-	c.stats.CPU.Usage = cpuUsage
 
-	// Read memory usage
-	memoryUsage, err := c.readMemoryUsage()
+	// Read memory stats
+	memStats, err := m.getMemoryStats()
 	if err != nil {
-		return c.stats, fmt.Errorf("failed to read memory usage: %w", err)
+		return nil, err
 	}
-	c.stats.Memory.Usage = memoryUsage
 
-	return c.stats, nil
+	// Read I/O stats
+	ioStats, err := m.getIOStats()
+	if err != nil {
+		return nil, err
+	}
+
+	// Read network stats
+	netStats, err := m.getNetworkStats()
+	if err != nil {
+		return nil, err
+	}
+
+	return &CgroupStats{
+		CPU:     *cpuStats,
+		Memory:  *memStats,
+		IO:      *ioStats,
+		Network: *netStats,
+	}, nil
 }
 
-// Internal methods
-
-func (c *CgroupManager) createCgroup() error {
+// getCPUStats returns CPU statistics
+func (m *CgroupManager) getCPUStats() (*CPUStats, error) {
 	// Implementation omitted
-	return nil
+	return &CPUStats{}, nil
 }
 
-func (c *CgroupManager) removeCgroup() error {
+// getMemoryStats returns memory statistics
+func (m *CgroupManager) getMemoryStats() (*MemoryStats, error) {
 	// Implementation omitted
-	return nil
+	return &MemoryStats{}, nil
 }
 
-func (c *CgroupManager) applyConfig(config interface{}) error {
+// getIOStats returns I/O statistics
+func (m *CgroupManager) getIOStats() (*IOStats, error) {
 	// Implementation omitted
-	return nil
+	return &IOStats{}, nil
 }
 
-func (c *CgroupManager) startMonitoring() error {
+// getNetworkStats returns network statistics
+func (m *CgroupManager) getNetworkStats() (*NetworkStats, error) {
 	// Implementation omitted
-	return nil
-}
-
-func (c *CgroupManager) stopMonitoring() error {
-	// Implementation omitted
-	return nil
-}
-
-func (c *CgroupManager) readCPUUsage() (float64, error) {
-	// Implementation omitted
-	return 0.0, nil
-}
-
-func (c *CgroupManager) readMemoryUsage() (uint64, error) {
-	// Implementation omitted
-	return 0, nil
+	return &NetworkStats{}, nil
 }
