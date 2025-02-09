@@ -1,126 +1,125 @@
 package daemon
 
-// NamespaceConfig represents namespace configuration
+// NamespaceConfig represents Linux namespace configuration
 type NamespaceConfig struct {
-	Network NetworkNamespaceConfig
+	// Namespace configurations
 	Mount   MountNamespaceConfig
 	PID     PIDNamespaceConfig
-	User    UserNamespaceConfig
-	UTS     UTSNamespaceConfig
 	IPC     IPCNamespaceConfig
-}
-
-// NetworkNamespaceConfig represents network namespace configuration
-type NetworkNamespaceConfig struct {
-	Enabled bool   // Whether to use network namespace
-	Type    string // Type of network namespace (private, host, container)
-	Name    string // Name of network namespace (for container type)
+	UTS     UTSNamespaceConfig
+	User    UserNamespaceConfig
+	Network NetworkNamespaceConfig
 }
 
 // MountNamespaceConfig represents mount namespace configuration
 type MountNamespaceConfig struct {
-	Enabled bool     // Whether to use mount namespace
-	Mounts  []Mount  // Mount points
-	Tmpfs   []Tmpfs  // Tmpfs mounts
-	Bind    []Bind   // Bind mounts
-	Symlink []string // Symlinks to create
+	Enabled bool
+	Mounts  []MountConfig
+	Tmpfs   []TmpfsMount
+	Bind    []BindMount
+}
+
+// TmpfsMount represents a tmpfs mount configuration
+type TmpfsMount struct {
+	Target string
+	Size   string
+	Mode   uint32
+}
+
+// BindMount represents a bind mount configuration
+type BindMount struct {
+	Source string
+	Target string
+	RO     bool
+}
+
+// MountConfig represents mount configuration
+type MountConfig struct {
+	Source     string
+	Target     string
+	Type       string // bind, tmpfs, proc, etc.
+	Flags      uint
+	Data       string
+	Private    bool
+	Slave      bool
+	Shared     bool
+	Unbindable bool
 }
 
 // PIDNamespaceConfig represents PID namespace configuration
 type PIDNamespaceConfig struct {
-	Enabled bool // Whether to use PID namespace
-	Init    bool // Whether to run init process
+	Enabled bool
+	Init    bool // Run init process
+}
+
+// IPCNamespaceConfig represents IPC namespace configuration
+type IPCNamespaceConfig struct {
+	Enabled bool
+}
+
+// UTSNamespaceConfig represents UTS namespace configuration
+type UTSNamespaceConfig struct {
+	Enabled    bool
+	Hostname   string
+	Domainname string
 }
 
 // UserNamespaceConfig represents user namespace configuration
 type UserNamespaceConfig struct {
-	Enabled    bool // Whether to use user namespace
+	Enabled    bool
 	UIDMap     []IDMap
 	GIDMap     []IDMap
 	NoNewPrivs bool // Disable gaining new privileges
 }
 
-// UTSNamespaceConfig represents UTS namespace configuration
-type UTSNamespaceConfig struct {
-	Enabled    bool   // Whether to use UTS namespace
-	Hostname   string // Hostname in namespace
-	Domainname string // Domain name in namespace
-}
-
-// IPCNamespaceConfig represents IPC namespace configuration
-type IPCNamespaceConfig struct {
-	Enabled bool // Whether to use IPC namespace
-	Private bool // Whether to use private IPC namespace
-}
-
-// Mount represents a mount point
-type Mount struct {
-	Source string // Source path
-	Target string // Target path
-	Type   string // Mount type (proc, sysfs, etc.)
-	Flags  uint   // Mount flags
-	Data   string // Mount data
-}
-
-// Tmpfs represents a tmpfs mount
-type Tmpfs struct {
-	Target string // Target path
-	Size   string // Size limit
-	Mode   uint   // Permission mode
-}
-
-// Bind represents a bind mount
-type Bind struct {
-	Source string // Source path
-	Target string // Target path
-	RO     bool   // Read-only mount
+// NetworkNamespaceConfig represents network namespace configuration
+type NetworkNamespaceConfig struct {
+	Enabled bool
+	Type    string // none, bridge, host
+	Name    string // network interface name
+	DNS     []string
 }
 
 // IDMap represents a UID/GID mapping
 type IDMap struct {
-	ContainerID int // ID in container
-	HostID      int // ID on host
-	Size        int // Range size
+	ContainerID int
+	HostID      int
+	Size        int
 }
 
 // GetDefaultNamespaceConfig returns default namespace configuration
 func GetDefaultNamespaceConfig() *NamespaceConfig {
 	return &NamespaceConfig{
-		Network: NetworkNamespaceConfig{
-			Enabled: true,
-			Type:    "private",
-		},
 		Mount: MountNamespaceConfig{
 			Enabled: true,
-			Mounts: []Mount{
+			Mounts: []MountConfig{
 				{
-					Source: "proc",
-					Target: "/proc",
-					Type:   "proc",
+					Source:  "/etc/resolv.conf",
+					Target:  "/etc/resolv.conf",
+					Type:    "bind",
+					Flags:   MS_BIND | MS_RDONLY,
+					Private: true,
 				},
 				{
-					Source: "sysfs",
-					Target: "/sys",
-					Type:   "sysfs",
-					Flags:  0x4, // MS_NOSUID
-				},
-				{
-					Source: "devtmpfs",
-					Target: "/dev",
-					Type:   "devtmpfs",
-					Flags:  0x4, // MS_NOSUID
+					Source:  "/etc/hosts",
+					Target:  "/etc/hosts",
+					Type:    "bind",
+					Flags:   MS_BIND | MS_RDONLY,
+					Private: true,
 				},
 			},
-			Tmpfs: []Tmpfs{
+			Tmpfs: []TmpfsMount{
 				{
 					Target: "/tmp",
-					Size:   "10%",
-					Mode:   0o1777,
+					Size:   "1G",
+					Mode:   0755,
 				},
+			},
+			Bind: []BindMount{
 				{
-					Target: "/run",
-					Size:   "10%",
-					Mode:   0o0755,
+					Source: "/etc/ssl/certs",
+					Target: "/etc/ssl/certs",
+					RO:     true,
 				},
 			},
 		},
@@ -128,8 +127,17 @@ func GetDefaultNamespaceConfig() *NamespaceConfig {
 			Enabled: true,
 			Init:    true,
 		},
-		User: UserNamespaceConfig{
+		IPC: IPCNamespaceConfig{
 			Enabled: true,
+		},
+		UTS: UTSNamespaceConfig{
+			Enabled:    true,
+			Hostname:   "sssonector",
+			Domainname: "local",
+		},
+		User: UserNamespaceConfig{
+			Enabled:    false,
+			NoNewPrivs: true,
 			UIDMap: []IDMap{
 				{
 					ContainerID: 0,
@@ -144,16 +152,12 @@ func GetDefaultNamespaceConfig() *NamespaceConfig {
 					Size:        1,
 				},
 			},
-			NoNewPrivs: true,
 		},
-		UTS: UTSNamespaceConfig{
-			Enabled:    true,
-			Hostname:   "sssonector",
-			Domainname: "local",
-		},
-		IPC: IPCNamespaceConfig{
+		Network: NetworkNamespaceConfig{
 			Enabled: true,
-			Private: true,
+			Type:    "bridge",
+			Name:    "sssonector0",
+			DNS:     []string{"8.8.8.8", "8.8.4.4"},
 		},
 	}
 }
