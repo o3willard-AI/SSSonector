@@ -11,7 +11,7 @@ data:
     {
       "mode": "server",
       "network": {
-        "interface": "eth0",
+        "interface": "tun0",
         "mtu": 1500
       },
       "tunnel": {
@@ -64,23 +64,17 @@ spec:
     app: sssonector
 
 ---
-# Deployment for SSSonector
+# DaemonSet for SSSonector
 apiVersion: apps/v1
-kind: Deployment
+kind: DaemonSet
 metadata:
   name: sssonector
   labels:
     app: sssonector
 spec:
-  replicas: 3
   selector:
     matchLabels:
       app: sssonector
-  strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 0
   template:
     metadata:
       labels:
@@ -90,14 +84,23 @@ spec:
         prometheus.io/port: "8080"
         prometheus.io/path: "/metrics"
     spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
       securityContext:
-        runAsUser: 1000
-        runAsGroup: 1000
-        fsGroup: 1000
+        runAsUser: 0
+        runAsGroup: 0
+        fsGroup: 0
       containers:
         - name: sssonector
           image: sssonector:latest
           imagePullPolicy: Always
+          securityContext:
+            privileged: true
+            capabilities:
+              add:
+                - NET_ADMIN
+                - NET_RAW
+                - SYS_ADMIN
           ports:
             - name: http-api
               containerPort: 8080
@@ -114,6 +117,18 @@ spec:
               value: json
             - name: SSSONECTOR_METRICS_ENABLED
               value: "true"
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
           volumeMounts:
             - name: config
               mountPath: /etc/sssonector/config.json
@@ -124,6 +139,13 @@ spec:
               readOnly: true
             - name: data
               mountPath: /var/lib/sssonector
+            - name: host-dev
+              mountPath: /dev
+            - name: host-sys
+              mountPath: /sys
+            - name: host-proc
+              mountPath: /host/proc
+              readOnly: true
           resources:
             requests:
               cpu: 500m
@@ -155,53 +177,18 @@ spec:
           secret:
             secretName: sssonector-certs
         - name: data
-          persistentVolumeClaim:
-            claimName: sssonector-data
-
----
-# PersistentVolumeClaim for SSSonector data
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: sssonector-data
-  labels:
-    app: sssonector
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 10Gi
-  storageClassName: standard
-
----
-# HorizontalPodAutoscaler for SSSonector
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: sssonector
-  labels:
-    app: sssonector
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: sssonector
-  minReplicas: 3
-  maxReplicas: 10
-  metrics:
-    - type: Resource
-      resource:
-        name: cpu
-        target:
-          type: Utilization
-          averageUtilization: 80
-    - type: Resource
-      resource:
-        name: memory
-        target:
-          type: Utilization
-          averageUtilization: 80
+          hostPath:
+            path: /var/lib/sssonector
+            type: DirectoryOrCreate
+        - name: host-dev
+          hostPath:
+            path: /dev
+        - name: host-sys
+          hostPath:
+            path: /sys
+        - name: host-proc
+          hostPath:
+            path: /proc
 
 ---
 # NetworkPolicy for SSSonector
@@ -228,15 +215,44 @@ spec:
     - {}
 
 ---
-# PodDisruptionBudget for SSSonector
-apiVersion: policy/v1
-kind: PodDisruptionBudget
+# RBAC configuration
+apiVersion: v1
+kind: ServiceAccount
 metadata:
   name: sssonector
   labels:
     app: sssonector
-spec:
-  minAvailable: 2
-  selector:
-    matchLabels:
-      app: sssonector
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: sssonector
+  labels:
+    app: sssonector
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: sssonector
+  labels:
+    app: sssonector
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: sssonector
+subjects:
+  - kind: ServiceAccount
+    name: sssonector
+    namespace: default
