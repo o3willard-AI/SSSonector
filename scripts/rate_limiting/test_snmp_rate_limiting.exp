@@ -14,64 +14,111 @@ send_log "[exec date]\n"
 # Test rate limits (in Mbps)
 set rate_limits {5 10 25 50}
 
+proc collect_metrics {duration} {
+    global monitor_host
+    set metrics {}
+    
+    for {set i 0} {$i < $duration} {incr i} {
+        # Get throughput
+        spawn ssh sblanken@$monitor_host "/usr/local/bin/sssonector-snmp throughput"
+        expect {
+            -re {(\d+):(\d+)} {
+                set rx $expect_out(1,string)
+                set tx $expect_out(2,string)
+                lappend metrics [list $rx $tx]
+                send_log "."
+            }
+            timeout {
+                send_log "T"
+            }
+        }
+        expect eof
+        sleep 1
+    }
+    send_log "\n"
+    return $metrics
+}
+
 proc test_rate_limit {direction rate_limit} {
     global server_host client_host test_file
     send_log "\n=== Testing $direction transfer at $rate_limit Mbps ===\n"
 
     # Set rate limit on server
     spawn ssh sblanken@$server_host
+    expect "$ "
+    send "sudo sssonector --set-rate-limit $rate_limit\r"
     expect {
-        "password:" {
-            send "101abn\r"
-            exp_continue
-        }
-        "$ " {
-            send "sudo sssonector --set-rate-limit $rate_limit\r"
-            exp_continue
-        }
         "password for sblanken:" {
             send "101abn\r"
             exp_continue
         }
+        "$ " {
+            send "exit\r"
+        }
     }
-    expect "$ "
-    send "exit\r"
     expect eof
 
-    # Start FTP transfer
+    # Start file transfer
     if {$direction eq "server-to-client"} {
-        send_log "Starting server-to-client FTP transfer...\n"
+        send_log "Starting server-to-client transfer...\n"
         spawn ssh sblanken@$client_host
         expect "$ "
-        send "ftp -n $server_host << EOF\n"
-        send "user sblanken 101abn\n"
-        send "binary\n"
-        send "get $test_file /tmp/test_download\n"
-        send "quit\n"
-        send "EOF\n"
-        expect "$ "
+        send "sftp sblanken@$server_host:$test_file /tmp/test_download\r"
     } else {
-        send_log "Starting client-to-server FTP transfer...\n"
+        send_log "Starting client-to-server transfer...\n"
         spawn ssh sblanken@$client_host
         expect "$ "
-        send "ftp -n $server_host << EOF\n"
-        send "user sblanken 101abn\n"
-        send "binary\n"
-        send "put $test_file /tmp/test_upload\n"
-        send "quit\n"
-        send "EOF\n"
-        expect "$ "
+        send "sftp $test_file sblanken@$server_host:/tmp/test_upload\r"
     }
 
-    # Wait for transfer to complete and clean up
-    sleep 30
+    # Collect metrics during transfer
+    send_log "Collecting metrics...\n"
+    set metrics [collect_metrics 30]
+    
+    # Calculate average throughput
+    set total_rx 0
+    set total_tx 0
+    set samples [llength $metrics]
+    
+    foreach metric $metrics {
+        lassign $metric rx tx
+        set total_rx [expr {$total_rx + $rx}]
+        set total_tx [expr {$total_tx + $tx}]
+    }
+    
+    set avg_rx [expr {$total_rx / $samples / 1024 / 1024 * 8.0}] ;# Convert to Mbps
+    set avg_tx [expr {$total_tx / $samples / 1024 / 1024 * 8.0}] ;# Convert to Mbps
+    
+    send_log "\nAverage RX: $avg_rx Mbps\n"
+    send_log "Average TX: $avg_tx Mbps\n"
+
+    # Clean up
+    spawn ssh sblanken@$client_host
+    expect "$ "
     send "rm -f /tmp/test_*\r"
     expect "$ "
     send "exit\r"
     expect eof
 
-    # For now, return success (we'll add actual validation in the next iteration)
-    return 1
+    spawn ssh sblanken@$server_host
+    expect "$ "
+    send "rm -f /tmp/test_*\r"
+    expect "$ "
+    send "exit\r"
+    expect eof
+
+    # Verify rate limit
+    set measured_rate [expr {$direction eq "server-to-client" ? $avg_rx : $avg_tx}]
+    set min_acceptable [expr {$rate_limit * 0.90}]
+    set max_acceptable [expr {$rate_limit * 1.10}]
+    
+    if {$measured_rate >= $min_acceptable && $measured_rate <= $max_acceptable} {
+        send_log "✓ Rate limiting test PASSED\n"
+        return 1
+    } else {
+        send_log "✗ Rate limiting test FAILED (measured: $measured_rate Mbps, target: $rate_limit Mbps)\n"
+        return 0
+    }
 }
 
 # Run tests in both directions

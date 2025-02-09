@@ -6,6 +6,9 @@ import (
 	"runtime"
 	"sync"
 	"time"
+
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 // Config holds monitoring configuration
@@ -19,7 +22,7 @@ type Config struct {
 
 // Monitor handles system monitoring and logging
 type Monitor struct {
-	logger     *Logger
+	logger     *zap.Logger
 	config     *Config
 	metrics    *Metrics
 	snmpAgent  *SNMPAgent
@@ -33,7 +36,13 @@ type Monitor struct {
 
 // New creates a new monitor instance
 func New(cfg *Config) (*Monitor, error) {
-	logger, err := NewLogger(INFO, cfg.LogFile)
+	// Create logger configuration
+	logConfig := zap.NewProductionConfig()
+	logConfig.OutputPaths = []string{cfg.LogFile}
+	logConfig.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
+
+	// Create logger
+	logger, err := logConfig.Build()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create logger: %w", err)
 	}
@@ -59,14 +68,20 @@ func New(cfg *Config) (*Monitor, error) {
 	return m, nil
 }
 
+// Logger returns the monitor's logger instance
+func (m *Monitor) Logger() *zap.Logger {
+	return m.logger
+}
+
 // Start initializes monitoring
 func (m *Monitor) Start() error {
 	if m.config.SNMPEnabled && m.snmpAgent != nil {
 		if err := m.snmpAgent.Start(); err != nil {
 			return fmt.Errorf("failed to start SNMP agent: %w", err)
 		}
-		m.logger.Info("SNMP monitoring started on %s:%d",
-			m.config.SNMPAddress, m.config.SNMPPort)
+		m.logger.Info("SNMP monitoring started",
+			zap.String("address", m.config.SNMPAddress),
+			zap.Int("port", m.config.SNMPPort))
 	}
 
 	// Start certificate expiration monitor in test mode
@@ -101,26 +116,23 @@ func (m *Monitor) Stop() {
 
 	// Close and sync logger
 	if err := m.logger.Sync(); err != nil {
-		m.Error("Failed to sync logger: %v", err)
-	}
-	if err := m.logger.Close(); err != nil {
-		m.Error("Failed to close logger: %v", err)
+		m.logger.Error("Failed to sync logger", zap.Error(err))
 	}
 }
 
 // Info logs an info message
-func (m *Monitor) Info(format string, v ...interface{}) {
-	m.logger.Info(format, v...)
+func (m *Monitor) Info(msg string, fields ...zap.Field) {
+	m.logger.Info(msg, fields...)
 }
 
 // Error logs an error message
-func (m *Monitor) Error(format string, v ...interface{}) {
-	m.logger.Error(format, v...)
+func (m *Monitor) Error(msg string, fields ...zap.Field) {
+	m.logger.Error(msg, fields...)
 }
 
 // Warn logs a warning message
-func (m *Monitor) Warn(format string, v ...interface{}) {
-	m.logger.Warn(format, v...)
+func (m *Monitor) Warn(msg string, fields ...zap.Field) {
+	m.logger.Warn(msg, fields...)
 }
 
 // UpdateMetrics updates monitoring metrics
@@ -147,10 +159,10 @@ func (m *Monitor) monitorCertExpiration() {
 	// Wait for 15 seconds in test mode
 	select {
 	case <-time.After(15 * time.Second):
-		m.Info("Test mode: certificate expired, shutting down")
+		m.logger.Info("Test mode: certificate expired, shutting down")
 		// Use platform-specific process termination
 		if err := killProcess(os.Getpid()); err != nil {
-			m.Error("Failed to kill process: %v", err)
+			m.logger.Error("Failed to kill process", zap.Error(err))
 		}
 	case <-m.shutdownCh:
 		return
@@ -188,7 +200,7 @@ func (m *Monitor) collectSystemMetrics() {
 
 			// Collect system metrics
 			if err := m.sysMetrics.CollectMetrics(m.metrics); err != nil {
-				m.Error("Failed to collect system metrics: %v", err)
+				m.logger.Error("Failed to collect system metrics", zap.Error(err))
 			}
 			m.mu.Unlock()
 		}

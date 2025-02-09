@@ -10,6 +10,7 @@ import (
 	"unicode"
 
 	"github.com/gosnmp/gosnmp"
+	"go.uber.org/zap"
 )
 
 // SNMPAgent handles SNMP monitoring
@@ -20,7 +21,7 @@ type SNMPAgent struct {
 	conn        *net.UDPConn
 	startTime   time.Time
 	mu          sync.RWMutex
-	logger      *Logger
+	logger      *zap.Logger
 	requestPool sync.Pool
 	stats       *SNMPStats
 }
@@ -37,7 +38,7 @@ type SNMPStats struct {
 }
 
 // NewSNMPAgent creates a new SNMP agent
-func NewSNMPAgent(cfg *Config, metrics *Metrics, logger *Logger) (*SNMPAgent, error) {
+func NewSNMPAgent(cfg *Config, metrics *Metrics, logger *zap.Logger) (*SNMPAgent, error) {
 	agent := &SNMPAgent{
 		config:    cfg,
 		metrics:   metrics,
@@ -69,14 +70,16 @@ func (a *SNMPAgent) Start() error {
 
 	// Set socket buffer sizes
 	if err := a.conn.SetReadBuffer(262144); err != nil { // 256KB read buffer
-		a.logger.Error("Failed to set UDP read buffer size: %v", err)
+		a.logger.Error("Failed to set UDP read buffer size", zap.Error(err))
 	}
 	if err := a.conn.SetWriteBuffer(262144); err != nil { // 256KB write buffer
-		a.logger.Error("Failed to set UDP write buffer size: %v", err)
+		a.logger.Error("Failed to set UDP write buffer size", zap.Error(err))
 	}
 
-	a.logger.Info("SNMP agent listening on %s:%d with community '%s'",
-		a.config.SNMPAddress, a.config.SNMPPort, a.config.SNMPCommunity)
+	a.logger.Info("SNMP agent started",
+		zap.String("address", a.config.SNMPAddress),
+		zap.Int("port", a.config.SNMPPort),
+		zap.String("community", a.config.SNMPCommunity))
 
 	// Start request handlers
 	for i := 0; i < 4; i++ { // Multiple handlers for concurrent processing
@@ -96,15 +99,15 @@ func (a *SNMPAgent) reportMetrics() {
 
 	for range ticker.C {
 		a.stats.mu.RLock()
-		a.logger.Info("SNMP Stats - Total: %d, Success: %d, Invalid: %d, Auth Errors: %d",
-			a.stats.totalRequests,
-			a.stats.successfulRequests,
-			a.stats.invalidRequests,
-			a.stats.authErrors)
+		a.logger.Info("SNMP Stats",
+			zap.Uint64("total_requests", a.stats.totalRequests),
+			zap.Uint64("successful_requests", a.stats.successfulRequests),
+			zap.Uint64("invalid_requests", a.stats.invalidRequests),
+			zap.Uint64("auth_errors", a.stats.authErrors))
 		if a.stats.lastError != "" {
-			a.logger.Info("Last Error (%s): %s",
-				a.stats.lastErrorTime.Format(time.RFC3339),
-				a.stats.lastError)
+			a.logger.Info("Last Error",
+				zap.Time("time", a.stats.lastErrorTime),
+				zap.String("error", a.stats.lastError))
 		}
 		a.stats.mu.RUnlock()
 	}
@@ -168,7 +171,7 @@ func (a *SNMPAgent) handleRequests() {
 				a.requestPool.Put(buffer)
 				return
 			}
-			a.logger.Error("Error reading UDP: %v", err)
+			a.logger.Error("Error reading UDP", zap.Error(err))
 			a.requestPool.Put(buffer)
 			continue
 		}
@@ -179,7 +182,10 @@ func (a *SNMPAgent) handleRequests() {
 		a.stats.mu.Unlock()
 
 		// Debug log raw packet
-		a.logger.Debug("Received %d bytes from %v: [% x]", n, remoteAddr, buffer[:n])
+		a.logger.Debug("Received SNMP packet",
+			zap.Int("bytes", n),
+			zap.String("remote_addr", remoteAddr.String()),
+			zap.Binary("data", buffer[:n]))
 
 		// Parse incoming SNMP packet
 		request, err := DecodeMessage(buffer[:n])
@@ -191,13 +197,18 @@ func (a *SNMPAgent) handleRequests() {
 			a.stats.lastError = fmt.Sprintf("Decode error: %v", err)
 			a.stats.lastErrorTime = time.Now()
 			a.stats.mu.Unlock()
-			a.logger.Error("Error decoding SNMP packet from %v: %v", remoteAddr, err)
+			a.logger.Error("Error decoding SNMP packet",
+				zap.String("remote_addr", remoteAddr.String()),
+				zap.Error(err))
 			continue
 		}
 
 		// Debug log decoded message
-		a.logger.Debug("Decoded SNMP message from %v: version=%d, community='%s', type=%d",
-			remoteAddr, request.Version, request.Community, request.PDUType)
+		a.logger.Debug("Decoded SNMP message",
+			zap.String("remote_addr", remoteAddr.String()),
+			zap.Int("version", int(request.Version)),
+			zap.String("community", request.Community),
+			zap.Int("type", int(request.PDUType)))
 
 		// Verify community string
 		if !a.validateCommunity(request.Community) {
@@ -205,8 +216,10 @@ func (a *SNMPAgent) handleRequests() {
 			a.stats.authErrors++
 			a.stats.mu.Unlock()
 
-			a.logger.Warn("Invalid community string from %v (got '%s', expected '%s')",
-				remoteAddr, request.Community, a.config.SNMPCommunity)
+			a.logger.Warn("Invalid community string",
+				zap.String("remote_addr", remoteAddr.String()),
+				zap.String("received", request.Community),
+				zap.String("expected", a.config.SNMPCommunity))
 
 			// Send back authentication failure
 			response := &SNMPMessage{
@@ -221,12 +234,14 @@ func (a *SNMPAgent) handleRequests() {
 
 			responseBytes, err := EncodeMessage(response)
 			if err == nil {
-				a.logger.Debug("Sending auth failure response to %v: [% x]", remoteAddr, responseBytes)
+				a.logger.Debug("Sending auth failure response",
+					zap.String("remote_addr", remoteAddr.String()),
+					zap.Binary("data", responseBytes))
 				if _, err := a.conn.WriteToUDP(responseBytes, remoteAddr); err != nil {
-					a.logger.Error("Error sending auth failure response: %v", err)
+					a.logger.Error("Error sending auth failure response", zap.Error(err))
 				}
 			} else {
-				a.logger.Error("Error encoding auth failure response: %v", err)
+				a.logger.Error("Error encoding auth failure response", zap.Error(err))
 			}
 			continue
 		}
@@ -243,7 +258,8 @@ func (a *SNMPAgent) handleRequests() {
 			case <-done:
 				// Request completed normally
 			case <-time.After(5 * time.Second):
-				a.logger.Error("Request from %v timed out", remoteAddr)
+				a.logger.Error("Request timeout",
+					zap.String("remote_addr", remoteAddr.String()))
 				a.stats.mu.Lock()
 				a.stats.lastError = "Request timeout"
 				a.stats.lastErrorTime = time.Now()
@@ -257,14 +273,17 @@ func (a *SNMPAgent) processRequest(request *SNMPMessage, remoteAddr *net.UDPAddr
 	start := time.Now()
 	defer func() {
 		if r := recover(); r != nil {
-			a.logger.Error("Panic in processRequest: %v", r)
+			a.logger.Error("Panic in processRequest",
+				zap.String("remote_addr", remoteAddr.String()),
+				zap.Any("panic", r))
 			a.stats.mu.Lock()
 			a.stats.lastError = fmt.Sprintf("Panic: %v", r)
 			a.stats.lastErrorTime = time.Now()
 			a.stats.mu.Unlock()
 		}
 		duration := time.Since(start)
-		a.logger.Debug("Request processing took %v", duration)
+		a.logger.Debug("Request processing completed",
+			zap.Duration("duration", duration))
 
 		// Update metrics
 		a.mu.Lock()
@@ -287,8 +306,11 @@ func (a *SNMPAgent) processRequest(request *SNMPMessage, remoteAddr *net.UDPAddr
 		)
 	}()
 
-	a.logger.Debug("Processing SNMP request from %v - Type: %v, Variables: %d",
-		remoteAddr, request.PDUType, len(request.Variables))
+	a.logger.Debug("Processing SNMP request",
+		zap.String("remote_addr", remoteAddr.String()),
+		zap.Int("type", int(request.PDUType)),
+		zap.Int("variables", len(request.Variables)))
+
 	response := &SNMPMessage{
 		Version:   request.Version,
 		Community: request.Community,
@@ -317,7 +339,9 @@ func (a *SNMPAgent) processRequest(request *SNMPMessage, remoteAddr *net.UDPAddr
 		oid := varBind.Name
 		var result gosnmp.SnmpPDU
 
-		a.logger.Debug("Processing OID %s from %v", oid, remoteAddr)
+		a.logger.Debug("Processing OID",
+			zap.String("oid", oid),
+			zap.String("remote_addr", remoteAddr.String()))
 
 		switch request.PDUType {
 		case gosnmp.GetRequest:
@@ -340,7 +364,9 @@ func (a *SNMPAgent) processRequest(request *SNMPMessage, remoteAddr *net.UDPAddr
 					response.Error = gosnmp.GenErr
 				}
 				response.Index = i
-				a.logger.Error("Failed to get OID %s: %v", oid, err)
+				a.logger.Error("Failed to get OID",
+					zap.String("oid", oid),
+					zap.Error(err))
 				break
 			}
 
@@ -368,7 +394,10 @@ func (a *SNMPAgent) processRequest(request *SNMPMessage, remoteAddr *net.UDPAddr
 				Type:  snmpType,
 				Value: value,
 			}
-			a.logger.Debug("Found value for OID %s: %v (type %s)", oid, result.Value, entry.Type)
+			a.logger.Debug("Found value for OID",
+				zap.String("oid", oid),
+				zap.Any("value", result.Value),
+				zap.String("type", entry.Type))
 
 		case gosnmp.GetNextRequest:
 			entry, err := a.mibTree.GetNextEntry(oid, request.Community)
@@ -390,7 +419,9 @@ func (a *SNMPAgent) processRequest(request *SNMPMessage, remoteAddr *net.UDPAddr
 					response.Error = gosnmp.GenErr
 				}
 				response.Index = i
-				a.logger.Error("Failed to get next OID after %s: %v", oid, err)
+				a.logger.Error("Failed to get next OID",
+					zap.String("oid", oid),
+					zap.Error(err))
 				break
 			}
 
@@ -418,13 +449,17 @@ func (a *SNMPAgent) processRequest(request *SNMPMessage, remoteAddr *net.UDPAddr
 				Type:  snmpType,
 				Value: value,
 			}
-			a.logger.Debug("Found next OID after %s: %s = %v (type %s)",
-				oid, entry.OID, result.Value, entry.Type)
+			a.logger.Debug("Found next OID",
+				zap.String("after", oid),
+				zap.String("next_oid", entry.OID),
+				zap.Any("value", result.Value),
+				zap.String("type", entry.Type))
 
 		default:
 			response.Error = gosnmp.GenErr
 			response.Index = i
-			a.logger.Error("Unsupported PDU type: %d", request.PDUType)
+			a.logger.Error("Unsupported PDU type",
+				zap.Int("type", int(request.PDUType)))
 			break
 		}
 
@@ -438,17 +473,23 @@ func (a *SNMPAgent) processRequest(request *SNMPMessage, remoteAddr *net.UDPAddr
 	// Encode and send response
 	responseBytes, err := EncodeMessage(response)
 	if err != nil {
-		fmt.Printf("Error encoding SNMP response: %v\n", err)
+		a.logger.Error("Error encoding SNMP response", zap.Error(err))
 		return
 	}
 
-	a.logger.Debug("Sending response to %v: [% x]", remoteAddr, responseBytes)
+	a.logger.Debug("Sending response",
+		zap.String("remote_addr", remoteAddr.String()),
+		zap.Binary("data", responseBytes))
+
 	if _, err := a.conn.WriteToUDP(responseBytes, remoteAddr); err != nil {
-		a.logger.Error("Failed to send SNMP response: %v", err)
+		a.logger.Error("Failed to send SNMP response", zap.Error(err))
 		return
 	}
 
 	// Log response summary
-	a.logger.Info("Sent SNMP response to %v: error=%d, index=%d, vars=%d",
-		remoteAddr, response.Error, response.Index, len(response.Variables))
+	a.logger.Info("Sent SNMP response",
+		zap.String("remote_addr", remoteAddr.String()),
+		zap.Int("error", int(response.Error)),
+		zap.Int("index", response.Index),
+		zap.Int("variables", len(response.Variables)))
 }
