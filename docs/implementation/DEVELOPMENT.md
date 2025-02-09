@@ -1,420 +1,190 @@
 # SSSonector Development Guide
 
-## Development Environment Setup
-
-### 1. Prerequisites
-
-```bash
-# Required tools
-go 1.21 or later
-git
-make
-gcc
-openssl
-
-# Optional tools
-dlv (debugging)
-golangci-lint (linting)
-goimports (code formatting)
-```
-
-### 2. Repository Setup
-
-```bash
-# Clone repository
-git clone https://github.com/o3willard-AI/SSSonector.git
-cd SSSonector
-
-# Install dependencies
-go mod download
-
-# Build project
-make build
-
-# Run tests
-make test
-```
-
-### 3. Development Tools
-
-```bash
-# Install development tools
-make dev-tools
-
-# Run linter
-make lint
-
-# Run code formatter
-make fmt
-
-# Generate mocks
-make generate
-```
+This document provides information for developers working on the SSSonector codebase.
 
 ## Project Structure
 
 ```
-.
-├── cmd/                    # Command-line tools
-│   ├── sssonector/        # Main service
-│   └── sssonectorctl/     # Control utility
-├── docs/                   # Documentation
-│   ├── admin/             # Administration guides
-│   ├── config/            # Configuration docs
-│   ├── implementation/    # Implementation details
-│   └── security/          # Security docs
-├── internal/              # Internal packages
-│   ├── adapter/           # Network adapters
-│   ├── config/            # Configuration
-│   ├── monitor/           # Monitoring
-│   ├── security/          # Security
-│   ├── service/           # Service management
-│   ├── throttle/          # Rate limiting
-│   └── tunnel/            # Tunnel implementation
-├── scripts/               # Build/install scripts
-├── security/              # Security policies
-└── test/                  # Test suites
+internal/
+  ├── adapter/         # Network interface adapters
+  ├── config/         # Configuration management
+  ├── monitor/        # Monitoring and metrics
+  ├── security/       # Security and authentication
+  ├── service/        # Core service implementation
+  │   ├── control/    # Service control interface
+  │   ├── daemon/     # Daemon management
+  │   ├── platform/   # Platform-specific code
+  │   ├── base.go     # Base service implementation
+  │   └── types.go    # Service type definitions
+  ├── throttle/       # Rate limiting
+  └── tunnel/         # Tunnel implementation
 ```
 
-## Development Workflow
+## Service Control System
 
-### 1. Making Changes
+The service control system provides a unified interface for managing and monitoring the SSSonector service. It consists of several components:
 
-1. Create feature branch:
-```bash
-git checkout -b feature/my-feature
-```
+### Service Interface
 
-2. Make changes following guidelines:
-- Use interfaces for abstraction
-- Write tests first
-- Follow Go best practices
-- Update documentation
-
-3. Run tests:
-```bash
-# Run unit tests
-make test
-
-# Run integration tests
-make test-integration
-
-# Run all tests with coverage
-make test-coverage
-```
-
-4. Submit changes:
-```bash
-# Format code
-make fmt
-
-# Run linter
-make lint
-
-# Commit changes
-git commit -s -m "feat: Add new feature"
-
-# Push changes
-git push origin feature/my-feature
-```
-
-### 2. Testing Guidelines
-
-#### Unit Tests
+The core service interface (`internal/service/types.go`) defines the contract for service operations:
 
 ```go
-func TestFeature(t *testing.T) {
-    // Arrange
-    cfg := &config.AppConfig{...}
-    logger := zaptest.NewLogger(t)
-    
-    // Act
-    result, err := NewFeature(cfg, logger)
-    
-    // Assert
-    require.NoError(t, err)
-    assert.NotNil(t, result)
-}
-```
-
-#### Integration Tests
-
-```go
-func TestIntegration(t *testing.T) {
-    // Skip in short mode
-    if testing.Short() {
-        t.Skip("Skipping integration test")
-    }
-    
-    // Setup test environment
-    cleanup := setupTest(t)
-    defer cleanup()
-    
-    // Run test
-    ...
-}
-```
-
-#### Performance Tests
-
-```go
-func BenchmarkFeature(b *testing.B) {
-    // Setup
-    cfg := setupBenchmark(b)
-    
-    // Run benchmark
-    b.ResetTimer()
-    for i := 0; i < b.N; i++ {
-        result := feature(cfg)
-        require.NotNil(b, result)
-    }
-}
-```
-
-### 3. Documentation Guidelines
-
-#### Code Documentation
-
-```go
-// Package throttle provides rate limiting functionality.
-package throttle
-
-// TokenBucket implements the token bucket algorithm for rate limiting.
-// It is thread-safe and supports dynamic rate updates.
-type TokenBucket struct {
-    // rate is the token replenishment rate per second
-    rate float64
-    
-    // burst is the maximum token capacity
-    burst float64
-}
-
-// Take attempts to take n tokens from the bucket.
-// It returns true if successful, false if insufficient tokens.
-func (b *TokenBucket) Take(n float64) bool {
-    ...
-}
-```
-
-#### API Documentation
-
-```markdown
-## API Endpoint
-
-### POST /api/v1/tunnel/start
-
-Start a new tunnel connection.
-
-**Request:**
-```json
-{
-    "mode": "server",
-    "address": "192.168.1.1",
-    "port": 8080
-}
-```
-
-**Response:**
-```json
-{
-    "id": "tunnel-123",
-    "status": "running"
-}
-```
-```
-
-### 4. Performance Optimization
-
-#### Profiling
-
-```bash
-# Enable profiling
-export SSSONECTOR_PROFILE=1
-
-# Run with CPU profiling
-go tool pprof http://localhost:6060/debug/pprof/profile
-
-# Run with memory profiling
-go tool pprof http://localhost:6060/debug/pprof/heap
-```
-
-#### Benchmarking
-
-```bash
-# Run benchmarks
-go test -bench=. -benchmem ./...
-
-# Run specific benchmark
-go test -bench=BenchmarkFeature -benchmem ./...
-
-# Profile benchmark
-go test -bench=. -cpuprofile=cpu.prof
-```
-
-## Common Tasks
-
-### 1. Adding a New Feature
-
-1. Design the interface:
-```go
-type NewFeature interface {
+type Service interface {
     Start() error
     Stop() error
-    Status() Status
+    Reload() error
+    Status() (*ServiceStatus, error)
+    Metrics() (*ServiceMetrics, error)
+    Health() error
 }
 ```
 
-2. Implement the interface:
+Service states are represented by the `ServiceState` type:
+- `StateStarting`: Service is initializing
+- `StateRunning`: Service is operational
+- `StateStopping`: Service is shutting down
+- `StateStopped`: Service is not running
+- `StateReloading`: Service is reloading configuration
+- `StateFailed`: Service encountered an error
+
+### Control Commands
+
+Service control commands (`ServiceCommand` type) include:
+- `CmdStatus`: Get service status
+- `CmdMetrics`: Get service metrics
+- `CmdHealth`: Perform health check
+- `CmdStart`: Start the service
+- `CmdStop`: Stop the service
+- `CmdReload`: Reload configuration
+
+### Control Server
+
+The control server (`internal/service/control/interface.go`) provides:
+- Unix socket-based communication
+- Command handling and routing
+- Response serialization
+- Error handling
+
+Configuration:
 ```go
-type feature struct {
-    cfg    *config.AppConfig
-    logger *zap.Logger
-}
-
-func NewFeature(cfg *config.AppConfig, logger *zap.Logger) (NewFeature, error) {
-    ...
-}
-```
-
-3. Add configuration:
-```go
-type FeatureConfig struct {
-    Enabled bool    `json:"enabled"`
-    Rate    float64 `json:"rate"`
-}
-```
-
-4. Write tests:
-```go
-func TestNewFeature(t *testing.T) {
-    ...
-}
-```
-
-### 2. Adding a New Protocol
-
-1. Define protocol interface:
-```go
-type Protocol interface {
-    Connect() error
-    Send(data []byte) error
-    Receive() ([]byte, error)
-    Close() error
+type ControlServer struct {
+    service    service.Service
+    socket     net.Listener
+    socketPath string
 }
 ```
 
-2. Implement protocol:
+The socket path can be configured via:
 ```go
-type protocol struct {
-    conn    net.Conn
-    config  *config.ProtocolConfig
-    logger  *zap.Logger
-}
+func (c *ControlServer) SetSocketPath(path string)
 ```
 
-3. Add protocol factory:
+### Control Client
+
+The control client (`internal/service/control/client.go`) provides:
+- Socket connection management
+- Command execution
+- Response deserialization
+- Error handling
+
+Usage:
 ```go
-func NewProtocol(cfg *config.ProtocolConfig) (Protocol, error) {
-    ...
-}
+client, err := control.NewClient(cfg, logger)
+client.SetSocketPath("/var/run/sssonector.sock")
+response, err := client.ExecuteCommand(service.CmdStatus, nil)
 ```
 
-### 3. Adding Metrics
+### Base Service Implementation
 
-1. Define metrics:
-```go
-var (
-    connectionCounter = prometheus.NewCounter(prometheus.CounterOpts{
-        Name: "connections_total",
-        Help: "Total number of connections",
-    })
-)
-```
+The base service (`internal/service/base.go`) provides:
+- Core service lifecycle management
+- Status and metrics tracking
+- Configuration management
+- Error handling
 
-2. Register metrics:
-```go
-func init() {
-    prometheus.MustRegister(connectionCounter)
-}
-```
+### CLI Interface
 
-3. Use metrics:
-```go
-func (s *Server) handleConnection() {
-    connectionCounter.Inc()
-    ...
-}
-```
+The command-line interface (`cmd/sssonectorctl/main.go`) supports:
+- All service commands
+- Socket path configuration
+- JSON output formatting
+- Error reporting
 
-## Debugging Tips
-
-### 1. Logging
-
-```go
-// Use structured logging
-logger.Info("Starting server",
-    zap.String("addr", addr),
-    zap.Int("port", port),
-)
-
-// Include context
-logger.Error("Connection failed",
-    zap.Error(err),
-    zap.String("remote", remote),
-)
-```
-
-### 2. Debugging
-
-```go
-// Use delve
-dlv debug ./cmd/sssonector
-
-// Set breakpoints
-b internal/tunnel/server.go:123
-
-// Inspect variables
-p variable
-```
-
-### 3. Tracing
-
-```go
-// Enable tracing
-ctx, span := tracer.Start(ctx, "operation")
-defer span.End()
-
-// Add attributes
-span.SetAttributes(
-    attribute.String("key", "value"),
-)
-```
-
-## Release Process
-
-1. Version bump:
+Example usage:
 ```bash
-make version VERSION=v1.2.0
+sssonectorctl status
+sssonectorctl --socket=/var/run/custom.sock metrics
+sssonectorctl reload
 ```
 
-2. Update changelog:
+## Error Handling
+
+Service errors are represented by the `ServiceError` type with specific error codes:
+- `ErrNotRunning`: Service is not running
+- `ErrAlreadyRunning`: Service is already running
+- `ErrInvalidCommand`: Invalid command received
+- `ErrInvalidConfig`: Invalid configuration
+- `ErrInternal`: Internal service error
+
+## Configuration
+
+The service control system uses the following configuration:
+
+```go
+type ServiceOptions struct {
+    Name      string // Service name
+    ConfigDir string // Configuration directory
+    DataDir   string // Data directory
+    LogDir    string // Log directory
+}
+```
+
+Default socket path: `/var/run/sssonector.sock`
+
+## Development Guidelines
+
+1. Error Handling
+   - Use `ServiceError` for service-specific errors
+   - Include error codes for categorization
+   - Provide descriptive error messages
+
+2. Command Implementation
+   - Add new commands in `service/types.go`
+   - Implement command handling in control server
+   - Update CLI interface for new commands
+
+3. Testing
+   - Write unit tests for new commands
+   - Test error conditions
+   - Verify socket communication
+   - Test platform-specific behavior
+
+4. Documentation
+   - Update this document for new features
+   - Document command parameters
+   - Include usage examples
+   - Document error conditions
+
+## Building and Testing
+
+Build the service:
 ```bash
-make changelog
+make build
 ```
 
-3. Build release:
+Run tests:
 ```bash
-make release
+make test
 ```
 
-4. Create release:
+Run with custom socket:
 ```bash
-make publish
+./sssonector --socket=/path/to/socket
 ```
 
-## Resources
+## Contributing
 
-- [Go Documentation](https://golang.org/doc/)
-- [Project Wiki](https://github.com/o3willard-AI/SSSonector/wiki)
-- [Style Guide](https://golang.org/doc/effective_go)
-- [Security Guidelines](../security/README.md)
+1. Follow Go coding standards
+2. Add tests for new features
+3. Update documentation
+4. Run full test suite before submitting

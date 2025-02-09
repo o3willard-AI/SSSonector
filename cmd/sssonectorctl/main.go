@@ -5,113 +5,112 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/o3willard-AI/SSSonector/internal/service"
 	"github.com/o3willard-AI/SSSonector/internal/service/control"
+	"go.uber.org/zap"
 )
 
 var (
-	network = flag.String("network", "unix", "Network type (unix, tcp)")
-	address = flag.String("address", "/var/run/sssonector.sock", "Socket address")
-	command = flag.String("command", "status", "Command to execute")
+	// Version is set during build
+	Version = "dev"
+
+	// Command line flags
+	socketPath = flag.String("socket", "/var/run/sssonector.sock", "Path to control socket")
+	jsonOutput = flag.Bool("json", false, "Output in JSON format")
 )
 
 func main() {
+	// Parse command line flags
 	flag.Parse()
 
-	// Create client
-	client, err := control.NewClient(*network, *address)
+	// Initialize logger
+	logger, err := zap.NewProduction()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Failed to initialize logger: %v\n", err)
 		os.Exit(1)
 	}
-	defer client.Close()
+	defer logger.Sync()
+
+	// Create control client
+	client, err := control.NewClient(nil, logger)
+	if err != nil {
+		logger.Error("Failed to create control client", zap.Error(err))
+		os.Exit(1)
+	}
+
+	// Set socket path
+	client.SetSocketPath(*socketPath)
+
+	// Get command
+	args := flag.Args()
+	if len(args) < 1 {
+		fmt.Fprintf(os.Stderr, "Usage: %s [options] <command>\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "\nCommands:\n")
+		fmt.Fprintf(os.Stderr, "  status    Get service status\n")
+		fmt.Fprintf(os.Stderr, "  metrics   Get service metrics\n")
+		fmt.Fprintf(os.Stderr, "  health    Check service health\n")
+		fmt.Fprintf(os.Stderr, "  start     Start service\n")
+		fmt.Fprintf(os.Stderr, "  stop      Stop service\n")
+		fmt.Fprintf(os.Stderr, "  reload    Reload configuration\n")
+		fmt.Fprintf(os.Stderr, "\nOptions:\n")
+		flag.PrintDefaults()
+		os.Exit(1)
+	}
+
+	// Map command to ServiceCommand
+	var cmd service.ServiceCommand
+	switch args[0] {
+	case "status":
+		cmd = service.CmdStatus
+	case "metrics":
+		cmd = service.CmdMetrics
+	case "health":
+		cmd = service.CmdHealth
+	case "start":
+		cmd = service.CmdStart
+	case "stop":
+		cmd = service.CmdStop
+	case "reload":
+		cmd = service.CmdReload
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", args[0])
+		os.Exit(1)
+	}
 
 	// Execute command
-	var response string
-	switch *command {
-	case "status":
-		response, err = client.GetStatus()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error getting status: %v\n", err)
-			os.Exit(1)
-		}
-		printStatus(response)
-
-	case "metrics":
-		metrics, err := client.GetMetrics()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error getting metrics: %v\n", err)
-			os.Exit(1)
-		}
-		printMetrics(metrics)
-
-	case "health":
-		err = client.CheckHealth()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error checking health: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Println("Service is healthy")
-
-	case "reload":
-		err = client.Reload()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error reloading service: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Println("Service reloaded successfully")
-
-	case "rotate-certs":
-		err = client.RotateCerts()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error rotating certificates: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Println("Certificates rotated successfully")
-
-	default:
-		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", *command)
-		os.Exit(1)
-	}
-}
-
-func printStatus(status string) {
-	var v service.ServiceStatus
-	err := json.Unmarshal([]byte(status), &v)
+	resp, err := client.ExecuteCommand(cmd, nil)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error parsing status: %v\n", err)
+		logger.Error("Command failed", zap.Error(err))
 		os.Exit(1)
 	}
 
-	fmt.Printf("Status: %s\n", v.State)
-	fmt.Printf("PID: %d\n", v.PID)
-	fmt.Printf("Uptime: %s\n", v.Uptime)
-	fmt.Printf("Memory: %s\n", v.Memory)
-	fmt.Printf("CPU: %s\n", v.CPU)
-	fmt.Printf("Restarts: %d\n", v.Restarts)
-	fmt.Printf("Start Time: %s\n", v.StartTime.Format(time.RFC3339))
-	fmt.Printf("Last Reload: %s\n", v.LastReload.Format(time.RFC3339))
-	fmt.Printf("Connections: %d\n", v.Connections)
-	fmt.Printf("Platform: %s\n", v.Platform)
-	if v.Error != "" {
-		fmt.Printf("Last Error: %s\n", v.Error)
+	// Output response
+	if *jsonOutput {
+		// JSON output
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		if err := encoder.Encode(resp); err != nil {
+			logger.Error("Failed to encode response", zap.Error(err))
+			os.Exit(1)
+		}
+	} else {
+		// Human-readable output
+		if resp.Success {
+			if resp.Message != "" {
+				fmt.Println(resp.Message)
+			}
+			if resp.Data != nil {
+				data, err := json.MarshalIndent(resp.Data, "", "  ")
+				if err != nil {
+					logger.Error("Failed to marshal data", zap.Error(err))
+					os.Exit(1)
+				}
+				fmt.Println(string(data))
+			}
+		} else {
+			fmt.Fprintf(os.Stderr, "Error: %s\n", resp.Message)
+			os.Exit(1)
+		}
 	}
-}
-
-func printMetrics(v *service.ServiceMetrics) {
-	fmt.Printf("CPU Usage: %.2f%%\n", v.CPUUsage)
-	fmt.Printf("Memory Usage: %d bytes\n", v.MemoryUsage)
-	fmt.Printf("Connections: %d\n", v.ConnectionCount)
-	fmt.Printf("Bytes Received: %d\n", v.BytesReceived)
-	fmt.Printf("Bytes Sent: %d\n", v.BytesSent)
-	fmt.Printf("Errors: %d\n", v.ErrorCount)
-	if v.LastError != "" {
-		fmt.Printf("Last Error: %s\n", v.LastError)
-	}
-	fmt.Printf("Uptime: %d seconds\n", v.UptimeSeconds)
-	fmt.Printf("Start Time: %s\n", v.StartTime.Format(time.RFC3339))
-	fmt.Printf("Last Reload: %s\n", v.LastReload.Format(time.RFC3339))
-	fmt.Printf("Platform: %s\n", v.Platform)
 }

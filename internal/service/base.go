@@ -6,210 +6,152 @@ import (
 	"runtime"
 	"time"
 
-	"go.uber.org/zap"
+	"github.com/o3willard-AI/SSSonector/internal/config"
 )
 
-// BaseDaemon provides base daemon functionality
-type BaseDaemon struct {
-	logger  *zap.Logger
+// BaseService provides a base implementation of the Service interface
+type BaseService struct {
+	cfg     *config.AppConfig
 	options ServiceOptions
 	status  ServiceStatus
 	metrics ServiceMetrics
 }
 
-// NewBaseDaemon creates a new base daemon instance
-func NewBaseDaemon(opts ServiceOptions, logger *zap.Logger) (*BaseDaemon, error) {
-	if opts.Name == "" {
-		return nil, fmt.Errorf("service name is required")
+// NewBaseService creates a new base service
+func NewBaseService(cfg *config.AppConfig, opts ServiceOptions) (*BaseService, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("config is required")
 	}
 
-	if logger == nil {
-		return nil, fmt.Errorf("logger is required")
-	}
-
-	d := &BaseDaemon{
-		logger:  logger,
+	svc := &BaseService{
+		cfg:     cfg,
 		options: opts,
 		status: ServiceStatus{
 			Name:      opts.Name,
 			State:     StateStopped,
-			StartTime: time.Now(),
+			StartTime: time.Time{},
+			Mode:      string(cfg.Config.Mode),
+			Version:   "1.0.0", // TODO: Get from build info
 		},
 		metrics: ServiceMetrics{
-			StartTime: time.Now(),
-			Platform:  runtime.GOOS,
+			Platform: runtime.GOOS,
 		},
 	}
 
-	return d, nil
+	return svc, nil
 }
 
-// Start initializes the base daemon
-func (d *BaseDaemon) Start() error {
-	if d.status.State == StateRunning {
-		return NewServiceError(ErrAlreadyRunning, "daemon already running", "")
+// Start starts the service
+func (b *BaseService) Start() error {
+	if b.status.State == StateRunning {
+		return NewServiceError(ErrAlreadyRunning, "Service is already running")
 	}
 
-	d.status.State = StateStarting
-	d.status.StartTime = time.Now()
-	d.status.PID = os.Getpid()
+	b.status.State = StateStarting
+	b.status.StartTime = time.Now()
+	b.status.PID = os.Getpid()
 
-	d.logger.Info("Starting daemon",
-		zap.String("name", d.options.Name),
-		zap.Int("pid", d.status.PID))
+	// TODO: Implement actual service startup logic
 
-	d.status.State = StateRunning
+	b.status.State = StateRunning
 	return nil
 }
 
-// Stop cleans up base daemon resources
-func (d *BaseDaemon) Stop() error {
-	if d.status.State != StateRunning {
-		return NewServiceError(ErrNotRunning, "daemon not running", "")
+// Stop stops the service
+func (b *BaseService) Stop() error {
+	if b.status.State != StateRunning {
+		return NewServiceError(ErrNotRunning, "Service is not running")
 	}
 
-	d.status.State = StateStopping
+	b.status.State = StateStopping
 
-	d.logger.Info("Stopping daemon",
-		zap.String("name", d.options.Name))
+	// TODO: Implement actual service shutdown logic
 
-	d.status.State = StateStopped
+	b.status.State = StateStopped
 	return nil
 }
 
-// Reload reloads the daemon configuration
-func (d *BaseDaemon) Reload() error {
-	if d.status.State != StateRunning {
-		return NewServiceError(ErrNotRunning, "daemon not running", "")
+// Reload reloads the service configuration
+func (b *BaseService) Reload() error {
+	if b.status.State != StateRunning {
+		return NewServiceError(ErrNotRunning, "Service is not running")
 	}
 
-	d.status.State = StateReloading
-	d.status.LastReload = time.Now()
-	d.metrics.LastReload = time.Now()
+	b.status.State = StateReloading
+	b.status.LastReload = time.Now()
 
-	d.logger.Info("Reloading daemon",
-		zap.String("name", d.options.Name))
+	// TODO: Implement actual config reload logic
 
-	d.status.State = StateRunning
+	b.status.State = StateRunning
 	return nil
 }
 
-// Status returns the current daemon status
-func (d *BaseDaemon) Status() (string, error) {
-	if d.status.State == "" {
-		return "", NewServiceError(ErrNotRunning, "daemon not initialized", "")
+// Status returns the current service status
+func (b *BaseService) Status() (*ServiceStatus, error) {
+	if b.status.State == StateRunning {
+		b.updateMetrics()
 	}
-	return d.status.State, nil
+	return &b.status, nil
 }
 
-// GetPID returns the daemon process ID
-func (d *BaseDaemon) GetPID() (int, error) {
-	if d.status.State != StateRunning {
-		return 0, NewServiceError(ErrNotRunning, "daemon not running", "")
-	}
-	return d.status.PID, nil
-}
-
-// IsRunning returns whether the daemon is running
-func (d *BaseDaemon) IsRunning() (bool, error) {
-	return d.status.State == StateRunning, nil
-}
-
-// GetMetrics returns daemon metrics
-func (d *BaseDaemon) GetMetrics() (ServiceMetrics, error) {
-	if d.status.State != StateRunning {
-		return ServiceMetrics{}, NewServiceError(ErrNotRunning, "daemon not running", "")
+// Metrics returns the current service metrics
+func (b *BaseService) Metrics() (*ServiceMetrics, error) {
+	if b.status.State != StateRunning {
+		return nil, NewServiceError(ErrNotRunning, "Service is not running")
 	}
 
-	d.metrics.UptimeSeconds = int64(time.Since(d.status.StartTime).Seconds())
-	return d.metrics, nil
+	b.updateMetrics()
+	return &b.metrics, nil
 }
 
-// Health checks daemon health
-func (d *BaseDaemon) Health() error {
-	if d.status.State != StateRunning {
-		return NewServiceError(ErrNotRunning, "daemon not running", "")
+// Health performs a health check
+func (b *BaseService) Health() error {
+	if b.status.State != StateRunning {
+		return NewServiceError(ErrNotRunning, "Service is not running")
 	}
+
+	// TODO: Implement actual health check logic
 	return nil
 }
 
-// ExecuteCommand executes a daemon command
-func (d *BaseDaemon) ExecuteCommand(cmd ServiceCommand) (string, error) {
-	if d.status.State != StateRunning {
-		return "", NewServiceError(ErrNotRunning, "daemon not running", "")
-	}
-
-	switch cmd.Command {
+// ExecuteCommand executes a service command
+func (b *BaseService) ExecuteCommand(cmd ServiceCommand, args map[string]interface{}) (*ServiceResponse, error) {
+	switch cmd {
 	case CmdStatus:
-		return d.Status()
-	case CmdReload:
-		return "", d.Reload()
-	case CmdMetrics:
-		metrics, err := d.GetMetrics()
+		status, err := b.Status()
 		if err != nil {
-			return "", err
+			return nil, err
 		}
-		return fmt.Sprintf("%+v", metrics), nil
+		return &ServiceResponse{Success: true, Data: status}, nil
+
+	case CmdReload:
+		if err := b.Reload(); err != nil {
+			return nil, err
+		}
+		return &ServiceResponse{Success: true, Message: "Configuration reloaded"}, nil
+
+	case CmdMetrics:
+		metrics, err := b.Metrics()
+		if err != nil {
+			return nil, err
+		}
+		return &ServiceResponse{Success: true, Data: metrics}, nil
+
 	case CmdHealth:
-		return "", d.Health()
+		if err := b.Health(); err != nil {
+			return nil, err
+		}
+		return &ServiceResponse{Success: true, Message: "Service is healthy"}, nil
+
 	default:
-		return "", NewServiceError(ErrInvalidCommand, fmt.Sprintf("unknown command: %s", cmd.Command), "")
+		return nil, NewServiceError(ErrInvalidCommand, fmt.Sprintf("Unknown command: %s", cmd))
 	}
 }
 
-// GetLogs returns daemon logs
-func (d *BaseDaemon) GetLogs(lines int) ([]string, error) {
-	if d.status.State != StateRunning {
-		return nil, NewServiceError(ErrNotRunning, "daemon not running", "")
+// updateMetrics updates service metrics
+func (b *BaseService) updateMetrics() {
+	if b.status.State == StateRunning {
+		b.metrics.UptimeSeconds = int64(time.Since(b.status.StartTime).Seconds())
+		// TODO: Update other metrics
 	}
-	return nil, NewServiceError(ErrNotImplemented, "GetLogs not implemented", "")
-}
-
-// SendSignal sends a signal to the daemon
-func (d *BaseDaemon) SendSignal(signal string) error {
-	if d.status.State != StateRunning {
-		return NewServiceError(ErrNotRunning, "daemon not running", "")
-	}
-	return NewServiceError(ErrNotImplemented, "SendSignal not implemented", "")
-}
-
-// Configure configures the daemon
-func (d *BaseDaemon) Configure(opts ServiceOptions) error {
-	d.options = opts
-	return nil
-}
-
-// GetOptions returns daemon options
-func (d *BaseDaemon) GetOptions() ServiceOptions {
-	return d.options
-}
-
-// GetLogger returns the daemon logger
-func (d *BaseDaemon) GetLogger() *zap.Logger {
-	return d.logger
-}
-
-// SetLogger sets the daemon logger
-func (d *BaseDaemon) SetLogger(logger *zap.Logger) {
-	d.logger = logger
-}
-
-// GetStatus returns the daemon status
-func (d *BaseDaemon) GetStatus() ServiceStatus {
-	return d.status
-}
-
-// SetStatus sets the daemon status
-func (d *BaseDaemon) SetStatus(status ServiceStatus) {
-	d.status = status
-}
-
-// GetMetricsInternal returns internal metrics
-func (d *BaseDaemon) GetMetricsInternal() ServiceMetrics {
-	return d.metrics
-}
-
-// SetMetricsInternal sets internal metrics
-func (d *BaseDaemon) SetMetricsInternal(metrics ServiceMetrics) {
-	d.metrics = metrics
 }
