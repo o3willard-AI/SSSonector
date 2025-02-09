@@ -1,141 +1,104 @@
 package throttle
 
 import (
-	"context"
 	"io"
 	"sync"
 	"time"
 
-	"golang.org/x/time/rate"
-
 	"github.com/o3willard-AI/SSSonector/internal/config"
+	"go.uber.org/zap"
 )
 
-// Limiter implements bandwidth throttling and config.ConfigWatcher
+// Limiter implements rate limiting
 type Limiter struct {
-	reader   io.Reader
-	writer   io.Writer
-	inLimit  *rate.Limiter
-	outLimit *rate.Limiter
-	mu       sync.RWMutex
-	enabled  bool
+	enabled bool
+	rate    float64
+	burst   int
+	tokens  float64
+	last    time.Time
+	mu      sync.Mutex
+	logger  *zap.Logger
+	reader  io.Reader
+	writer  io.Writer
 }
 
-// OnConfigUpdate implements config.ConfigWatcher
-func (l *Limiter) OnConfigUpdate(cfg *config.Config) error {
+// NewLimiter creates a new rate limiter
+func NewLimiter(cfg *config.AppConfig, reader io.Reader, writer io.Writer, logger *zap.Logger) *Limiter {
+	return &Limiter{
+		enabled: cfg.Throttle.Enabled,
+		rate:    cfg.Throttle.Rate,
+		burst:   cfg.Throttle.Burst,
+		tokens:  float64(cfg.Throttle.Burst),
+		last:    time.Now(),
+		logger:  logger,
+		reader:  reader,
+		writer:  writer,
+	}
+}
+
+// Allow checks if an operation should be allowed
+func (l *Limiter) Allow() bool {
+	if !l.enabled {
+		return true
+	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	now := time.Now()
+	elapsed := now.Sub(l.last).Seconds()
+	l.tokens = min(float64(l.burst), l.tokens+elapsed*l.rate)
+	l.last = now
+
+	if l.tokens < 1 {
+		l.logger.Debug("Rate limit exceeded",
+			zap.Float64("tokens", l.tokens),
+			zap.Float64("rate", l.rate),
+			zap.Int("burst", l.burst),
+		)
+		return false
+	}
+
+	l.tokens--
+	return true
+}
+
+// Wait waits until an operation is allowed
+func (l *Limiter) Wait() {
+	if !l.enabled {
+		return
+	}
+
+	for !l.Allow() {
+		time.Sleep(time.Second / time.Duration(l.rate))
+	}
+}
+
+// Update updates the limiter configuration
+func (l *Limiter) Update(cfg *config.AppConfig) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
 	l.enabled = cfg.Throttle.Enabled
-	if l.enabled {
-		// Update rate limits with new configuration
-		adjustedUploadRate := rate.Limit(float64(cfg.Tunnel.UploadKbps*1024) * 1.05)
-		adjustedDownloadRate := rate.Limit(float64(cfg.Tunnel.DownloadKbps*1024) * 1.05)
-		uploadBurst := int(float64(cfg.Tunnel.UploadKbps*1024) * 0.1)
-		downloadBurst := int(float64(cfg.Tunnel.DownloadKbps*1024) * 0.1)
+	l.rate = cfg.Throttle.Rate
+	l.burst = cfg.Throttle.Burst
+	l.tokens = min(l.tokens, float64(l.burst))
 
-		l.outLimit.SetLimit(adjustedUploadRate)
-		l.outLimit.SetBurst(uploadBurst)
-		l.inLimit.SetLimit(adjustedDownloadRate)
-		l.inLimit.SetBurst(downloadBurst)
-	}
-
-	return nil
+	l.logger.Info("Updated rate limiter configuration",
+		zap.Bool("enabled", l.enabled),
+		zap.Float64("rate", l.rate),
+		zap.Int("burst", l.burst),
+	)
 }
 
-// NewLimiter creates a new bandwidth limiter
-func NewLimiter(reader io.Reader, writer io.Writer, uploadKbps, downloadKbps int64) *Limiter {
-	// Account for TCP overhead (~5%) and use smaller burst size
-	adjustedDownloadRate := rate.Limit(float64(downloadKbps*1024) * 1.05) // 5% overhead
-	adjustedUploadRate := rate.Limit(float64(uploadKbps*1024) * 1.05)     // 5% overhead
-	downloadBurst := int(float64(downloadKbps*1024) * 0.1)                // 100ms worth of data
-	uploadBurst := int(float64(uploadKbps*1024) * 0.1)                    // 100ms worth of data
-
-	return &Limiter{
-		reader:   reader,
-		writer:   writer,
-		inLimit:  rate.NewLimiter(adjustedDownloadRate, downloadBurst),
-		outLimit: rate.NewLimiter(adjustedUploadRate, uploadBurst),
-		enabled:  true, // Enable throttling by default
-	}
-}
-
-// Read implements io.Reader with download throttling
+// Read implements io.Reader with rate limiting
 func (l *Limiter) Read(p []byte) (n int, err error) {
-	l.mu.RLock()
-	defer l.mu.RUnlock()
-
-	if !l.enabled || l.inLimit == nil {
-		return l.reader.Read(p)
-	}
-
-	// Use context with timeout to prevent indefinite waiting
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	if err := l.inLimit.WaitN(ctx, len(p)); err != nil {
-		if err == context.DeadlineExceeded {
-			return 0, io.ErrShortBuffer // Return recoverable error
-		}
-		return 0, err
-	}
-
+	l.Wait()
 	return l.reader.Read(p)
 }
 
-// Write implements io.Writer with upload throttling
+// Write implements io.Writer with rate limiting
 func (l *Limiter) Write(p []byte) (n int, err error) {
-	l.mu.RLock()
-	defer l.mu.RUnlock()
-
-	if !l.enabled || l.outLimit == nil {
-		return l.writer.Write(p)
-	}
-
-	// Use context with timeout to prevent indefinite waiting
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	if err := l.outLimit.WaitN(ctx, len(p)); err != nil {
-		if err == context.DeadlineExceeded {
-			return 0, io.ErrShortBuffer // Return recoverable error
-		}
-		return 0, err
-	}
-
+	l.Wait()
 	return l.writer.Write(p)
-}
-
-// SetUploadLimit updates the upload bandwidth limit
-func (l *Limiter) SetUploadLimit(kbps int64) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	adjustedRate := rate.Limit(float64(kbps*1024) * 1.05) // 5% overhead
-	burst := int(float64(kbps*1024) * 0.1)                // 100ms worth of data
-	l.outLimit.SetLimit(adjustedRate)
-	l.outLimit.SetBurst(burst)
-}
-
-// SetDownloadLimit updates the download bandwidth limit
-func (l *Limiter) SetDownloadLimit(kbps int64) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	adjustedRate := rate.Limit(float64(kbps*1024) * 1.05) // 5% overhead
-	burst := int(float64(kbps*1024) * 0.1)                // 100ms worth of data
-	l.inLimit.SetLimit(adjustedRate)
-	l.inLimit.SetBurst(burst)
-}
-
-// GetUploadLimit returns the current upload bandwidth limit in Kbps
-func (l *Limiter) GetUploadLimit() int64 {
-	l.mu.RLock()
-	defer l.mu.RUnlock()
-	return int64(l.outLimit.Limit() / 1024)
-}
-
-// GetDownloadLimit returns the current download bandwidth limit in Kbps
-func (l *Limiter) GetDownloadLimit() int64 {
-	l.mu.RLock()
-	defer l.mu.RUnlock()
-	return int64(l.inLimit.Limit() / 1024)
 }

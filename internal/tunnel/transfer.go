@@ -1,214 +1,95 @@
 package tunnel
 
 import (
-"context"
-"io"
-"net"
-"sync"
-"sync/atomic"
-"time"
+	"io"
+	"net"
+	"time"
 
-"github.com/o3willard-AI/SSSonector/internal/throttle"
-"go.uber.org/zap"
+	"github.com/o3willard-AI/SSSonector/internal/config"
+	"github.com/o3willard-AI/SSSonector/internal/throttle"
+	"go.uber.org/zap"
 )
 
-// Statistics holds tunnel transfer statistics
-type Statistics struct {
-BytesReceived uint64
-BytesSent     uint64
-StartTime     time.Time
-LastActivity  time.Time
-RemoteAddr    string
-RemoteFQDN    string
-}
-
-// Transfer handles data transfer between network interfaces
+// Transfer handles data transfer between connections
 type Transfer struct {
-logger       *zap.Logger
-iface        io.ReadWriteCloser
-conn         net.Conn
-limiter      *throttle.Limiter
-stats        Statistics
-ctx          context.Context
-cancel       context.CancelFunc
-wg           sync.WaitGroup
-mu           sync.RWMutex
-uploadKbps   float64
-downloadKbps float64
+	src     net.Conn
+	dst     net.Conn
+	limiter *throttle.Limiter
+	logger  *zap.Logger
 }
 
-// NewTransfer creates a new transfer instance
-func NewTransfer(logger *zap.Logger, iface io.ReadWriteCloser, conn net.Conn, uploadKbps, downloadKbps float64) *Transfer {
-ctx, cancel := context.WithCancel(context.Background())
-t := &Transfer{
-logger:       logger,
-iface:        iface,
-conn:         conn,
-ctx:          ctx,
-cancel:       cancel,
-uploadKbps:   uploadKbps,
-downloadKbps: downloadKbps,
+// NewTransfer creates a new transfer
+func NewTransfer(src, dst net.Conn, cfg *config.AppConfig, logger *zap.Logger) *Transfer {
+	// Create rate limiter
+	limiter := throttle.NewLimiter(cfg, src, dst, logger)
+
+	return &Transfer{
+		src:     src,
+		dst:     dst,
+		limiter: limiter,
+		logger:  logger,
+	}
 }
 
-// Initialize statistics
-t.stats.StartTime = time.Now()
-t.stats.LastActivity = time.Now()
-t.stats.RemoteAddr = conn.RemoteAddr().String()
-if addr, ok := conn.RemoteAddr().(*net.TCPAddr); ok {
-names, err := net.LookupAddr(addr.IP.String())
-if err == nil && len(names) > 0 {
-t.stats.RemoteFQDN = names[0]
-}
+// Start starts the transfer
+func (t *Transfer) Start() error {
+	// Start bidirectional transfer
+	errChan := make(chan error, 2)
+
+	// Forward src -> dst
+	go func() {
+		_, err := io.Copy(t.limiter, t.dst)
+		errChan <- err
+	}()
+
+	// Forward dst -> src
+	go func() {
+		_, err := io.Copy(t.src, t.limiter)
+		errChan <- err
+	}()
+
+	// Wait for first error or completion
+	var err error
+	for i := 0; i < 2; i++ {
+		if e := <-errChan; e != nil {
+			err = e
+		}
+	}
+
+	// Close connections
+	t.src.Close()
+	t.dst.Close()
+
+	return err
 }
 
-// Initialize bandwidth limiter if throttling is enabled
-if uploadKbps > 0 || downloadKbps > 0 {
-t.limiter = throttle.NewLimiter(conn, conn, int64(uploadKbps), int64(downloadKbps))
+// Stop stops the transfer
+func (t *Transfer) Stop() error {
+	// Close connections
+	if err := t.src.Close(); err != nil {
+		t.logger.Error("Failed to close source connection", zap.Error(err))
+	}
+	if err := t.dst.Close(); err != nil {
+		t.logger.Error("Failed to close destination connection", zap.Error(err))
+	}
+
+	return nil
 }
 
-return t
+// SetDeadline sets the read/write deadlines
+func (t *Transfer) SetDeadline(deadline time.Time) {
+	t.src.SetDeadline(deadline)
+	t.dst.SetDeadline(deadline)
 }
 
-// Start starts the transfer process
-func (t *Transfer) Start() {
-t.wg.Add(2)
-go t.tunnelToInterface()
-go t.interfaceToTunnel()
+// SetReadDeadline sets the read deadline
+func (t *Transfer) SetReadDeadline(deadline time.Time) {
+	t.src.SetReadDeadline(deadline)
+	t.dst.SetReadDeadline(deadline)
 }
 
-// Stop stops the transfer process
-func (t *Transfer) Stop() {
-t.cancel()
-t.wg.Wait()
-
-t.mu.Lock()
-defer t.mu.Unlock()
-
-if t.conn != nil {
-t.conn.Close()
-t.conn = nil
-}
-}
-
-// GetStatistics returns current transfer statistics
-func (t *Transfer) GetStatistics() Statistics {
-t.mu.RLock()
-defer t.mu.RUnlock()
-return t.stats
-}
-
-// tunnelToInterface transfers data from tunnel to interface
-func (t *Transfer) tunnelToInterface() {
-defer t.wg.Done()
-buffer := make([]byte, 65536)
-
-for {
-select {
-case <-t.ctx.Done():
-return
-default:
-var n int
-var err error
-
-t.mu.RLock()
-if t.limiter != nil {
-n, err = t.limiter.Read(buffer)
-} else if t.conn != nil {
-n, err = t.conn.Read(buffer)
-}
-t.mu.RUnlock()
-
-if err != nil {
-if err != io.EOF && !isClosedError(err) {
-t.logger.Error("Failed to read from tunnel",
-zap.Error(err),
-)
-}
-return
-}
-
-if n > 0 {
-t.mu.RLock()
-if t.iface != nil {
-_, err = t.iface.Write(buffer[:n])
-}
-t.mu.RUnlock()
-
-if err != nil {
-if !isClosedError(err) {
-t.logger.Error("Failed to write to interface",
-zap.Error(err),
-)
-}
-return
-}
-
-atomic.AddUint64(&t.stats.BytesReceived, uint64(n))
-t.updateLastActivity()
-}
-}
-}
-}
-
-// interfaceToTunnel transfers data from interface to tunnel
-func (t *Transfer) interfaceToTunnel() {
-defer t.wg.Done()
-buffer := make([]byte, 65536)
-
-for {
-select {
-case <-t.ctx.Done():
-return
-default:
-t.mu.RLock()
-n, err := t.iface.Read(buffer)
-t.mu.RUnlock()
-
-if err != nil {
-if err != io.EOF && !isClosedError(err) {
-t.logger.Error("Failed to read from interface",
-zap.Error(err),
-)
-}
-return
-}
-
-if n > 0 {
-var err error
-t.mu.RLock()
-if t.limiter != nil {
-_, err = t.limiter.Write(buffer[:n])
-} else if t.conn != nil {
-_, err = t.conn.Write(buffer[:n])
-}
-t.mu.RUnlock()
-
-if err != nil {
-if !isClosedError(err) {
-t.logger.Error("Failed to write to tunnel",
-zap.Error(err),
-)
-}
-return
-}
-
-atomic.AddUint64(&t.stats.BytesSent, uint64(n))
-t.updateLastActivity()
-}
-}
-}
-}
-
-func (t *Transfer) updateLastActivity() {
-t.mu.Lock()
-t.stats.LastActivity = time.Now()
-t.mu.Unlock()
-}
-
-func isClosedError(err error) bool {
-if err == nil {
-return false
-}
-return err == io.EOF || err == io.ErrClosedPipe ||
-err.Error() == "use of closed network connection"
+// SetWriteDeadline sets the write deadline
+func (t *Transfer) SetWriteDeadline(deadline time.Time) {
+	t.src.SetWriteDeadline(deadline)
+	t.dst.SetWriteDeadline(deadline)
 }

@@ -1,117 +1,122 @@
 package throttle
 
 import (
-	"bytes"
-	"io"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestTokenBucket(t *testing.T) {
-	t.Run("respects rate limit", func(t *testing.T) {
-		rateKbps := float64(100) // 100 KB/s
-		burstKb := float64(100)  // 100 KB burst
-		bucket := NewTokenBucket(rateKbps*1024, burstKb*1024)
+	t.Run("Basic", func(t *testing.T) {
+		rateKb := float64(100)  // 100 KB/s
+		burstKb := float64(200) // 200 KB burst
+		bucket := NewTokenBucket(rateKb*1024, burstKb*1024)
 
-		// Try to take more tokens than burst size
-		success := bucket.Take(150 * 1024) // 150 KB
-		if success {
-			t.Error("expected failure when exceeding burst size")
-		}
+		// Should allow burst
+		assert.True(t, bucket.Take(burstKb*1024))
 
-		// Should succeed with burst size
-		success = bucket.Take(100 * 1024)
-		if !success {
-			t.Error("expected success with burst size")
+		// Should not allow more than burst
+		assert.False(t, bucket.Take(1))
+
+		// Wait for tokens to refill
+		time.Sleep(time.Second)
+
+		// Should allow rate
+		assert.True(t, bucket.Take(rateKb*1024))
+	})
+
+	t.Run("Rate", func(t *testing.T) {
+		rateKb := float64(100)  // 100 KB/s
+		burstKb := float64(200) // 200 KB burst
+		bucket := NewTokenBucket(rateKb*1024, burstKb*1024)
+
+		// Take initial burst
+		assert.True(t, bucket.Take(burstKb*1024))
+
+		// Wait for tokens to refill
+		time.Sleep(time.Second)
+
+		// Should allow rate per second
+		for i := 0; i < 10; i++ {
+			assert.True(t, bucket.Take(rateKb*1024/10))
+			time.Sleep(100 * time.Millisecond)
 		}
 	})
 
-	t.Run("allows burst", func(t *testing.T) {
-		rateKbps := float64(100) // 100 KB/s
-		burstKb := float64(100)  // 100 KB burst
-		bucket := NewTokenBucket(rateKbps*1024, burstKb*1024)
+	t.Run("Update", func(t *testing.T) {
+		rateKb := float64(100)  // 100 KB/s
+		burstKb := float64(200) // 200 KB burst
+		bucket := NewTokenBucket(rateKb*1024, burstKb*1024)
 
-		// Should allow full burst size immediately
-		success := bucket.Take(100 * 1024)
-		if !success {
-			t.Error("expected success for burst size")
-		}
-	})
+		// Take initial burst
+		assert.True(t, bucket.Take(burstKb*1024))
 
-	t.Run("refills over time", func(t *testing.T) {
-		rateKbps := float64(100) // 100 KB/s
-		burstKb := float64(100)  // 100 KB burst
-		bucket := NewTokenBucket(rateKbps*1024, burstKb*1024)
+		// Update to higher rate/burst
+		newRateKb := float64(200)  // 200 KB/s
+		newBurstKb := float64(400) // 400 KB burst
+		bucket.Update(newRateKb*1024, newBurstKb*1024)
 
-		// Take all tokens
-		bucket.Take(100 * 1024)
+		// Wait for tokens to refill
+		time.Sleep(time.Second)
 
-		// Wait for 0.5 seconds
-		time.Sleep(500 * time.Millisecond)
-
-		// Should have ~50 KB available
-		success := bucket.Take(50 * 1024)
-		if !success {
-			t.Error("expected success after refill")
-		}
-	})
-}
-
-func TestRateLimitedReader(t *testing.T) {
-	t.Run("limits read rate", func(t *testing.T) {
-		data := make([]byte, 200*1024) // 200 KB
-		reader := bytes.NewReader(data)
-		rateKbps := float64(100) // 100 KB/s
-
-		limited := NewRateLimitedReader(reader, rateKbps*1024)
-
-		start := time.Now()
-
-		// Try to read all data
-		buf := make([]byte, len(data))
-		n, err := io.ReadFull(limited, buf)
-		if err != nil {
-			t.Fatalf("read error: %v", err)
-		}
-		if n != len(data) {
-			t.Errorf("expected to read %d bytes, got %d", len(data), n)
-		}
-
-		elapsed := time.Since(start)
-		expectedDuration := time.Duration(float64(len(data)) / (rateKbps * 1024) * float64(time.Second))
-
-		// Allow 10% margin for timing variations
-		if elapsed < time.Duration(float64(expectedDuration)*0.9) || elapsed > time.Duration(float64(expectedDuration)*1.1) {
-			t.Errorf("expected duration around %v, got %v", expectedDuration, elapsed)
-		}
+		// Should allow new rate
+		assert.True(t, bucket.Take(newRateKb*1024))
 	})
 }
 
-func TestRateLimitedWriter(t *testing.T) {
-	t.Run("limits write rate", func(t *testing.T) {
-		var buf bytes.Buffer
-		data := make([]byte, 200*1024) // 200 KB
-		rateKbps := float64(100)       // 100 KB/s
+func TestRateLimitedIO(t *testing.T) {
+	t.Run("Reader", func(t *testing.T) {
+		data := make([]byte, 1024*1024)                                    // 1 MB
+		reader := NewRateLimitedReader(&testReader{data: data}, 1024*1024) // 1 MB/s
 
-		limited := NewRateLimitedWriter(&buf, rateKbps*1024)
+		buf := make([]byte, 1024*100) // 100 KB chunks
+		start := time.Now()
+
+		// Read 1 MB in 100 KB chunks
+		for i := 0; i < 10; i++ {
+			n, err := reader.Read(buf)
+			assert.NoError(t, err)
+			assert.Equal(t, len(buf), n)
+		}
+
+		// Should take ~1 second
+		elapsed := time.Since(start)
+		assert.InDelta(t, 1.0, elapsed.Seconds(), 0.1)
+	})
+
+	t.Run("Writer", func(t *testing.T) {
+		data := make([]byte, 1024*1024)                          // 1 MB
+		writer := NewRateLimitedWriter(&testWriter{}, 1024*1024) // 1 MB/s
 
 		start := time.Now()
 
-		// Try to write all data
-		n, err := limited.Write(data)
-		if err != nil {
-			t.Fatalf("write error: %v", err)
-		}
-		if n != len(data) {
-			t.Errorf("expected to write %d bytes, got %d", len(data), n)
-		}
+		// Write 1 MB
+		n, err := writer.Write(data)
+		assert.NoError(t, err)
+		assert.Equal(t, len(data), n)
 
+		// Should take ~1 second
 		elapsed := time.Since(start)
-		expectedDuration := time.Duration(float64(len(data)) / (rateKbps * 1024) * float64(time.Second))
-
-		// Allow 10% margin for timing variations
-		if elapsed < time.Duration(float64(expectedDuration)*0.9) || elapsed > time.Duration(float64(expectedDuration)*1.1) {
-			t.Errorf("expected duration around %v, got %v", expectedDuration, elapsed)
-		}
+		assert.InDelta(t, 1.0, elapsed.Seconds(), 0.1)
 	})
+}
+
+// Test helpers
+
+type testReader struct {
+	data []byte
+	pos  int
+}
+
+func (r *testReader) Read(p []byte) (n int, err error) {
+	n = copy(p, r.data[r.pos:])
+	r.pos += n
+	return n, nil
+}
+
+type testWriter struct{}
+
+func (w *testWriter) Write(p []byte) (n int, err error) {
+	return len(p), nil
 }
