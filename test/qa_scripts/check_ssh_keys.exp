@@ -1,0 +1,35 @@
+#!/usr/bin/expect -f
+
+set timeout 10
+set password "101abn"
+
+puts "=== Checking Local SSH Keys ==="
+spawn bash -c "echo '$password' | sudo -S ls -l /etc/ssh/ssh_host_* && echo '=== Key Contents ===' && for key in /etc/ssh/ssh_host_*pub; do ssh-keygen -l -f \$key 2>/dev/null; done"
+expect {
+    "password:" {
+        send "$password\r"
+        exp_continue
+    }
+    timeout {
+        puts "\n❌ Local check timed out"
+        exit 1
+    }
+    eof
+}
+
+puts "\n=== Checking Remote SSH Keys ==="
+spawn ssh sblanken@192.168.50.210 "echo '$password' | sudo -S ls -l /etc/ssh/ssh_host_* && echo '=== Key Contents ===' && for key in /etc/ssh/ssh_host_*pub; do ssh-keygen -l -f \$key 2>/dev/null; done"
+expect {
+    "password:" {
+        send "$password\r"
+        exp_continue
+    }
+    timeout {
+        puts "\n❌ Remote check timed out"
+        exit 1
+    }
+    eof {
+        puts "\n✅ Check complete"
+        exit 0
+    }
+}

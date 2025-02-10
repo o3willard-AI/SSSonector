@@ -1,0 +1,20 @@
+#!/bin/bash
+
+# Simple wrapper script for tunnel_monitor.py
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Check if Python 3 is installed
+if ! command -v python3 &> /dev/null; then
+    echo "Error: Python 3 is required but not installed."
+    exit 1
+fi
+
+# Check if curses module is available
+if ! python3 -c "import curses" &> /dev/null; then
+    echo "Error: Python curses module is required but not installed."
+    echo "Try: sudo apt-get install python3-curses"
+    exit 1
+fi
+
+# Run the monitor
+exec python3 "$DIR/tunnel_monitor.py" "$@"

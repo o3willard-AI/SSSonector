@@ -1,0 +1,26 @@
+#!/usr/bin/expect -f
+
+set timeout 10
+set password "101abn"
+
+spawn sudo -k  # Reset sudo timestamp
+expect {
+    "Password:" {
+        send "$password\r"
+        expect {
+            "Sorry, try again" {
+                puts "\n❌ Local authentication failed"
+                exit 1
+            }
+            "#" {
+                puts "\n✅ Local authentication successful"
+                send "exit\r"
+                exit 0
+            }
+        }
+    }
+    timeout {
+        puts "\n❌ Timeout waiting for password prompt"
+        exit 1
+    }
+}

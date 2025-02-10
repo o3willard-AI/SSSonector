@@ -1,0 +1,22 @@
+#!/usr/bin/expect -f
+
+set timeout 30
+set password "101abn"
+
+puts "=== Testing SNMP OID ==="
+spawn ssh sblanken@192.168.50.212 "echo '$password' | sudo -S bash -c 'echo === TESTING SCRIPT DIRECTLY === && /usr/local/bin/sssonector-snmp .1.3.6.1.4.1.54321.1.1 && echo === CHECKING SNMP PERMISSIONS === && ls -l /usr/local/bin/sssonector-snmp && echo === CHECKING SNMPD CONFIG === && cat /etc/snmp/snmpd.conf && echo === CHECKING SNMPD STATUS === && systemctl status snmpd && echo === TESTING SNMP WALK === && snmpwalk -v2c -c public localhost .1.3.6.1.4.1.54321.1.1'"
+
+expect {
+    "password:" {
+        send "$password\r"
+        exp_continue
+    }
+    timeout {
+        puts "\n❌ Operation timed out"
+        exit 1
+    }
+    eof {
+        puts "\n✅ Operation complete"
+        exit 0
+    }
+}

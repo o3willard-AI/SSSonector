@@ -1,0 +1,54 @@
+{
+  "qa_vms": {
+    "server": {
+      "ip": "192.168.50.210",
+      "username": "sblanken",
+      "password": "101abn",
+      "sudo_password": "101abn",
+      "role": "SSSonector Server",
+      "status": "Ready"
+    },
+    "client": {
+      "ip": "192.168.50.211", 
+      "username": "sblanken",
+      "password": "101abn",
+      "sudo_password": "101abn",
+      "role": "SSSonector Client",
+      "status": "Ready"
+    },
+    "snmp_server": {
+      "ip": "192.168.50.212",
+      "username": "sblanken", 
+      "password": "101abn",
+      "sudo_password": "101abn",
+      "role": "SNMP Server",
+      "status": "Ready",
+      "snmp": {
+        "community": "public",
+        "port": 161,
+        "version": "2c",
+        "oids": {
+          ".1.3.6.1.4.1.54321.1.1": "Bytes In (1234)",
+          ".1.3.6.1.4.1.54321.1.2": "Bytes Out (5678)",
+          ".1.3.6.1.4.1.54321.1.3": "Active Connections (10)",
+          ".1.3.6.1.4.1.54321.1.4": "CPU Usage (25%)",
+          ".1.3.6.1.4.1.54321.1.5": "Memory Usage (50%)"
+        }
+      }
+    }
+  },
+  "network": {
+    "subnet": "192.168.50.0/24",
+    "virtualbox": true,
+    "status": "Connected"
+  },
+  "services": {
+    "snmp": {
+      "status": "Running",
+      "implementation": "net-snmp",
+      "script": "/usr/local/bin/sssonector-snmp",
+      "mode": "pass_persist"
+    }
+  },
+  "last_verified": "2025-02-03T08:35:51Z"
+}

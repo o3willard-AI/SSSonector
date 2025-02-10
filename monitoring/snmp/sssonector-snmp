@@ -1,0 +1,20 @@
+#!/bin/bash
+
+case "$1" in
+    "throughput")
+        interface="enp0s3"
+        rx_bytes=$(cat /sys/class/net/$interface/statistics/rx_bytes)
+        tx_bytes=$(cat /sys/class/net/$interface/statistics/tx_bytes)
+        echo "$rx_bytes:$tx_bytes"
+        ;;
+    "connections")
+        netstat -an | grep "ESTABLISHED" | wc -l
+        ;;
+    "latency")
+        ping -c 1 192.168.50.210 | grep "time=" | cut -d "=" -f 4
+        ;;
+    *)
+        echo "Unknown metric: $1"
+        exit 1
+        ;;
+esac

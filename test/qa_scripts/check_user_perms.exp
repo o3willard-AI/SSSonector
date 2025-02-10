@@ -1,0 +1,22 @@
+#!/usr/bin/expect -f
+
+set timeout 10
+set password "101abn"
+
+puts "=== Checking User Permissions ==="
+spawn ssh sblanken@192.168.50.210 "echo '$password' | sudo -S bash -c 'echo === USER INFO === && id sblanken && groups sblanken && echo === HOME DIR === && ls -la /home/sblanken/ && echo === SSH DIR === && ls -la /home/sblanken/.ssh/ && echo === SHADOW === && getent shadow sblanken'"
+
+expect {
+    "password:" {
+        send "$password\r"
+        exp_continue
+    }
+    timeout {
+        puts "\n❌ Check timed out"
+        exit 1
+    }
+    eof {
+        puts "\n✅ Check complete"
+        exit 0
+    }
+}
