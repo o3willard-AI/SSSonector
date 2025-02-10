@@ -70,7 +70,7 @@ func NewServer(cfg *types.AppConfig, manager interfaces.ConfigManager, logger *z
 	// Connection factory for the pool
 	factory := func(ctx context.Context) (net.Conn, error) {
 		// Create new connection
-		conn, err := net.Dial("tcp", cfg.Config.Network.Interface)
+		conn, err := net.Dial("tcp", cfg.Config.Network.Name)
 		if err != nil {
 			return nil, err
 		}
@@ -91,14 +91,14 @@ func NewServer(cfg *types.AppConfig, manager interfaces.ConfigManager, logger *z
 func (s *Server) Start() error {
 	// Create adapter first
 	adapterOpts := adapter.DefaultOptions()
-	iface, err := adapter.New(s.config.Config.Network.Interface, adapterOpts)
+	iface, err := adapter.New(s.config.Config.Network.Name, adapterOpts)
 	if err != nil {
 		return fmt.Errorf("failed to create adapter: %w", err)
 	}
 
 	// Configure adapter
 	if err := iface.Configure(&adapter.Config{
-		Name:    s.config.Config.Network.Interface,
+		Name:    s.config.Config.Network.Name,
 		Address: s.config.Config.Network.Address,
 		MTU:     s.config.Config.Network.MTU,
 	}); err != nil {
@@ -232,14 +232,14 @@ func NewClient(cfg *types.AppConfig, manager interfaces.ConfigManager, logger *z
 func (c *Client) Start() error {
 	// Create adapter with default options
 	adapterOpts := adapter.DefaultOptions()
-	iface, err := adapter.New(c.config.Config.Network.Interface, adapterOpts)
+	iface, err := adapter.New(c.config.Config.Network.Name, adapterOpts)
 	if err != nil {
 		return fmt.Errorf("failed to create adapter: %w", err)
 	}
 
 	// Configure adapter
 	if err := iface.Configure(&adapter.Config{
-		Name:    c.config.Config.Network.Interface,
+		Name:    c.config.Config.Network.Name,
 		Address: c.config.Config.Network.Address,
 		MTU:     c.config.Config.Network.MTU,
 	}); err != nil {

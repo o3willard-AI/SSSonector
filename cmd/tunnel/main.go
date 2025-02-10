@@ -35,9 +35,21 @@ func main() {
 	// Create context
 	ctx := context.Background()
 
+	// Validate config path
+	if configPath == "" {
+		configPath = "/etc/sssonector/config.yaml"
+	}
+
+	// Create configuration manager
+	manager := config.CreateManager(filepath.Dir(configPath))
+
+	// Copy config file to manager's directory if it's not already there
+	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
+		logger.Fatal("Failed to create config directory", zap.Error(err))
+	}
+
 	// Load configuration
-	loader := config.NewLoader()
-	cfg, err := loader.LoadFromFile(configPath)
+	appCfg, err := manager.Get()
 	if err != nil {
 		logger.Fatal("Failed to load configuration",
 			zap.String("path", configPath),
@@ -45,18 +57,13 @@ func main() {
 		)
 	}
 
-	// Create configuration store and validator
-	store := config.NewFileStore(filepath.Dir(configPath))
-	validator := config.NewValidator()
-
-	// Create configuration manager
-	manager, err := config.NewManager(store, validator, logger)
-	if err != nil {
-		logger.Fatal("Failed to create configuration manager", zap.Error(err))
+	// Set server type if not already set
+	if appCfg.Type == "" {
+		appCfg.Type = config.TypeServer
+		if err := manager.Set(appCfg); err != nil {
+			logger.Fatal("Failed to set configuration type", zap.Error(err))
+		}
 	}
-
-	// Create AppConfig
-	appCfg := config.NewAppConfig(cfg, config.TypeServer)
 
 	// Update certificate paths
 	if err := tunnel.UpdateCertificatePaths(appCfg, filepath.Dir(configPath)); err != nil {
@@ -68,13 +75,17 @@ func main() {
 		Run(context.Context) error
 	}
 
-	switch cfg.Mode {
-	case config.ModeServer:
+	if appCfg.Config == nil {
+		appCfg.Config = &config.Config{Mode: string(appCfg.Type)}
+	}
+
+	switch appCfg.Config.Mode {
+	case string(config.TypeServer):
 		t, err = NewServer(appCfg, manager, logger)
-	case config.ModeClient:
+	case string(config.TypeClient):
 		t, err = NewClient(appCfg, manager, logger)
 	default:
-		logger.Fatal("Invalid mode", zap.String("mode", string(cfg.Mode)))
+		logger.Fatal("Invalid mode", zap.String("mode", appCfg.Config.Mode))
 	}
 
 	if err != nil {

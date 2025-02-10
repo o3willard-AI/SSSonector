@@ -25,13 +25,23 @@ clean:
 # Create build directory structure
 .PHONY: prepare
 prepare:
-	mkdir -p ${BUILD_DIR}/{linux,windows,darwin}/{amd64,arm64}
+	mkdir -p ${BUILD_DIR}/linux/amd64 ${BUILD_DIR}/linux/arm64
+	mkdir -p ${BUILD_DIR}/windows/amd64
+	mkdir -p ${BUILD_DIR}/darwin/amd64 ${BUILD_DIR}/darwin/arm64
 	mkdir -p ${BUILD_DIR}/docker
 	mkdir -p ${BUILD_DIR}/packages
+	mkdir -p ${BUILD_DIR}/docs
 
 # Build for all platforms
 .PHONY: build
-build: prepare build-linux build-windows build-darwin build-docker
+build: prepare deps build-linux build-windows build-darwin build-docker build-security docs k8s
+	@for file in README.md LICENSE CHANGELOG.md; do \
+		if [ -f $$file ]; then \
+			echo "Copying $$file..."; \
+			cp $$file ${BUILD_DIR}/; \
+		fi \
+	done
+	tar czf ${BUILD_DIR}/${BINARY_NAME}-${VERSION}-release.tar.gz -C ${BUILD_DIR} .
 
 # Linux builds
 .PHONY: build-linux
@@ -84,26 +94,41 @@ build-darwin-arm64:
 	cp scripts/install_macos.sh ${BUILD_DIR}/darwin/arm64/
 	tar czf ${BUILD_DIR}/packages/${BINARY_NAME}-${VERSION}-darwin-arm64.tar.gz -C ${BUILD_DIR}/darwin/arm64 .
 
-# Docker build
+# Docker build (if available)
 .PHONY: build-docker
 build-docker:
-	docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} .
-	docker save ${DOCKER_IMAGE}:${DOCKER_TAG} > ${BUILD_DIR}/docker/${BINARY_NAME}-${VERSION}.tar
+	@if command -v docker >/dev/null 2>&1; then \
+		echo "Building Docker image..."; \
+		docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} . && \
+		docker save ${DOCKER_IMAGE}:${DOCKER_TAG} > ${BUILD_DIR}/docker/${BINARY_NAME}-${VERSION}.tar; \
+	else \
+		echo "Docker not found, skipping Docker build"; \
+	fi
 
-# Security policy builds
+# Security policy builds (if tools available)
 .PHONY: build-security
 build-security: build-selinux build-apparmor
 
 .PHONY: build-selinux
 build-selinux:
-	cd security/selinux && ./build_policy.sh
-	cp security/selinux/*.pp ${BUILD_DIR}/linux/amd64/
-	cp security/selinux/*.pp ${BUILD_DIR}/linux/arm64/
+	@if command -v checkmodule >/dev/null 2>&1 && command -v semodule_package >/dev/null 2>&1; then \
+		echo "Building SELinux policy..."; \
+		cd security/selinux && ./build_policy.sh && \
+		cp *.pp ${BUILD_DIR}/linux/amd64/ && \
+		cp *.pp ${BUILD_DIR}/linux/arm64/; \
+	else \
+		echo "SELinux policy tools not found, skipping SELinux policy build"; \
+	fi
 
 .PHONY: build-apparmor
 build-apparmor:
-	cp security/apparmor/usr.local.bin.sssonector ${BUILD_DIR}/linux/amd64/
-	cp security/apparmor/usr.local.bin.sssonector ${BUILD_DIR}/linux/arm64/
+	@if [ -f security/apparmor/usr.local.bin.sssonector ]; then \
+		echo "Installing AppArmor profile..."; \
+		cp security/apparmor/usr.local.bin.sssonector ${BUILD_DIR}/linux/amd64/ && \
+		cp security/apparmor/usr.local.bin.sssonector ${BUILD_DIR}/linux/arm64/; \
+	else \
+		echo "AppArmor profile not found, skipping AppArmor installation"; \
+	fi
 
 # Test targets
 .PHONY: test
@@ -119,18 +144,32 @@ test-integration:
 deps:
 	go mod download
 
-# Generate documentation
+# Generate documentation (if available)
 .PHONY: docs
 docs:
-	cp docs/deployment/DEPLOYMENT.md ${BUILD_DIR}/
-	cp docs/deployment/KUBERNETES.md ${BUILD_DIR}/
-	cp -r docs/config ${BUILD_DIR}/
-	cp -r docs/implementation ${BUILD_DIR}/
+	@if [ -d docs/deployment ]; then \
+		echo "Copying deployment documentation..."; \
+		cp -f docs/deployment/DEPLOYMENT.md ${BUILD_DIR}/ 2>/dev/null || true; \
+		cp -f docs/deployment/KUBERNETES.md ${BUILD_DIR}/ 2>/dev/null || true; \
+	fi
+	@if [ -d docs/config ]; then \
+		echo "Copying configuration documentation..."; \
+		cp -r docs/config ${BUILD_DIR}/; \
+	fi
+	@if [ -d docs/implementation ]; then \
+		echo "Copying implementation documentation..."; \
+		cp -r docs/implementation ${BUILD_DIR}/; \
+	fi
 
-# Kubernetes manifests
+# Kubernetes manifests (if available)
 .PHONY: k8s
 k8s:
-	cp -r deploy/kubernetes ${BUILD_DIR}/
+	@if [ -d deploy/kubernetes ]; then \
+		echo "Copying Kubernetes manifests..."; \
+		cp -r deploy/kubernetes ${BUILD_DIR}/; \
+	else \
+		echo "Kubernetes manifests not found, skipping"; \
+	fi
 
 # Release bundle
 .PHONY: release

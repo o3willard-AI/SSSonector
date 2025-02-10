@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/o3willard-AI/SSSonector/internal/config"
 	"github.com/o3willard-AI/SSSonector/internal/service"
 	"github.com/o3willard-AI/SSSonector/internal/service/control"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 var (
@@ -18,16 +20,34 @@ var (
 	Version = "dev"
 
 	// Command line flags
-	configFile = flag.String("config", "/etc/sssonector/config.json", "Path to config file")
+	configFile = flag.String("config", "/etc/sssonector/config.yaml", "Path to config file")
 	socketPath = flag.String("socket", "/var/run/sssonector.sock", "Path to control socket")
+	logLevel   = flag.String("log-level", "info", "Log level (debug, info, warn, error)")
 )
+
+func getLogLevel(level string) zapcore.Level {
+	switch strings.ToLower(level) {
+	case "debug":
+		return zapcore.DebugLevel
+	case "info":
+		return zapcore.InfoLevel
+	case "warn":
+		return zapcore.WarnLevel
+	case "error":
+		return zapcore.ErrorLevel
+	default:
+		return zapcore.InfoLevel
+	}
+}
 
 func main() {
 	// Parse command line flags
 	flag.Parse()
 
 	// Initialize logger
-	logger, err := zap.NewProduction()
+	logConfig := zap.NewProductionConfig()
+	logConfig.Level = zap.NewAtomicLevelAt(getLogLevel(*logLevel))
+	logger, err := logConfig.Build()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to initialize logger: %v\n", err)
 		os.Exit(1)
@@ -83,6 +103,7 @@ func main() {
 		zap.String("version", Version),
 		zap.String("config", *configFile),
 		zap.String("socket", *socketPath),
+		zap.String("log_level", *logLevel),
 	)
 
 	// Wait for signals

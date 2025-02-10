@@ -1,117 +1,40 @@
 #include <tunables/global>
 
 profile sssonector /usr/local/bin/sssonector {
-    #include <abstractions/base>
-    #include <abstractions/nameservice>
-    #include <abstractions/openssl>
-    #include <abstractions/ssl_certs>
+  #include <abstractions/base>
+  #include <abstractions/nameservice>
 
-    capability {
-        net_admin,
-        net_raw,
-        setgid,
-        setuid,
-        sys_admin,
-        sys_chroot,
-        sys_resource,
-    },
+  capability net_admin,
+  capability net_raw,
 
-    network {
-        inet,
-        inet6,
-        netlink,
-        packet,
-        unix,
-    },
+  # Binary and libraries
+  /usr/local/bin/sssonector mr,
+  /usr/lib/** mr,
+  /lib/** mr,
 
-    # Binary and libraries
-    /usr/local/bin/sssonector mr,
-    /usr/lib{,32,64}/** mr,
-    /lib{,32,64}/** mr,
+  # Configuration files
+  /etc/sssonector/** r,
+  owner /etc/sssonector/** w,
 
-    # Configuration access
-    /etc/sssonector/ r,
-    /etc/sssonector/** r,
-    /etc/sssonector/certs/** r,
-    owner /etc/sssonector/config.yaml r,
+  # Log files
+  /var/log/sssonector/ rw,
+  /var/log/sssonector/** rw,
 
-    # State directory
-    /var/lib/sssonector/ rw,
-    /var/lib/sssonector/** rwk,
+  # Runtime files
+  /var/run/sssonector.pid rw,
+  /var/run/sssonector.sock rw,
 
-    # Runtime files
-    /var/run/sssonector/ rw,
-    /var/run/sssonector/** rwk,
-    owner /var/run/sssonector/sssonector.pid rwk,
-    owner /var/run/sssonector/sssonector.sock rwk,
+  # Network access
+  network inet raw,
+  network inet6 raw,
+  /dev/net/tun rw,
 
-    # Log files
-    /var/log/sssonector/ rw,
-    /var/log/sssonector/** rw,
+  # System information
+  /proc/sys/net/** r,
+  /sys/class/net/** r,
+  /sys/devices/**/net/** r,
 
-    # System access
-    /proc/sys/net/core/somaxconn r,
-    /proc/sys/net/ipv{4,6}/** r,
-    /sys/class/net/ r,
-    /sys/class/net/** r,
-    /sys/devices/**/net/** r,
-
-    # Network namespace access
-    owner @{PROC}/@{pid}/ns/net rw,
-    /run/netns/* rw,
-
-    # Mount namespace access
-    mount,
-    umount,
-    pivot_root,
-
-    # TUN/TAP device access
-    /dev/net/tun rw,
-
-    # System calls
-    change_profile,
-    signal (send) peer=sssonector,
-    ptrace (read) peer=sssonector,
-
-    # Systemd integration
-    /run/systemd/notify rw,
-
-    # Allow child processes
-    /usr/local/bin/sssonector px -> sssonector//child,
-
-    # Child profile for spawned processes
-    profile child {
-        #include <abstractions/base>
-        #include <abstractions/nameservice>
-
-        capability {
-            net_admin,
-            net_raw,
-            setgid,
-            setuid,
-        },
-
-        network {
-            inet,
-            inet6,
-            netlink,
-            unix,
-        },
-
-        # Inherit parent's access
-        /usr/local/bin/sssonector mr,
-        /var/lib/sssonector/** rwk,
-        /var/run/sssonector/** rwk,
-        /var/log/sssonector/** rw,
-
-        # System access
-        /proc/sys/net/ipv{4,6}/** r,
-        /sys/class/net/** r,
-
-        # Network namespace access
-        owner @{PROC}/@{pid}/ns/net rw,
-
-        # TUN/TAP device access
-        /dev/net/tun rw,
-    }
+  # Required for graceful shutdown
+  signal (receive) peer=unconfined,
+  signal (send) peer=unconfined,
 }
