@@ -1,0 +1,102 @@
+#!/usr/bin/expect -f
+
+set ip "192.168.50.212"
+set username "sblanken"
+set timeout 300
+
+puts "\nSetting up ntopng on SNMP Server ($ip)..."
+
+spawn ssh -i /home/sblanken/.ssh/qa_key $username@$ip
+
+expect {
+    "continue connecting (yes/no" {
+        send "yes\r"
+        exp_continue
+    }
+    "$" {
+        puts "\nInstalling required packages..."
+        send "sudo apt-get update\r"
+        expect "$"
+        
+        send "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y software-properties-common curl\r"
+        expect "$"
+        
+        puts "\nAdding ntopng repository..."
+        send "sudo add-apt-repository ppa:ntop/ntopng -y\r"
+        expect "$"
+        
+        send "sudo apt-get update\r"
+        expect "$"
+        
+        puts "\nInstalling ntopng and SNMP..."
+        send "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y ntopng snmpd snmp\r"
+        expect "$"
+        
+        puts "\nConfiguring SNMP daemon..."
+        send "sudo bash -c 'cat > /etc/snmp/snmpd.conf' << 'EOL'\r"
+        send "agentAddress udp:161,udp6:[::1]:161\r"
+        send "rocommunity public localhost\r"
+        send "rocommunity public 192.168.50.0/24\r"
+        send "syslocation \"QA Lab\"\r"
+        send "syscontact Admin\r"
+        send "view systemonly included .1.3.6.1.2.1.1\r"
+        send "view systemonly included .1.3.6.1.2.1.2\r"
+        send "sysServices 72\r"
+        send "EOL\r"
+        expect "$"
+        
+        puts "\nConfiguring ntopng..."
+        send "sudo mkdir -p /etc/ntopng\r"
+        expect "$"
+        send "sudo bash -c 'cat > /etc/ntopng/ntopng.conf' << 'EOL'\r"
+        send "-i=enp0s3\r"
+        send "--community=public\r"
+        send "--http-port=3000\r"
+        send "--daemon\r"
+        send "--data-dir=/var/lib/ntopng\r"
+        send "--pid-path=/var/run/ntopng.pid\r"
+        send "EOL\r"
+        expect "$"
+        
+        puts "\nSetting up ntopng directories..."
+        send "sudo mkdir -p /var/lib/ntopng\r"
+        expect "$"
+        send "sudo chown ntopng:ntopng /var/lib/ntopng\r"
+        expect "$"
+        
+        puts "\nRestarting services..."
+        send "sudo systemctl stop snmpd ntopng\r"
+        expect "$"
+        send "sudo systemctl enable snmpd ntopng\r"
+        expect "$"
+        send "sudo systemctl start snmpd\r"
+        expect "$"
+        send "sudo systemctl start ntopng\r"
+        expect "$"
+        
+        puts "\nVerifying services..."
+        send "sudo systemctl status snmpd | grep Active\r"
+        expect "$"
+        send "sudo systemctl status ntopng | grep Active\r"
+        expect "$"
+        
+        puts "\nTesting SNMP..."
+        send "snmpwalk -v2c -c public localhost system\r"
+        expect {
+            "End of MIB" {
+                puts "✅ SNMP test successful"
+            }
+            timeout {
+                puts "❌ SNMP test timed out"
+            }
+            "$"
+        }
+        
+        puts "✅ Setup completed"
+        send "exit\r"
+    }
+}
+expect eof
+
+puts "\nSetup complete. ntopng web interface available at http://$ip:3000"
+exit 0

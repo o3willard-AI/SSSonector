@@ -1,0 +1,35 @@
+#!/usr/bin/expect -f
+
+set timeout 30
+set host "192.168.50.212"
+set password "101abn"
+
+# Connect to the remote host
+spawn ssh sblanken@$host
+
+# Handle the password prompt
+expect "password:"
+send "$password\r"
+
+# Update package list
+expect "$ "
+send "sudo apt-get update\r"
+expect "password for sblanken:"
+send "$password\r"
+
+# Install SNMP packages
+expect "$ "
+send "sudo apt-get install -y snmp snmpd\r"
+expect "password for sblanken:"
+send "$password\r"
+
+# Check SNMP status
+expect "$ "
+send "sudo systemctl status snmpd\r"
+expect "password for sblanken:"
+send "$password\r"
+
+# Exit
+expect "$ "
+send "exit\r"
+expect eof

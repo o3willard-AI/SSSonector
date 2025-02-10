@@ -1,0 +1,69 @@
+#!/usr/bin/expect -f
+
+set timeout 300
+set password "101abn"
+
+# Test rates in Mbps
+set rates {5 25 50 75 100}
+
+# Function to configure rate limit on client
+proc configure_rate_limit {rate} {
+    global password
+    
+    puts "\n=== Configuring Rate Limit: $rate Mbps ==="
+    spawn ssh sblanken@192.168.50.211 "echo '$password' | sudo -S bash -c 'cat > /etc/sssonector/client.yaml << \"EOL\"
+client:
+  server_addr: 192.168.50.210:8443
+  cert_file: /etc/sssonector/client.crt
+  key_file: /etc/sssonector/client.key
+  rate_limit:
+    enabled: true
+    bytes_per_second: [expr {$rate * 1024 * 1024 / 8}]
+EOL
+
+systemctl restart sssonector-client'"
+
+    expect {
+        "password:" {
+            send "$password\r"
+            exp_continue
+        }
+        timeout {
+            puts "\n❌ Configuration timed out"
+            exit 1
+        }
+        eof {
+            puts "✅ Rate limit configured"
+        }
+    }
+}
+
+# Function to test file transfer
+proc test_transfer {rate} {
+    global password
+    
+    puts "\n=== Testing Transfer at $rate Mbps ==="
+    spawn ssh sblanken@192.168.50.210 "echo === STARTING TRANSFER === && \
+        time curl -k --limit-rate ${rate}M https://192.168.50.211:8443/DryFire_v4_10.zip -o /dev/null"
+
+    expect {
+        "password:" {
+            send "$password\r"
+            exp_continue
+        }
+        timeout {
+            puts "\n❌ Transfer timed out"
+            exit 1
+        }
+        eof {
+            puts "✅ Transfer complete"
+        }
+    }
+}
+
+# Run tests for each rate
+foreach rate $rates {
+    configure_rate_limit $rate
+    after 2000
+    test_transfer $rate
+}

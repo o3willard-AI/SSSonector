@@ -1,0 +1,41 @@
+#!/usr/bin/expect -f
+
+set timeout 20
+set password "101abn"
+
+puts "=== Fixing NTOPNG Configuration ==="
+spawn ssh sblanken@192.168.50.212 "echo '$password' | sudo -S bash -c 'cat > /etc/ntopng/ntopng.conf << \"EOL\"
+-i=enp0s3
+-w=3000
+-d=/var/lib/ntopng
+--local-networks=\"192.168.50.0/24\"
+--community
+EOL
+
+echo === CHECKING CONFIG ===
+cat /etc/ntopng/ntopng.conf
+
+echo === RESTARTING NTOPNG ===
+systemctl restart ntopng
+sleep 2
+
+echo === CHECKING STATUS ===
+systemctl status ntopng
+
+echo === TESTING INTERFACE ===
+curl -s http://localhost:3000/lua/rest/get/interface/stats'"
+
+expect {
+    "password:" {
+        send "$password\r"
+        exp_continue
+    }
+    timeout {
+        puts "\n❌ Operation timed out"
+        exit 1
+    }
+    eof {
+        puts "\n✅ Operation complete"
+        exit 0
+    }
+}

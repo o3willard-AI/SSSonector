@@ -1,0 +1,59 @@
+#!/usr/bin/expect -f
+
+set ip "192.168.50.211"
+set username "sblanken"
+set timeout 300
+
+puts "\nFixing SNMP service on Client VM ($ip)..."
+
+spawn ssh -i /home/sblanken/.ssh/qa_key $username@$ip
+
+expect {
+    "continue connecting (yes/no" {
+        send "yes\r"
+        exp_continue
+    }
+    "$" {
+        puts "\nReconfiguring SNMP daemon..."
+        send "sudo systemctl stop snmpd\r"
+        expect "$"
+        
+        send "sudo cp /etc/snmp/snmpd.conf /etc/snmp/snmpd.conf.backup\r"
+        expect "$"
+        
+        send "sudo tee /etc/snmp/snmpd.conf > /dev/null << 'EOL'\r"
+        send "agentAddress udp:161,udp6:[::1]:161\r"
+        send "rocommunity public localhost\r"
+        send "rocommunity public 192.168.50.0/24\r"
+        send "syslocation \"QA Lab\"\r"
+        send "syscontact Admin\r"
+        send "view systemonly included .1.3.6.1.2.1.1\r"
+        send "view systemonly included .1.3.6.1.2.1.2\r"
+        send "sysServices 72\r"
+        send "EOL\r"
+        expect "$"
+        
+        puts "\nRestarting SNMP service..."
+        send "sudo systemctl daemon-reload\r"
+        expect "$"
+        send "sudo systemctl enable snmpd\r"
+        expect "$"
+        send "sudo systemctl start snmpd\r"
+        expect "$"
+        
+        puts "\nVerifying SNMP service..."
+        send "sudo systemctl status snmpd | grep Active\r"
+        expect "$"
+        
+        puts "\nTesting SNMP connectivity..."
+        send "snmpwalk -v2c -c public localhost system\r"
+        expect "$"
+        
+        puts "✅ SNMP service fixed"
+        send "exit\r"
+    }
+}
+expect eof
+
+puts "\nSNMP service configuration complete"
+exit 0

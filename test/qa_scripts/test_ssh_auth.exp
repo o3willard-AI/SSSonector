@@ -1,0 +1,25 @@
+#!/usr/bin/expect -f
+
+set timeout 10
+set password "101abn"
+
+spawn ssh -o PreferredAuthentications=password -o PubkeyAuthentication=no -o GSSAPIAuthentication=no -o ConnectTimeout=10 sblanken@192.168.50.210 "echo test"
+
+expect {
+    "password:" {
+        send "$password\r"
+        exp_continue
+    }
+    "test" {
+        puts "\n✅ Authentication successful"
+        exit 0
+    }
+    timeout {
+        puts "\n❌ Connection timed out"
+        exit 1
+    }
+    eof {
+        puts "\n❌ Connection closed"
+        exit 1
+    }
+}

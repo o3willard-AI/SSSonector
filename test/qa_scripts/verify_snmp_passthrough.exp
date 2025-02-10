@@ -1,0 +1,22 @@
+#!/usr/bin/expect -f
+
+set timeout 10
+set password "101abn"
+
+puts "=== Verifying SNMP Pass-through Scripts ==="
+spawn ssh sblanken@192.168.50.212 "echo '$password' | sudo -S bash -c 'echo === CHECKING SCRIPT PERMISSIONS === && ls -l /usr/local/bin/ntopng-snmp* && echo === CHECKING SNMPD CONFIG === && cat /etc/snmp/snmpd.conf.d/ntopng.conf && echo === TESTING NTOPNG METRICS === && /usr/local/bin/ntopng-snmp .1.3.6.1.4.1.54321.1.1 && echo === TESTING SSSONECTOR STATS === && /usr/local/bin/ntopng-snmp-stats .1.3.6.1.4.1.54321.2.1'"
+
+expect {
+    "password:" {
+        send "$password\r"
+        exp_continue
+    }
+    timeout {
+        puts "\n❌ Operation timed out"
+        exit 1
+    }
+    eof {
+        puts "\n✅ Operation complete"
+        exit 0
+    }
+}

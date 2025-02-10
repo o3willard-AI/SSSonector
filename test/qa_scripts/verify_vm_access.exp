@@ -1,0 +1,55 @@
+#!/usr/bin/expect -f
+
+# Load VM credentials from JSON file
+set qa_env [exec cat qa_environment.json]
+set qa_vms [exec echo $qa_env | jq -r ".qa_vms\[\]"]
+
+foreach vm $qa_vms {
+    set name [exec echo $vm | jq -r ".name"] 
+    set ip [exec echo $vm | jq -r ".ip"]
+    set username [exec echo $vm | jq -r ".username"]
+    set password [exec echo $vm | jq -r ".password"]
+    set sudo_password [exec echo $vm | jq -r ".sudo_password"]
+
+    puts "\nTesting connection to $name ($ip)..."
+
+    # Try SSH connection
+    spawn ssh -o StrictHostKeyChecking=no $username@$ip
+
+    expect {
+        "password:" {
+            send "$password\r"
+            exp_continue
+        }
+        "$ " {
+            # Test sudo access
+            send "sudo -S ls /root\r"
+            expect {
+                "password for $username:" {
+                    send "$sudo_password\r"
+                    expect {
+                        "Permission denied" {
+                            puts "❌ Sudo access failed on $name"
+                            exit 1
+                        }
+                        "$ " {
+                            puts "✅ Successfully verified SSH and sudo access on $name"
+                        }
+                    }
+                }
+            }
+            send "exit\r"
+        }
+        timeout {
+            puts "❌ Connection timed out for $name"
+            exit 1
+        }
+        "Connection refused" {
+            puts "❌ Connection refused for $name"
+            exit 1
+        }
+    }
+}
+
+puts "\n✅ Successfully verified access to all VMs"
+exit 0

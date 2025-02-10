@@ -1,0 +1,26 @@
+#!/usr/bin/expect -f
+
+set timeout 30
+set password "101abn"
+
+puts "=== Installing NTOPNG from Official Repo ==="
+spawn ssh sblanken@192.168.50.212 "echo '$password' | sudo -S bash -c 'echo === ADDING NTOP REPO === && wget -q https://packages.ntop.org/apt-stable/24.04/all/apt-ntop-stable.deb && dpkg -i apt-ntop-stable.deb && echo === UPDATING REPOS === && apt-get update && echo === INSTALLING NTOPNG === && apt-get install -y ntopng && echo === STARTING NTOPNG === && systemctl restart ntopng && echo === NTOPNG STATUS === && systemctl status ntopng && echo === TESTING NTOPNG === && curl -s http://localhost:3000/lua/rest/get/interface/stats'"
+
+expect {
+    "password:" {
+        send "$password\r"
+        exp_continue
+    }
+    "Do you want to continue?" {
+        send "Y\r"
+        exp_continue
+    }
+    timeout {
+        puts "\n❌ Operation timed out"
+        exit 1
+    }
+    eof {
+        puts "\n✅ Operation complete"
+        exit 0
+    }
+}

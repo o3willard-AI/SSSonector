@@ -1,0 +1,86 @@
+#!/usr/bin/expect -f
+
+# SNMP Health Monitoring Script
+# Monitors SNMP metrics and logs health status
+
+set timeout 30
+set log_file "snmp_health_[exec date +%Y%m%d_%H%M%S].log"
+set alert_threshold 90  ;# Alert if CPU or Memory usage exceeds this percentage
+
+proc log_message {message {level "INFO"}} {
+    global log_file
+    set timestamp [exec date +"%Y-%m-%d %H:%M:%S"]
+    exec echo "\[$level\] $timestamp - $message" >> $log_file
+}
+
+proc check_metric {name value min max} {
+    global alert_threshold
+    
+    if {$value < $min || $value > $max} {
+        log_message "WARNING: $name ($value) outside normal range ($min-$max)" "WARN"
+        return 0
+    }
+    
+    if {$name in {"CPU Usage" "Memory Usage"} && $value > $alert_threshold} {
+        log_message "ALERT: $name at $value% (threshold: $alert_threshold%)" "ALERT"
+        return 0
+    }
+    
+    log_message "$name: $value (normal range: $min-$max)" "INFO"
+    return 1
+}
+
+log_message "Starting SNMP health check" "INFO"
+
+# Check SSH connectivity
+spawn ssh -o ConnectTimeout=10 snmp-server "echo 'Connection test'"
+expect {
+    timeout {
+        log_message "Failed to connect to SNMP server" "ERROR"
+        exit 1
+    }
+    "Connection test"
+}
+
+# Define metrics to monitor
+array set metrics {
+    "Bytes In"            {1 0 1000000}
+    "Bytes Out"           {2 0 1000000}
+    "Active Connections"  {3 0 100}
+    "CPU Usage"          {4 0 100}
+    "Memory Usage"       {5 0 100}
+}
+
+# Check each metric
+set all_healthy 1
+foreach name [array names metrics] {
+    set params $metrics($name)
+    set oid [lindex $params 0]
+    set min [lindex $params 1]
+    set max [lindex $params 2]
+    
+    spawn ssh snmp-server "snmpget -v2c -c public localhost .1.3.6.1.4.1.54321.1.$oid"
+    expect {
+        -re {INTEGER: (\d+)} {
+            set value $expect_out(1,string)
+            if {![check_metric $name $value $min $max]} {
+                set all_healthy 0
+            }
+        }
+        timeout {
+            log_message "Timeout getting $name" "ERROR"
+            set all_healthy 0
+        }
+        eof
+    }
+}
+
+# Log overall health status
+if {$all_healthy} {
+    log_message "All metrics within normal ranges" "INFO"
+} else {
+    log_message "Some metrics require attention" "WARN"
+}
+
+puts "\nHealth check complete - See $log_file for details"
+exit [expr {!$all_healthy}]

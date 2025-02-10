@@ -1,0 +1,49 @@
+#!/usr/bin/expect -f
+
+# Load VM credentials from JSON file
+set qa_env [exec cat qa_environment.json]
+set qa_vms [exec echo $qa_env | jq -r ".qa_vms\[\]"]
+
+# Remove existing keys first
+exec rm -f /home/sblanken/.ssh/qa_key /home/sblanken/.ssh/qa_key.pub
+
+# Generate SSH key if it doesn't exist
+spawn ssh-keygen -t rsa -f /home/sblanken/.ssh/qa_key
+expect "Enter passphrase (empty for no passphrase):"
+send "\r"
+expect "Enter same passphrase again:"
+send "\r"
+expect eof
+
+foreach vm $qa_vms {
+    set name [exec echo $vm | jq -r ".name"]
+    set ip [exec echo $vm | jq -r ".ip"]
+    set username [exec echo $vm | jq -r ".username"]
+    set password [exec echo $vm | jq -r ".password"]
+
+    puts "\nCopying SSH key to $name ($ip)..."
+
+    # Copy SSH key to remote host
+    spawn ssh-copy-id -i /home/sblanken/.ssh/qa_key.pub $username@$ip
+
+    expect {
+        "continue connecting (yes/no" {
+            send "yes\r"
+            exp_continue
+        }
+        "password:" {
+            send "$password\r"
+            exp_continue
+        }
+        "Permission denied" {
+            puts "❌ Failed to copy SSH key to $name"
+            exit 1
+        }
+        eof {
+            puts "✅ Successfully copied SSH key to $name"
+        }
+    }
+}
+
+puts "\n✅ SSH keys deployed to all VMs"
+exit 0

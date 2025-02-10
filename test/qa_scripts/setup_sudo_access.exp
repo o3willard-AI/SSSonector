@@ -1,0 +1,42 @@
+#!/usr/bin/expect -f
+
+# Configure sudo access for each VM
+set vms {
+    {"Server" "192.168.50.210"}
+    {"Client" "192.168.50.211"}
+    {"SNMP Server" "192.168.50.212"}
+}
+
+foreach vm $vms {
+    set name [lindex $vm 0]
+    set ip [lindex $vm 1]
+    set username "sblanken"
+    set password "101abn"
+
+    puts "\nConfiguring sudo access on $name ($ip)..."
+
+    # SSH and configure sudo in a single command
+    spawn ssh -i /home/sblanken/.ssh/qa_key $username@$ip "echo '$password' | sudo -S sh -c 'echo \"sblanken ALL=(ALL:ALL) NOPASSWD: ALL\" > /etc/sudoers.d/99-qa-automation && chmod 440 /etc/sudoers.d/99-qa-automation && sudo -n whoami'"
+
+    expect {
+        "continue connecting (yes/no" {
+            send "yes\r"
+            exp_continue
+        }
+        "password for sblanken:" {
+            send "$password\r"
+            exp_continue
+        }
+        "root" {
+            puts "✅ Successfully configured passwordless sudo on $name"
+        }
+        timeout {
+            puts "❌ Failed to configure passwordless sudo on $name"
+            exit 1
+        }
+        eof
+    }
+}
+
+puts "\n✅ Sudo access configured on all VMs"
+exit 0

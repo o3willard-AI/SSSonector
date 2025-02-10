@@ -1,0 +1,26 @@
+#!/usr/bin/expect -f
+
+set timeout 10
+set password "101abn"
+
+puts "=== Setting up SNMP Server ==="
+spawn ssh sblanken@192.168.50.212 "echo '$password' | sudo -S bash -c 'apt-get update && apt-get install -y snmpd snmp && echo === CONFIGURING SNMP === && sed -i \"s/agentAddress  udp:127.0.0.1:161/agentAddress udp:0.0.0.0:161/g\" /etc/snmp/snmpd.conf && echo \"rocommunity public localhost\" >> /etc/snmp/snmpd.conf && echo \"rocommunity public 192.168.50.0/24\" >> /etc/snmp/snmpd.conf && systemctl restart snmpd && echo === STATUS === && systemctl status snmpd'"
+
+expect {
+    "password:" {
+        send "$password\r"
+        exp_continue
+    }
+    "Do you want to continue?" {
+        send "Y\r"
+        exp_continue
+    }
+    timeout {
+        puts "\n❌ Operation timed out"
+        exit 1
+    }
+    eof {
+        puts "\n✅ Operation complete"
+        exit 0
+    }
+}

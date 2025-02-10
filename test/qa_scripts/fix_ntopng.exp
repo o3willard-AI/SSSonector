@@ -1,0 +1,22 @@
+#!/usr/bin/expect -f
+
+set timeout 10
+set password "101abn"
+
+puts "=== Fixing ntopng Configuration ==="
+spawn ssh sblanken@192.168.50.212 "echo '$password' | sudo -S bash -c 'echo === LOGS === && journalctl -u ntopng --no-pager -n 50 && echo === FIXING CONFIG === && echo -e \"--interface=enp0s3\n--http-port=3000\n--data-dir=/var/lib/ntopng\n--local-networks=192.168.50.0/24\n--community=public\" > /etc/ntopng/ntopng.conf && systemctl restart ntopng && echo === NEW STATUS === && systemctl status ntopng'"
+
+expect {
+    "password:" {
+        send "$password\r"
+        exp_continue
+    }
+    timeout {
+        puts "\n❌ Operation timed out"
+        exit 1
+    }
+    eof {
+        puts "\n✅ Operation complete"
+        exit 0
+    }
+}

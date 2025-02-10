@@ -1,0 +1,37 @@
+#!/usr/bin/expect -f
+
+set timeout 30
+set password "101abn"
+
+# Function to setup repository
+proc setup_repo {host} {
+    global password
+    
+    puts "\n=== Setting up SSSonector repository on $host ==="
+    spawn ssh sblanken@$host "echo '$password' | sudo -S bash -c 'apt-get update && \
+        apt-get install -y golang git make && \
+        mkdir -p /home/sblanken/go/src/github.com/o3willard-AI && \
+        cd /home/sblanken/go/src/github.com/o3willard-AI && \
+        git clone https://github.com/o3willard-AI/SSSonector.git && \
+        cd SSSonector && \
+        make build && \
+        chown -R sblanken:sblanken /home/sblanken/go'"
+
+    expect {
+        "password:" {
+            send "$password\r"
+            exp_continue
+        }
+        timeout {
+            puts "\n❌ Operation timed out"
+            exit 1
+        }
+        eof {
+            puts "\n✅ Repository setup complete"
+        }
+    }
+}
+
+# Setup repository on both systems
+setup_repo "192.168.50.210"
+setup_repo "192.168.50.211"
