@@ -20,6 +20,8 @@ const (
 	IFF_TUN   = 0x0001
 	IFF_NO_PI = 0x1000
 	IFF_UP    = 0x1
+
+	ipCmd = "/sbin/ip" // Use absolute path
 )
 
 type linuxInterface struct {
@@ -120,6 +122,13 @@ func (i *linuxInterface) initialize() error {
 		return fmt.Errorf("interface failed to become ready after %d attempts", i.opts.RetryAttempts)
 	}
 
+	// Ensure interface is down before configuration
+	if err := exec.Command(ipCmd, "link", "set", "dev", i.name, "down").Run(); err != nil {
+		file.Close()
+		i.setState(StateError)
+		return fmt.Errorf("failed to bring interface down: %w", err)
+	}
+
 	i.file = file
 	i.mtu = 1500 // Default MTU
 	i.setState(StateReady)
@@ -129,7 +138,7 @@ func (i *linuxInterface) initialize() error {
 func createIfreq(name string) ([]byte, error) {
 	var ifreq [40]byte
 	copy(ifreq[:16], []byte(name))
-	*(*uint16)(unsafe.Pointer(&ifreq[16])) = IFF_TUN | IFF_NO_PI | IFF_UP
+	*(*uint16)(unsafe.Pointer(&ifreq[16])) = IFF_TUN | IFF_NO_PI
 	return ifreq[:], nil
 }
 
@@ -167,24 +176,38 @@ func (i *linuxInterface) Configure(cfg *Config) error {
 }
 
 func (i *linuxInterface) applyConfiguration(cfg *Config) error {
-	// Set IP address
-	if err := exec.Command("ip", "addr", "add", cfg.Address, "dev", i.name).Run(); err != nil {
-		return fmt.Errorf("failed to set IP address: %w", err)
+	// Wait for interface to be ready
+	ready := false
+	for attempt := 0; attempt < i.opts.RetryAttempts; attempt++ {
+		if _, err := os.Stat(fmt.Sprintf("/sys/class/net/%s", i.name)); err == nil {
+			ready = true
+			break
+		}
+		time.Sleep(time.Duration(i.opts.RetryDelay) * time.Millisecond)
 	}
 
-	// Set MTU
-	if err := exec.Command("ip", "link", "set", "mtu", fmt.Sprintf("%d", cfg.MTU), "dev", i.name).Run(); err != nil {
+	if !ready {
+		return fmt.Errorf("interface not ready")
+	}
+
+	// Set MTU first
+	if err := exec.Command(ipCmd, "link", "set", "dev", i.name, "mtu", fmt.Sprintf("%d", cfg.MTU)).Run(); err != nil {
 		return fmt.Errorf("failed to set MTU: %w", err)
 	}
 
-	// Bring interface up
-	if err := exec.Command("ip", "link", "set", "up", "dev", i.name).Run(); err != nil {
+	// Set IP address
+	if err := exec.Command(ipCmd, "addr", "add", cfg.Address, "dev", i.name).Run(); err != nil {
+		return fmt.Errorf("failed to set IP address: %w", err)
+	}
+
+	// Bring interface up last
+	if err := exec.Command(ipCmd, "link", "set", "dev", i.name, "up").Run(); err != nil {
 		return fmt.Errorf("failed to bring interface up: %w", err)
 	}
 
 	// Verify configuration
 	if i.opts.ValidateState {
-		if err := exec.Command("ip", "addr", "show", "dev", i.name).Run(); err != nil {
+		if err := exec.Command(ipCmd, "addr", "show", "dev", i.name).Run(); err != nil {
 			return fmt.Errorf("failed to validate interface configuration: %w", err)
 		}
 	}
@@ -252,13 +275,13 @@ func (i *linuxInterface) Cleanup() error {
 func (i *linuxInterface) performCleanup() error {
 	if i.isUp {
 		// Bring interface down
-		if err := exec.Command("ip", "link", "set", "down", "dev", i.name).Run(); err != nil {
+		if err := exec.Command(ipCmd, "link", "set", "dev", i.name, "down").Run(); err != nil {
 			return fmt.Errorf("failed to bring interface down: %w", err)
 		}
 
 		// Remove IP address with retries
 		for attempt := 0; attempt < i.opts.RetryAttempts; attempt++ {
-			if err := exec.Command("ip", "addr", "del", i.address, "dev", i.name).Run(); err == nil {
+			if err := exec.Command(ipCmd, "addr", "del", i.address, "dev", i.name).Run(); err == nil {
 				break
 			}
 			if attempt == i.opts.RetryAttempts-1 {

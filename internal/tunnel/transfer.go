@@ -5,29 +5,32 @@ import (
 	"net"
 	"time"
 
-	"github.com/o3willard-AI/SSSonector/internal/config"
+	"github.com/o3willard-AI/SSSonector/internal/config/types"
 	"github.com/o3willard-AI/SSSonector/internal/throttle"
 	"go.uber.org/zap"
 )
 
 // Transfer handles data transfer between connections
 type Transfer struct {
-	src     net.Conn
-	dst     net.Conn
-	limiter *throttle.Limiter
-	logger  *zap.Logger
+	src      net.Conn
+	dst      net.Conn
+	srcToDst *throttle.Limiter
+	dstToSrc *throttle.Limiter
+	logger   *zap.Logger
 }
 
 // NewTransfer creates a new transfer
-func NewTransfer(src, dst net.Conn, cfg *config.AppConfig, logger *zap.Logger) *Transfer {
-	// Create rate limiter
-	limiter := throttle.NewLimiter(cfg, src, dst, logger)
+func NewTransfer(src, dst net.Conn, cfg *types.AppConfig, logger *zap.Logger) *Transfer {
+	// Create rate limiters for each direction
+	srcToDst := throttle.NewLimiter(cfg, src, dst, logger)
+	dstToSrc := throttle.NewLimiter(cfg, dst, src, logger)
 
 	return &Transfer{
-		src:     src,
-		dst:     dst,
-		limiter: limiter,
-		logger:  logger,
+		src:      src,
+		dst:      dst,
+		srcToDst: srcToDst,
+		dstToSrc: dstToSrc,
+		logger:   logger,
 	}
 }
 
@@ -38,13 +41,15 @@ func (t *Transfer) Start() error {
 
 	// Forward src -> dst
 	go func() {
-		_, err := io.Copy(t.limiter, t.dst)
+		// Read from src and write to dst through limiter
+		_, err := io.Copy(t.dst, t.srcToDst)
 		errChan <- err
 	}()
 
 	// Forward dst -> src
 	go func() {
-		_, err := io.Copy(t.src, t.limiter)
+		// Read from dst and write to src through limiter
+		_, err := io.Copy(t.src, t.dstToSrc)
 		errChan <- err
 	}()
 

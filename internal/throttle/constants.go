@@ -3,14 +3,21 @@ package throttle
 import "time"
 
 const (
-	// TCP overhead factor for rate limiting calculations
-	tcpOverheadFactor = 1.1 // 10% overhead for TCP headers
+	// tcpOverheadFactor accounts for TCP/IP overhead in rate calculations
+	tcpOverheadFactor = 1.1 // 10% overhead
 
-	// Default timeout for rate limiting operations
-	defaultTimeout = 10 * time.Second
+	// defaultTimeout is the default timeout for rate limiting operations
+	defaultTimeout = 5 * time.Second
 
-	// Default buffer sizes
-	defaultReadBufferSize  = 64 * 1024 // 64KB
+	// defaultBufferSize is the default size for read/write buffers
+	defaultBufferSize = 32 * 1024 // 32KB
+
+	// defaultReadBufferSize is the default size for read buffers
+	defaultReadBufferSize = 64 * 1024 // 64KB
+
+	// defaultWriteBufferSize is the default size for write buffers
 	defaultWriteBufferSize = 64 * 1024 // 64KB
-	maxBufferPoolSize      = 1000      // Maximum number of buffers to keep in pool
+
+	// maxBufferPoolSize is the maximum number of buffers in the pool
+	maxBufferPoolSize = 1024
 )

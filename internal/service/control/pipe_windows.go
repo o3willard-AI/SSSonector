@@ -186,7 +186,7 @@ func createPipeSecurityAttributes() (*windows.SecurityAttributes, error) {
 			Trustee: windows.TRUSTEE{
 				TrusteeForm:  windows.TRUSTEE_IS_SID,
 				TrusteeType:  windows.TRUSTEE_IS_GROUP,
-				TrusteeValue: windows.TrusteeValueFromSID(windows.WinAuthenticatedUserSid),
+				TrusteeValue: getTrusteeSID(windows.WinAuthenticatedUserSid),
 			},
 		},
 	}, nil)
@@ -203,6 +203,16 @@ func createPipeSecurityAttributes() (*windows.SecurityAttributes, error) {
 		SecurityDescriptor: sd,
 		InheritHandle:      1,
 	}, nil
+}
+
+// getTrusteeSID creates a SID for the given well-known SID type
+func getTrusteeSID(sidType windows.WELL_KNOWN_SID_TYPE) windows.TrusteeValue {
+	sid, err := windows.CreateWellKnownSid(sidType)
+	if err != nil {
+		// Fall back to Everyone if we can't create the requested SID
+		sid, _ = windows.CreateWellKnownSid(windows.WinWorldSid)
+	}
+	return windows.TrusteeValue(unsafe.Pointer(sid))
 }
 
 // createNamedPipe creates a new named pipe instance

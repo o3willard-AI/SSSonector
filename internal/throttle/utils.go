@@ -23,3 +23,15 @@ func maxInt(a, b int) int {
 	}
 	return b
 }
+
+// roundUpToMultiple rounds up a number to the nearest multiple
+func roundUpToMultiple(n, multiple int) int {
+	if multiple == 0 {
+		return n
+	}
+	remainder := n % multiple
+	if remainder == 0 {
+		return n
+	}
+	return n + multiple - remainder
+}

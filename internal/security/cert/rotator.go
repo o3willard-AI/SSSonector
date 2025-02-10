@@ -1,200 +1,286 @@
 package cert
 
 import (
+	"context"
+	"crypto/x509"
 	"fmt"
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
 )
 
-// RotationPolicy defines when certificates should be rotated
-type RotationPolicy struct {
-	// MinimumValidityDuration is the minimum remaining validity period
-	// before a certificate should be rotated
-	MinimumValidityDuration time.Duration
-
-	// MaximumValidityDuration is the maximum validity period for new certificates
-	MaximumValidityDuration time.Duration
-
-	// RenewBeforeDuration is how long before expiration to start renewal
-	RenewBeforeDuration time.Duration
-
-	// RetryInterval is how often to retry failed rotations
-	RetryInterval time.Duration
-
-	// Types specifies which certificate types to rotate
-	Types []CertificateType
+// RotationMetrics tracks certificate rotation statistics
+type RotationMetrics struct {
+	LastRotation     time.Time
+	NextRotation     time.Time
+	RotationAttempts int64
+	RotationErrors   int64
+	ValidationErrors int64
 }
 
-// DefaultRotationPolicy returns the default rotation policy
-func DefaultRotationPolicy() *RotationPolicy {
-	return &RotationPolicy{
-		MinimumValidityDuration: 30 * 24 * time.Hour,  // 30 days
-		MaximumValidityDuration: 365 * 24 * time.Hour, // 1 year
-		RenewBeforeDuration:     14 * 24 * time.Hour,  // 14 days
-		RetryInterval:           1 * time.Hour,
-		Types: []CertificateType{
-			CertTypeServer,
-			CertTypeClient,
-			CertTypeIntermediate,
-		},
-	}
-}
-
-// Rotator implements CertificateRotator interface
-type Rotator struct {
-	manager CertificateManager
-	policy  *RotationPolicy
+// CertificateRotator manages automatic certificate rotation
+type CertificateRotator struct {
+	config  *RotationConfig
 	logger  *zap.Logger
+	manager CertificateManager
+
+	mu            sync.RWMutex
+	current       *Certificate
+	previous      *Certificate
+	rotationTimer *time.Timer
+	stopCh        chan struct{}
+	metrics       RotationMetrics
 }
 
-// NewRotator creates a new certificate rotator
-func NewRotator(manager CertificateManager, policy *RotationPolicy, logger *zap.Logger) *Rotator {
-	if policy == nil {
-		policy = DefaultRotationPolicy()
+// NewCertificateRotator creates a new certificate rotator
+func NewCertificateRotator(config *RotationConfig, manager CertificateManager, logger *zap.Logger) *CertificateRotator {
+	if config == nil {
+		config = DefaultRotationConfig()
 	}
 
-	return &Rotator{
-		manager: manager,
-		policy:  policy,
+	return &CertificateRotator{
+		config:  config,
 		logger:  logger,
+		manager: manager,
+		stopCh:  make(chan struct{}),
 	}
 }
 
-// ShouldRotate determines if a certificate should be rotated
-func (r *Rotator) ShouldRotate(cert *Certificate) bool {
-	// Check if certificate type is included in policy
-	included := false
-	for _, t := range r.policy.Types {
-		if cert.Type == t {
-			included = true
-			break
-		}
-	}
-	if !included {
-		return false
-	}
-
-	// Check if certificate is valid
-	if cert.Status != CertStatusValid {
-		return true
-	}
-
-	// Check remaining validity period
-	now := time.Now()
-	remaining := cert.X509.NotAfter.Sub(now)
-
-	// Check if certificate is expired or close to expiring
-	if remaining <= 0 {
-		return true
-	}
-	if remaining < r.policy.MinimumValidityDuration {
-		return true
-	}
-
-	// Check if certificate exceeds maximum validity period
-	validity := cert.X509.NotAfter.Sub(cert.X509.NotBefore)
-	if validity > r.policy.MaximumValidityDuration {
-		return true
-	}
-
-	return false
-}
-
-// Rotate rotates a certificate
-func (r *Rotator) Rotate(cert *Certificate) (*Certificate, error) {
-	// Get issuer certificate
-	issuer, err := r.manager.GetCertificateStore().Load(cert.IssuerSerial)
+// Start begins the rotation monitoring process
+func (r *CertificateRotator) Start(ctx context.Context) error {
+	// Load initial certificate
+	certPair, err := r.manager.GetCertificateStore().LoadCurrent()
 	if err != nil {
-		return nil, fmt.Errorf("failed to load issuer certificate: %w", err)
+		return fmt.Errorf("failed to load initial certificate: %v", err)
 	}
 
-	// Create certificate request
-	req := &CertificateRequest{
-		Type: cert.Type,
-		Subject: struct {
-			CommonName         string
-			Organization       []string
-			OrganizationalUnit []string
-			Country            []string
-			Province           []string
-			Locality           []string
-		}{
-			CommonName:         cert.X509.Subject.CommonName,
-			Organization:       cert.X509.Subject.Organization,
-			OrganizationalUnit: cert.X509.Subject.OrganizationalUnit,
-			Country:            cert.X509.Subject.Country,
-			Province:           cert.X509.Subject.Province,
-			Locality:           cert.X509.Subject.Locality,
-		},
-		SANs:        cert.SANs,
-		KeyUsage:    cert.KeyUsage,
-		ExtKeyUsage: cert.ExtKeyUsage,
-		NotBefore:   time.Now(),
-		NotAfter:    time.Now().Add(r.policy.MaximumValidityDuration),
-		KeySize:     384, // Use P-384 curve
-		Metadata:    cert.Metadata,
+	cert := certPair.ToCertificate()
+	cert.Type = CertTypeServer // Default to server type, should be determined by usage
+	cert.Status = CertStatusValid
+
+	// Validate initial certificate
+	if err := r.validateCertificate(cert); err != nil {
+		return fmt.Errorf("initial certificate validation failed: %v", err)
 	}
 
-	// Create new certificate
-	var newCert *Certificate
-	var createErr error
+	r.mu.Lock()
+	r.current = cert
+	r.metrics.LastRotation = time.Now()
+	r.metrics.NextRotation = cert.X509.NotAfter.Add(-r.config.RenewalWindow)
+	r.mu.Unlock()
 
-	switch cert.Type {
-	case CertTypeServer:
-		newCert, createErr = r.manager.CreateServer(req, issuer)
-	case CertTypeClient:
-		newCert, createErr = r.manager.CreateClient(req, issuer)
-	case CertTypeIntermediate:
-		newCert, createErr = r.manager.CreateIntermediate(req, issuer)
-	default:
-		return nil, fmt.Errorf("unsupported certificate type: %v", cert.Type)
-	}
+	// Start rotation monitoring
+	go r.monitor(ctx)
 
-	if createErr != nil {
-		return nil, fmt.Errorf("failed to create new certificate: %w", createErr)
-	}
-
-	// Revoke old certificate
-	if err := r.manager.Revoke(cert.SerialNumber, "superseded by new certificate"); err != nil {
-		r.logger.Error("Failed to revoke old certificate",
-			zap.String("serial_number", cert.SerialNumber),
+	// Trigger initial rotation check
+	if err := r.checkRotation(); err != nil {
+		r.logger.Warn("Initial rotation check failed",
 			zap.Error(err),
 		)
 	}
 
-	return newCert, nil
+	return nil
 }
 
-// RotateAll rotates all certificates of a given type
-func (r *Rotator) RotateAll(certType CertificateType) error {
-	// Get all certificates of the specified type
-	certs, err := r.manager.GetCertificateStore().ListByType(certType)
-	if err != nil {
-		return fmt.Errorf("failed to list certificates: %w", err)
+// Stop stops the rotation monitoring process
+func (r *CertificateRotator) Stop() {
+	close(r.stopCh)
+	if r.rotationTimer != nil {
+		r.rotationTimer.Stop()
 	}
+}
 
-	// Check each certificate
-	for _, cert := range certs {
-		if r.ShouldRotate(cert) {
-			r.logger.Info("Rotating certificate",
-				zap.String("serial_number", cert.SerialNumber),
-				zap.String("subject", cert.X509.Subject.CommonName),
-			)
+// GetCurrent returns the current certificate
+func (r *CertificateRotator) GetCurrent() *Certificate {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.current
+}
 
-			if _, err := r.Rotate(cert); err != nil {
-				r.logger.Error("Failed to rotate certificate",
-					zap.String("serial_number", cert.SerialNumber),
+// GetPrevious returns the previous certificate during grace period
+func (r *CertificateRotator) GetPrevious() *Certificate {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.previous
+}
+
+// GetMetrics returns the current rotation metrics
+func (r *CertificateRotator) GetMetrics() RotationMetrics {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.metrics
+}
+
+// monitor periodically checks certificates for rotation
+func (r *CertificateRotator) monitor(ctx context.Context) {
+	ticker := time.NewTicker(r.config.RotationInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-r.stopCh:
+			return
+		case <-ticker.C:
+			if err := r.checkRotation(); err != nil {
+				r.mu.Lock()
+				r.metrics.RotationErrors++
+				r.mu.Unlock()
+
+				r.logger.Error("Certificate rotation check failed",
 					zap.Error(err),
+					zap.Int64("total_errors", r.metrics.RotationErrors),
 				)
-				continue
 			}
-
-			r.logger.Info("Certificate rotated successfully",
-				zap.String("serial_number", cert.SerialNumber),
-			)
 		}
 	}
+}
+
+// validateCertificate performs comprehensive certificate validation
+func (r *CertificateRotator) validateCertificate(cert *Certificate) error {
+	// Basic validation
+	if err := r.manager.Validate(cert); err != nil {
+		r.mu.Lock()
+		r.metrics.ValidationErrors++
+		r.mu.Unlock()
+		return fmt.Errorf("certificate validation failed: %v", err)
+	}
+
+	store := r.manager.GetCertificateStore()
+
+	// Check revocation status if CRL/OCSP endpoints are configured
+	if len(cert.X509.CRLDistributionPoints) > 0 {
+		for _, crlDP := range cert.X509.CRLDistributionPoints {
+			if err := store.ValidateCRL(cert, &x509.RevocationList{
+				ThisUpdate: time.Now(),
+				NextUpdate: time.Now().Add(24 * time.Hour),
+			}); err != nil {
+				r.mu.Lock()
+				r.metrics.ValidationErrors++
+				r.mu.Unlock()
+				return fmt.Errorf("CRL validation failed for %s: %v", crlDP, err)
+			}
+		}
+	}
+
+	if len(cert.X509.OCSPServer) > 0 {
+		if err := store.ValidateOCSP(cert); err != nil {
+			r.mu.Lock()
+			r.metrics.ValidationErrors++
+			r.mu.Unlock()
+			return fmt.Errorf("OCSP validation failed: %v", err)
+		}
+	}
+
+	return nil
+}
+
+// checkRotation checks if certificate rotation is needed
+func (r *CertificateRotator) checkRotation() error {
+	r.mu.RLock()
+	cert := r.current
+	r.mu.RUnlock()
+
+	if cert == nil {
+		return fmt.Errorf("no current certificate")
+	}
+
+	// Validate current certificate
+	if err := r.validateCertificate(cert); err != nil {
+		return fmt.Errorf("current certificate validation failed: %v", err)
+	}
+
+	// Check if we're within renewal window
+	if time.Until(cert.X509.NotAfter) > r.config.RenewalWindow {
+		return nil
+	}
+
+	r.mu.Lock()
+	r.metrics.RotationAttempts++
+	r.mu.Unlock()
+
+	// Create certificate request for renewal
+	req := &CertificateRequest{
+		Type:        cert.Type,
+		Subject:     cert.X509.Subject,
+		CommonName:  cert.X509.Subject.CommonName,
+		DNSNames:    cert.X509.DNSNames,
+		IPAddresses: cert.X509.IPAddresses,
+		KeyUsage:    cert.X509.KeyUsage,
+		ExtKeyUsage: cert.X509.ExtKeyUsage,
+		NotBefore:   time.Now(),
+		NotAfter:    time.Now().Add(r.config.RenewalWindow * 2),
+		KeySize:     r.config.KeySize,
+		Metadata:    cert.Metadata,
+	}
+
+	// Create new certificate based on type
+	var newCert *Certificate
+	var err error
+
+	switch cert.Type {
+	case CertTypeCA:
+		newCert, err = r.manager.CreateCA(req)
+	case CertTypeIntermediate:
+		newCert, err = r.manager.CreateIntermediate(req, cert)
+	case CertTypeServer:
+		newCert, err = r.manager.CreateServer(req, cert)
+	case CertTypeClient:
+		newCert, err = r.manager.CreateClient(req, cert)
+	default:
+		return fmt.Errorf("unknown certificate type: %v", cert.Type)
+	}
+
+	if err != nil {
+		return fmt.Errorf("failed to create new certificate: %v", err)
+	}
+
+	// Validate new certificate before storing
+	if err := r.validateCertificate(newCert); err != nil {
+		return fmt.Errorf("new certificate validation failed: %v", err)
+	}
+
+	// Store new certificate
+	if err := r.manager.GetCertificateStore().Store(newCert.ToCertPair()); err != nil {
+		return fmt.Errorf("failed to store new certificate: %v", err)
+	}
+
+	// Update current and previous certificates
+	r.mu.Lock()
+	r.previous = r.current
+	r.current = newCert
+	r.metrics.LastRotation = time.Now()
+	r.metrics.NextRotation = newCert.X509.NotAfter.Add(-r.config.RenewalWindow)
+	r.mu.Unlock()
+
+	// Notify rotation
+	if r.config.OnRotation != nil {
+		r.config.OnRotation(cert.X509, newCert.X509)
+	}
+
+	r.logger.Info("Certificate rotated successfully",
+		zap.String("serial", newCert.SerialNumber),
+		zap.Time("new_expiry", newCert.X509.NotAfter),
+		zap.Time("next_rotation", r.metrics.NextRotation),
+		zap.Int64("total_rotations", r.metrics.RotationAttempts),
+	)
+
+	// Schedule cleanup of previous certificate
+	time.AfterFunc(r.config.GracePeriod, func() {
+		r.mu.Lock()
+		r.previous = nil
+		r.mu.Unlock()
+
+		// Revoke old certificate after grace period
+		if err := r.manager.Revoke(cert.SerialNumber); err != nil {
+			r.logger.Error("Failed to revoke old certificate",
+				zap.String("serial", cert.SerialNumber),
+				zap.Error(err),
+			)
+		}
+	})
 
 	return nil
 }

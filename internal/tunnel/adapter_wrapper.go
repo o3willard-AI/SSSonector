@@ -2,6 +2,7 @@ package tunnel
 
 import (
 	"net"
+	"strings"
 	"time"
 
 	"github.com/o3willard-AI/SSSonector/internal/adapter"
@@ -32,7 +33,12 @@ func (w *adapterWrapper) Close() error {
 }
 
 func (w *adapterWrapper) LocalAddr() net.Addr {
-	return &net.IPAddr{IP: net.ParseIP(w.adapter.GetAddress())}
+	// Handle CIDR format addresses
+	addr := w.adapter.GetAddress()
+	if strings.Contains(addr, "/") {
+		addr = strings.Split(addr, "/")[0]
+	}
+	return &net.IPAddr{IP: net.ParseIP(addr)}
 }
 
 func (w *adapterWrapper) RemoteAddr() net.Addr {

@@ -111,18 +111,33 @@ type AuthConfig struct {
 
 // NetworkConfig represents network configuration
 type NetworkConfig struct {
-	Interface  string   `yaml:"interface" json:"interface"`
-	MTU        int      `yaml:"mtu" json:"mtu"`
-	Address    string   `yaml:"address" json:"address"`
-	DNSServers []string `yaml:"dns_servers" json:"dns_servers"`
+	Interface  string     `yaml:"interface" json:"interface"`
+	MTU        int        `yaml:"mtu" json:"mtu"`
+	Address    string     `yaml:"address" json:"address"`
+	DNSServers []string   `yaml:"dns_servers" json:"dns_servers"`
+	IPv6       IPv6Config `yaml:"ipv6" json:"ipv6"`
+}
+
+// IPv6Config represents IPv6 experimental configuration
+type IPv6Config struct {
+	// Enabled indicates whether IPv6 support is enabled (experimental)
+	Enabled bool `yaml:"enabled" json:"enabled"`
+	// Address is the IPv6 address for the interface
+	Address string `yaml:"address" json:"address"`
+	// Prefix is the IPv6 network prefix length
+	Prefix int `yaml:"prefix" json:"prefix"`
 }
 
 // TunnelConfig represents tunnel configuration
 type TunnelConfig struct {
-	Port        int    `yaml:"port" json:"port"`
-	Keepalive   string `yaml:"keepalive" json:"keepalive"`
-	Compression bool   `yaml:"compression" json:"compression"`
-	Protocol    string `yaml:"protocol" json:"protocol"`
+	ListenAddress string `yaml:"listen_address" json:"listen_address"`
+	ListenPort    int    `yaml:"listen_port" json:"listen_port"`
+	ServerAddress string `yaml:"server_address" json:"server_address"`
+	ServerPort    int    `yaml:"server_port" json:"server_port"`
+	Port          int    `yaml:"port" json:"port"`
+	Protocol      string `yaml:"protocol" json:"protocol"`
+	Compression   bool   `yaml:"compression" json:"compression"`
+	Keepalive     string `yaml:"keepalive" json:"keepalive"`
 }
 
 // SecurityConfig represents security configuration
@@ -177,13 +192,6 @@ type MonitorConfig struct {
 	Prometheus PrometheusConfig `yaml:"prometheus" json:"prometheus"`
 }
 
-// SNMPConfig represents SNMP monitoring configuration
-type SNMPConfig struct {
-	Enabled   bool   `yaml:"enabled" json:"enabled"`
-	Port      int    `yaml:"port" json:"port"`
-	Community string `yaml:"community" json:"community"`
-}
-
 // PrometheusConfig represents Prometheus monitoring settings
 type PrometheusConfig struct {
 	Enabled    bool   `yaml:"enabled" json:"enabled"`
@@ -200,11 +208,23 @@ type MetricsConfig struct {
 	BufferSize int           `yaml:"buffer_size" json:"buffer_size"`
 }
 
+// SNMPConfig represents SNMP monitoring configuration
+type SNMPConfig struct {
+	Enabled   bool   `yaml:"enabled" json:"enabled"`
+	Port      int    `yaml:"port" json:"port"`
+	Community string `yaml:"community" json:"community"`
+}
+
 // ThrottleConfig represents rate limiting configuration
 type ThrottleConfig struct {
 	Enabled bool    `yaml:"enabled" json:"enabled"`
 	Rate    float64 `yaml:"rate" json:"rate"`
 	Burst   int     `yaml:"burst" json:"burst"`
+}
+
+// DefaultConfig returns a default configuration
+func DefaultConfig() *AppConfig {
+	return NewAppConfig(TypeServer)
 }
 
 // NewAppConfig creates a new AppConfig instance
@@ -229,9 +249,4 @@ func NewAppConfig(configType Type) *AppConfig {
 			Burst:   1024 * 1024, // 1MB burst
 		},
 	}
-}
-
-// DefaultConfig returns a default configuration
-func DefaultConfig() *AppConfig {
-	return NewAppConfig(TypeServer)
 }

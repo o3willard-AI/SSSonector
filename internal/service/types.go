@@ -2,31 +2,89 @@ package service
 
 import "time"
 
-// ServiceCommand represents a service control command
-type ServiceCommand string
-
-const (
-	// Service commands
-	CmdStatus  ServiceCommand = "status"
-	CmdMetrics ServiceCommand = "metrics"
-	CmdHealth  ServiceCommand = "health"
-	CmdStart   ServiceCommand = "start"
-	CmdStop    ServiceCommand = "stop"
-	CmdReload  ServiceCommand = "reload"
-)
-
-// ServiceState represents a service state
+// ServiceState represents the state of a service
 type ServiceState string
 
 const (
-	// Service states
-	StateStarting  ServiceState = "starting"
-	StateRunning   ServiceState = "running"
-	StateStopping  ServiceState = "stopping"
-	StateStopped   ServiceState = "stopped"
+	// StateStopped indicates the service is stopped
+	StateStopped ServiceState = "stopped"
+	// StateStarting indicates the service is starting
+	StateStarting ServiceState = "starting"
+	// StateRunning indicates the service is running
+	StateRunning ServiceState = "running"
+	// StateStopping indicates the service is stopping
+	StateStopping ServiceState = "stopping"
+	// StateReloading indicates the service is reloading
 	StateReloading ServiceState = "reloading"
-	StateFailed    ServiceState = "failed"
 )
+
+// ServiceCommand represents a command that can be executed on a service
+type ServiceCommand string
+
+const (
+	// CmdStart starts the service
+	CmdStart ServiceCommand = "start"
+	// CmdStop stops the service
+	CmdStop ServiceCommand = "stop"
+	// CmdStatus returns the current service status
+	CmdStatus ServiceCommand = "status"
+	// CmdReload reloads the service configuration
+	CmdReload ServiceCommand = "reload"
+	// CmdMetrics returns service metrics
+	CmdMetrics ServiceCommand = "metrics"
+	// CmdHealth performs a health check
+	CmdHealth ServiceCommand = "health"
+)
+
+// ServiceStatus represents the current status of a service
+type ServiceStatus struct {
+	Name       string       `json:"name"`
+	State      ServiceState `json:"state"`
+	Mode       string       `json:"mode"`
+	Version    string       `json:"version"`
+	PID        int          `json:"pid"`
+	StartTime  time.Time    `json:"start_time"`
+	LastReload time.Time    `json:"last_reload,omitempty"`
+}
+
+// ServiceMetrics represents service metrics
+type ServiceMetrics struct {
+	Platform      string `json:"platform"`
+	UptimeSeconds int64  `json:"uptime_seconds"`
+}
+
+// ServiceResponse represents a response from a service command
+type ServiceResponse struct {
+	Success bool        `json:"success"`
+	Message string      `json:"message,omitempty"`
+	Data    interface{} `json:"data,omitempty"`
+}
+
+// ServiceOptions represents service options
+type ServiceOptions struct {
+	Name      string
+	ConfigDir string
+	DataDir   string
+	LogDir    string
+}
+
+// Service defines the interface for service operations
+type Service interface {
+	// Start starts the service
+	Start() error
+	// Stop stops the service
+	Stop() error
+	// Reload reloads the service configuration
+	Reload() error
+	// Status returns the current service status
+	Status() (*ServiceStatus, error)
+	// Metrics returns service metrics
+	Metrics() (*ServiceMetrics, error)
+	// Health performs a health check
+	Health() error
+	// ExecuteCommand executes a service command
+	ExecuteCommand(cmd ServiceCommand, args map[string]interface{}) (*ServiceResponse, error)
+}
 
 // ServiceError represents a service error
 type ServiceError struct {
@@ -35,78 +93,30 @@ type ServiceError struct {
 }
 
 // ErrorCode represents a service error code
-type ErrorCode string
+type ErrorCode int
 
 const (
-	// Error codes
-	ErrNotRunning     ErrorCode = "not_running"
-	ErrAlreadyRunning ErrorCode = "already_running"
-	ErrInvalidCommand ErrorCode = "invalid_command"
-	ErrInvalidConfig  ErrorCode = "invalid_config"
-	ErrInternal       ErrorCode = "internal_error"
+	// ErrUnknown represents an unknown error
+	ErrUnknown ErrorCode = iota
+	// ErrNotFound represents a not found error
+	ErrNotFound
+	// ErrInvalidCommand represents an invalid command error
+	ErrInvalidCommand
+	// ErrAlreadyRunning represents an already running error
+	ErrAlreadyRunning
+	// ErrNotRunning represents a not running error
+	ErrNotRunning
 )
 
-// NewServiceError creates a new service error
-func NewServiceError(code ErrorCode, message string) error {
-	return &ServiceError{
-		Code:    code,
-		Message: message,
-	}
-}
-
-// Error implements the error interface
+// Error returns the error message
 func (e *ServiceError) Error() string {
 	return e.Message
 }
 
-// ServiceStatus represents service status information
-type ServiceStatus struct {
-	Name       string       // Service name
-	State      ServiceState // Current state
-	Mode       string       // Operating mode
-	Version    string       // Service version
-	StartTime  time.Time    // Service start time
-	LastReload time.Time    // Last config reload time
-	PID        int          // Process ID
-}
-
-// ServiceMetrics represents service metrics
-type ServiceMetrics struct {
-	Platform      string  // Operating system platform
-	UptimeSeconds int64   // Uptime in seconds
-	CPUPercent    float64 // CPU usage percentage
-	MemoryBytes   uint64  // Memory usage in bytes
-	OpenFiles     int     // Number of open files
-	Connections   int     // Number of active connections
-	BytesIn       uint64  // Total bytes received
-	BytesOut      uint64  // Total bytes sent
-	ErrorCount    int     // Total error count
-}
-
-// ServiceResponse represents a service command response
-type ServiceResponse struct {
-	Success bool        // Success flag
-	Message string      // Response message
-	Data    interface{} // Response data
-}
-
-// ServiceOptions represents service configuration options
-type ServiceOptions struct {
-	Name      string // Service name
-	ConfigDir string // Configuration directory
-	DataDir   string // Data directory
-	LogDir    string // Log directory
-}
-
-// Service defines the interface for service operations
-type Service interface {
-	// Core operations
-	Start() error
-	Stop() error
-	Reload() error
-
-	// Status and monitoring
-	Status() (*ServiceStatus, error)
-	Metrics() (*ServiceMetrics, error)
-	Health() error
+// NewServiceError creates a new service error
+func NewServiceError(code ErrorCode, message string) *ServiceError {
+	return &ServiceError{
+		Code:    code,
+		Message: message,
+	}
 }

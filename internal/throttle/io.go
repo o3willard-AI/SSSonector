@@ -2,139 +2,90 @@ package throttle
 
 import (
 	"io"
-	"sync"
+
+	"go.uber.org/zap"
 )
 
-const (
-	defaultBufferSize = 64 * 1024   // 64KB default buffer size
-	minBufferSize     = 4 * 1024    // 4KB minimum buffer size
-	maxBufferSize     = 1024 * 1024 // 1MB maximum buffer size
-)
-
-// BufferPool manages a pool of byte slices for efficient I/O operations
-type BufferPool struct {
-	pool    sync.Pool
-	size    int
-	maxSize int
-}
-
-// NewBufferPool creates a new buffer pool with the specified buffer size
-func NewBufferPool(size, maxPoolSize int) *BufferPool {
-	if size < minBufferSize {
-		size = minBufferSize
-	}
-	if size > maxBufferSize {
-		size = maxBufferSize
-	}
-
-	return &BufferPool{
-		pool: sync.Pool{
-			New: func() interface{} {
-				return make([]byte, size)
-			},
-		},
-		size:    size,
-		maxSize: maxPoolSize,
-	}
-}
-
-// Get retrieves a buffer from the pool
-func (p *BufferPool) Get() []byte {
-	return p.pool.Get().([]byte)
-}
-
-// Put returns a buffer to the pool
-func (p *BufferPool) Put(buf []byte) {
-	if cap(buf) == p.size {
-		p.pool.Put(buf)
-	}
-}
-
-// ThrottledReader wraps an io.Reader with rate limiting and buffer pooling
+// ThrottledReader implements a rate-limited io.Reader
 type ThrottledReader struct {
-	reader  io.Reader
-	limiter *Limiter
-	pool    *BufferPool
+	reader io.Reader
+	pool   *BufferPool
+	logger *zap.Logger
 }
 
 // NewThrottledReader creates a new throttled reader
-func NewThrottledReader(reader io.Reader, limiter *Limiter, bufferSize, maxPoolSize int) *ThrottledReader {
+func NewThrottledReader(reader io.Reader, limiter *Limiter, logger *zap.Logger) *ThrottledReader {
 	return &ThrottledReader{
-		reader:  reader,
-		limiter: limiter,
-		pool:    NewBufferPool(bufferSize, maxPoolSize),
+		reader: reader,
+		pool:   limiter.bufferPool,
+		logger: logger,
 	}
 }
 
-// Read implements io.Reader with rate limiting and buffer pooling
+// Read implements io.Reader
 func (r *ThrottledReader) Read(p []byte) (n int, err error) {
-	if err := r.limiter.Wait(true); err != nil {
+	// Get buffer from pool
+	buf := r.pool.Get(len(p))
+	defer r.pool.Put(buf)
+
+	// Read into buffer
+	n, err = r.reader.Read(buf)
+	if err != nil {
 		return 0, err
 	}
 
-	// Use pooled buffer if destination buffer is large
-	if len(p) >= minBufferSize {
-		buf := r.pool.Get()
-		defer r.pool.Put(buf)
-
-		// Read into pooled buffer
-		n, err = r.reader.Read(buf[:len(p)])
-		if n > 0 {
-			copy(p, buf[:n])
-		}
-		return n, err
-	}
-
-	// For small reads, use destination buffer directly
-	return r.reader.Read(p)
+	// Copy to output buffer
+	copy(p, buf[:n])
+	return n, nil
 }
 
-// ThrottledWriter wraps an io.Writer with rate limiting and buffer pooling
+// ThrottledWriter implements a rate-limited io.Writer
 type ThrottledWriter struct {
-	writer  io.Writer
-	limiter *Limiter
-	pool    *BufferPool
+	writer io.Writer
+	pool   *BufferPool
+	logger *zap.Logger
 }
 
 // NewThrottledWriter creates a new throttled writer
-func NewThrottledWriter(writer io.Writer, limiter *Limiter, bufferSize, maxPoolSize int) *ThrottledWriter {
+func NewThrottledWriter(writer io.Writer, limiter *Limiter, logger *zap.Logger) *ThrottledWriter {
 	return &ThrottledWriter{
-		writer:  writer,
-		limiter: limiter,
-		pool:    NewBufferPool(bufferSize, maxPoolSize),
+		writer: writer,
+		pool:   limiter.bufferPool,
+		logger: logger,
 	}
 }
 
-// Write implements io.Writer with rate limiting and buffer pooling
+// Write implements io.Writer
 func (w *ThrottledWriter) Write(p []byte) (n int, err error) {
-	if err := w.limiter.Wait(false); err != nil {
-		return 0, err
-	}
+	// Get buffer from pool
+	buf := w.pool.Get(len(p))
+	defer w.pool.Put(buf)
 
-	// Use pooled buffer for large writes
-	if len(p) >= minBufferSize {
-		buf := w.pool.Get()
-		defer w.pool.Put(buf)
+	// Copy input to buffer
+	copy(buf, p)
 
-		// Copy to pooled buffer
-		copy(buf, p)
-		return w.writer.Write(buf[:len(p)])
-	}
-
-	// For small writes, use source buffer directly
-	return w.writer.Write(p)
+	// Write from buffer
+	return w.writer.Write(buf)
 }
 
-// ThrottledReadWriter combines ThrottledReader and ThrottledWriter
+// ThrottledReadWriter implements both io.Reader and io.Writer with rate limiting
 type ThrottledReadWriter struct {
 	*ThrottledReader
 	*ThrottledWriter
 }
 
 // NewThrottledReadWriter creates a new throttled read/writer
-func NewThrottledReadWriter(rw io.ReadWriter, limiter *Limiter, bufferSize, maxPoolSize int) *ThrottledReadWriter {
+func NewThrottledReadWriter(rw interface{}, limiter *Limiter, logger *zap.Logger) *ThrottledReadWriter {
+	reader, ok1 := rw.(io.Reader)
+	writer, ok2 := rw.(io.Writer)
+
+	if !ok1 || !ok2 {
+		logger.Error("Invalid ReadWriter interface")
+		return nil
+	}
+
 	return &ThrottledReadWriter{
-		ThrottledReader: NewThrottledReader(rw, limiter, bufferSize, maxPoolSize),
-		ThrottledWriter: NewThrottledWriter(rw, limiter, bufferSize, maxPoolSize),
+		ThrottledReader: NewThrottledReader(reader, limiter, logger),
+		ThrottledWriter: NewThrottledWriter(writer, limiter, logger),
 	}
 }
