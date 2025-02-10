@@ -3,11 +3,13 @@ set -e
 
 # Build configuration
 VERSION="1.0.0"
-PLATFORMS=("linux/amd64" "darwin/amd64" "windows/amd64")
-OUTPUT_DIR="dist"
+BINARY_NAME="sssonector"
+BINARY_CONTROL="sssonectorctl"
+PLATFORMS=("linux/amd64" "linux/arm64" "darwin/amd64" "darwin/arm64" "windows/amd64")
+OUTPUT_DIR="build"
 
 # Ensure output directory exists
-mkdir -p "$OUTPUT_DIR"
+mkdir -p "$OUTPUT_DIR"/{packages,docker}
 
 # Build for each platform
 for platform in "${PLATFORMS[@]}"; do
@@ -16,146 +18,90 @@ for platform in "${PLATFORMS[@]}"; do
     GOOS="${parts[0]}"
     GOARCH="${parts[1]}"
     
-    # Set output binary name based on platform
+    # Set output binary names based on platform
     if [ "$GOOS" = "windows" ]; then
-        binary_name="SSSonector.exe"
+        daemon_name="${BINARY_NAME}.exe"
+        control_name="${BINARY_CONTROL}.exe"
     else
-        binary_name="SSSonector"
+        daemon_name="${BINARY_NAME}"
+        control_name="${BINARY_CONTROL}"
     fi
 
     echo "Building for $GOOS/$GOARCH..."
     
     # Create platform-specific directory
-    platform_dir="$OUTPUT_DIR/$GOOS-$GOARCH"
+    platform_dir="$OUTPUT_DIR/$GOOS/$GOARCH"
     mkdir -p "$platform_dir"
     
-    # Build binary
+    # Build binaries
     GOOS=$GOOS GOARCH=$GOARCH go build -v \
         -ldflags "-X main.Version=$VERSION" \
-        -o "$platform_dir/$binary_name" \
-        cmd/tunnel/main.go
+        -o "$platform_dir/$daemon_name" \
+        cmd/daemon/main.go
 
-    # Copy configuration files
-    cp -r configs "$platform_dir/"
-    cp -r mibs "$platform_dir/"
+    GOOS=$GOOS GOARCH=$GOARCH go build -v \
+        -ldflags "-X main.Version=$VERSION" \
+        -o "$platform_dir/$control_name" \
+        cmd/sssonectorctl/main.go
     
     # Copy platform-specific service files
     case $GOOS in
         "linux")
-            mkdir -p "$platform_dir/service"
-            cp scripts/service/systemd/SSSonector.service "$platform_dir/service/"
+            cp init/systemd/sssonector.service "$platform_dir/"
+            cp scripts/install.sh "$platform_dir/"
             ;;
         "darwin")
-            mkdir -p "$platform_dir/service"
-            cp scripts/service/launchd/com.SSSonector.plist "$platform_dir/service/"
+            cp init/launchd/com.o3willard.sssonector.plist "$platform_dir/"
+            cp scripts/install_macos.sh "$platform_dir/"
             ;;
         "windows")
-            mkdir -p "$platform_dir/service"
-            cp scripts/service/windows/install-service.ps1 "$platform_dir/service/"
+            cp scripts/install.ps1 "$platform_dir/"
             ;;
     esac
-
-    # Create documentation directory
-    mkdir -p "$platform_dir/docs"
-    cp docs/qa_guide.md "$platform_dir/docs/"
-    
-    # Create platform-specific installation guide
-    cat > "$platform_dir/docs/INSTALL.md" << EOF
-# SSSonector Installation Guide for $(echo "$GOOS" | tr '[:lower:]' '[:upper:]')
-
-## Prerequisites
-
-$(case $GOOS in
-    "linux")
-        echo "- Linux kernel with TUN/TAP support
-- Root privileges for TUN device creation
-- systemd for service management (optional)"
-        ;;
-    "darwin")
-        echo "- macOS 10.15 or later
-- Root privileges for TUN device creation
-- Command Line Tools package"
-        ;;
-    "windows")
-        echo "- Windows 10 or later
-- Administrator privileges
-- TAP-Windows Adapter V9 driver"
-        ;;
-esac)
-
-## Installation Steps
-
-1. Extract the archive to your preferred location:
-   \`\`\`bash
-   tar xzf SSSonector-$GOOS-$GOARCH.tar.gz
-   cd SSSonector
-   \`\`\`
-
-2. Configure the application:
-   - Edit \`configs/server.yaml\` or \`configs/client.yaml\` based on your needs
-   - Ensure proper permissions on configuration files
-
-3. Install as a service (optional):
-$(case $GOOS in
-    "linux")
-        echo "   \`\`\`bash
-   sudo cp service/SSSonector.service /etc/systemd/system/
-   sudo systemctl daemon-reload
-   sudo systemctl enable SSSonector
-   sudo systemctl start SSSonector
-   \`\`\`"
-        ;;
-    "darwin")
-        echo "   \`\`\`bash
-   sudo cp service/com.SSSonector.plist /Library/LaunchDaemons/
-   sudo launchctl load /Library/LaunchDaemons/com.SSSonector.plist
-   \`\`\`"
-        ;;
-    "windows")
-        echo "   \`\`\`powershell
-   # Run as Administrator
-   ./service/install-service.ps1
-   Start-Service SSLTunnel
-   \`\`\`"
-        ;;
-esac)
-
-4. Verify installation:
-   \`\`\`bash
-   ./SSSonector --version
-   \`\`\`
-
-## Monitoring Setup
-
-1. Install monitoring tools:
-   \`\`\`bash
-   cd monitoring
-   docker-compose up -d
-   \`\`\`
-
-2. Access monitoring interfaces:
-   - Grafana: http://localhost:3000
-   - Prometheus: http://localhost:9090
-
-## Troubleshooting
-
-See \`docs/qa_guide.md\` for detailed troubleshooting steps.
-
-## Support
-
-For issues and support, please visit:
-https://github.com/yourusername/SSSonector/issues
-EOF
 
     # Create archive
     echo "Creating archive for $GOOS/$GOARCH..."
     cd "$OUTPUT_DIR"
     if [ "$GOOS" = "windows" ]; then
-        zip -r "SSSonector-$GOOS-$GOARCH.zip" "$GOOS-$GOARCH"
+        zip -j "packages/${BINARY_NAME}-${VERSION}-$GOOS-$GOARCH.zip" "$GOOS/$GOARCH/"*
     else
-        tar czf "SSSonector-$GOOS-$GOARCH.tar.gz" "$GOOS-$GOARCH"
+        tar czf "packages/${BINARY_NAME}-${VERSION}-$GOOS-$GOARCH.tar.gz" -C "$GOOS/$GOARCH" .
     fi
     cd ..
 done
 
-echo "Build complete! Archives available in $OUTPUT_DIR"
+# Build security policies if on Linux
+if [ "$(uname)" = "Linux" ]; then
+    echo "Building security policies..."
+    if [ -d "security/selinux" ]; then
+        cd security/selinux && ./build_policy.sh
+        cp *.pp "$OUTPUT_DIR/linux/amd64/"
+        cp *.pp "$OUTPUT_DIR/linux/arm64/"
+    fi
+    if [ -d "security/apparmor" ]; then
+        cp security/apparmor/usr.local.bin.sssonector "$OUTPUT_DIR/linux/amd64/"
+        cp security/apparmor/usr.local.bin.sssonector "$OUTPUT_DIR/linux/arm64/"
+    fi
+fi
+
+# Copy documentation
+echo "Copying documentation..."
+mkdir -p "$OUTPUT_DIR/docs"
+cp -r docs/deployment "$OUTPUT_DIR/docs/"
+cp -r docs/config "$OUTPUT_DIR/docs/"
+cp -r docs/implementation "$OUTPUT_DIR/docs/"
+cp README.md LICENSE CHANGELOG.md "$OUTPUT_DIR/"
+
+# Copy Kubernetes manifests
+if [ -d "deploy/kubernetes" ]; then
+    echo "Copying Kubernetes manifests..."
+    cp -r deploy/kubernetes "$OUTPUT_DIR/"
+fi
+
+# Create release bundle
+echo "Creating release bundle..."
+cd "$OUTPUT_DIR"
+tar czf "${BINARY_NAME}-${VERSION}-release.tar.gz" *
+cd ..
+
+echo "Build complete! Artifacts available in $OUTPUT_DIR"

@@ -2,13 +2,14 @@
 package store
 
 import (
-	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"gopkg.in/yaml.v2"
 
 	"github.com/o3willard-AI/SSSonector/internal/config/types"
 )
@@ -25,36 +26,13 @@ func NewFileStore(configDir string) *FileStore {
 
 // Load loads configuration from file
 func (s *FileStore) Load() (*types.AppConfig, error) {
-	files, err := ioutil.ReadDir(s.configDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return types.DefaultConfig(), nil
-		}
-		return nil, fmt.Errorf("failed to read config directory: %v", err)
-	}
-
-	var latest string
-	var latestTime int64
-	for _, f := range files {
-		if strings.HasSuffix(f.Name(), ".json") {
-			if f.ModTime().Unix() > latestTime {
-				latest = f.Name()
-				latestTime = f.ModTime().Unix()
-			}
-		}
-	}
-
-	if latest == "" {
-		return types.DefaultConfig(), nil
-	}
-
-	data, err := ioutil.ReadFile(filepath.Join(s.configDir, latest))
+	data, err := ioutil.ReadFile(filepath.Join(s.configDir, "config.yaml"))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file: %v", err)
 	}
 
 	var config types.AppConfig
-	if err := json.Unmarshal(data, &config); err != nil {
+	if err := yaml.Unmarshal(data, &config); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal config: %v", err)
 	}
 
@@ -67,12 +45,12 @@ func (s *FileStore) Store(config *types.AppConfig) error {
 		return fmt.Errorf("failed to create config directory: %v", err)
 	}
 
-	data, err := json.MarshalIndent(config, "", "  ")
+	data, err := yaml.Marshal(config)
 	if err != nil {
 		return fmt.Errorf("failed to marshal config: %v", err)
 	}
 
-	filename := fmt.Sprintf("config-%s-%s.json", config.Type, config.Version)
+	filename := "config.yaml"
 	path := filepath.Join(s.configDir, filename)
 
 	if err := ioutil.WriteFile(path, data, 0644); err != nil {
@@ -92,12 +70,20 @@ func (s *FileStore) ListVersions(configType types.Type) ([]string, error) {
 		return nil, fmt.Errorf("failed to read config directory: %v", err)
 	}
 
-	prefix := fmt.Sprintf("config-%s-", configType)
 	var versions []string
 	for _, f := range files {
-		if strings.HasPrefix(f.Name(), prefix) && strings.HasSuffix(f.Name(), ".json") {
-			version := strings.TrimPrefix(strings.TrimSuffix(f.Name(), ".json"), prefix)
-			versions = append(versions, version)
+		if strings.HasSuffix(f.Name(), ".yaml") {
+			data, err := ioutil.ReadFile(filepath.Join(s.configDir, f.Name()))
+			if err != nil {
+				continue
+			}
+			var cfg types.AppConfig
+			if err := yaml.Unmarshal(data, &cfg); err != nil {
+				continue
+			}
+			if cfg.Type == configType {
+				versions = append(versions, cfg.Version)
+			}
 		}
 	}
 

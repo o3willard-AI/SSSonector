@@ -111,6 +111,7 @@ type AuthConfig struct {
 
 // NetworkConfig represents network configuration
 type NetworkConfig struct {
+	Name       string     `yaml:"name" json:"name"`
 	Interface  string     `yaml:"interface" json:"interface"`
 	MTU        int        `yaml:"mtu" json:"mtu"`
 	Address    string     `yaml:"address" json:"address"`

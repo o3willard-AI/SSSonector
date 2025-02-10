@@ -1,137 +1,193 @@
-# SSSonector QA Test System
+# QA Testing Scripts
 
-This directory contains scripts for automated testing of SSSonector in a QA environment. The system handles building from source, deploying to QA systems, and running comprehensive test scenarios.
+This directory contains scripts for automated testing of SSSonector in a QA environment.
 
-## Prerequisites
+## Security Improvements
 
-1. Two Ubuntu VMs configured as:
-   - QA Server VM (2GB RAM, 20GB storage)
-   - QA Client VM (2GB RAM, 20GB storage)
-2. SSH access configured to both VMs
-3. Go 1.21 or later installed on the development system
-4. Required tools on QA systems:
-   - systemd
-   - ip tools
-   - iptables
-   - ping
+Recent security improvements include:
+- Removed hardcoded credentials
+- Implemented SSH key-based authentication
+- Added environment validation
+- Improved error handling and logging
+- Created shared functions for common operations
 
-## Test Scripts
+## Setup Instructions
 
-### 1. build_and_deploy.sh
-Builds SSSonector from source and deploys to QA systems:
-- Verifies build environment
-- Runs unit tests
-- Creates distribution package
-- Deploys to QA server and client
+1. Configure SSH Key Authentication:
+   ```bash
+   # Generate SSH key pair for QA testing
+   ssh-keygen -t ed25519 -f ~/.ssh/qa_ssh_key -C "qa@sssonector"
+   
+   # Copy public key to QA VMs
+   ssh-copy-id -i ~/.ssh/qa_ssh_key.pub qauser@192.168.50.210
+   ssh-copy-id -i ~/.ssh/qa_ssh_key.pub qauser@192.168.50.211
+   ```
 
-### 2. verify_build.sh
-Verifies the installation on QA systems:
-- Checks binary installation
-- Validates configuration
-- Verifies service installation
-- Checks system dependencies
+2. Configure Environment:
+   - Copy `config.env.example` to `config.env`
+   - Update variables in `config.env`:
+     ```bash
+     # VM Configuration
+     export QA_SERVER_VM="192.168.50.210"
+     export QA_CLIENT_VM="192.168.50.211"
+     export QA_SSH_KEY="/path/to/.ssh/qa_ssh_key"
+     export QA_SSH_USER="qauser"
+     
+     # Test Parameters
+     export QA_LOG_DIR="sanity_test_logs"
+     export QA_PING_COUNT=20
+     export QA_TUNNEL_TIMEOUT=30
+     export QA_CLEANUP_TIMEOUT=10
+     ```
 
-### 3. test_scenarios.sh
-Runs test scenarios:
-- Foreground Client/Server
-- Background Client, Foreground Server
-- Background Client/Server
-Each scenario includes:
-- Connection establishment
-- Packet transmission tests
-- Clean shutdown verification
+3. Set File Permissions:
+   ```bash
+   chmod 600 ~/.ssh/qa_ssh_key
+   chmod +x sanity_check.sh cleanup.sh
+   ```
 
-### 4. run_qa_tests.sh
-Master script that orchestrates the entire testing process:
-- Runs all scripts in sequence
-- Collects logs and metrics
-- Generates comprehensive test report
+## Script Overview
+
+### common.sh
+- Shared functions for QA testing
+- Logging utilities
+- Remote command execution
+- Installation verification
+- Tunnel verification
+- Connectivity testing
+- Process cleanup verification
+- Log collection
+
+### sanity_check.sh
+- Main test orchestration
+- Runs multiple test scenarios:
+  1. Both server and client in foreground
+  2. Mixed mode (server foreground, client background)
+  3. Both server and client as services
+- Verifies installation, connectivity, and cleanup
+
+### cleanup.sh
+- Aggressive cleanup of SSSonector processes
+- Removes TUN interfaces
+- Cleans up system files
+- Resets systemd services
+- Verifies complete cleanup
 
 ## Usage
 
-1. Configure QA system hostnames in scripts:
+1. Run Sanity Check:
    ```bash
-   # Edit QA_SERVER and QA_CLIENT variables in scripts if needed
-   QA_SERVER="qa-server"
-   QA_CLIENT="qa-client"
+   ./sanity_check.sh
    ```
 
-2. Run the complete test suite:
+2. Run Cleanup:
    ```bash
-   ./run_qa_tests.sh
+   ./cleanup.sh
    ```
 
-3. Run individual components:
-   ```bash
-   # Build and deploy only
-   ./build_and_deploy.sh
-   
-   # Verify installation
-   ./verify_build.sh
-   
-   # Run test scenarios
-   ./test_scenarios.sh
-   ```
+## Logs
 
-## Test Results
-
-Results are stored in timestamped directories:
+Test logs are stored in the configured `QA_LOG_DIR` with the following structure:
 ```
-qa_test_results_YYYYMMDD_HHMMSS/
-├── build.log           # Build and deployment logs
-├── verify.log         # Installation verification logs
-├── scenarios.log      # Test scenario execution logs
-├── logs_qa-server/    # Server system logs
-├── logs_qa-client/    # Client system logs
-└── final_report.md    # Comprehensive test report
+sanity_test_logs/
+├── scenario1_foreground_both_YYYYMMDD_HHMMSS/
+│   ├── server_journal.log
+│   ├── client_journal.log
+│   ├── server_app.log
+│   ├── client_app.log
+│   ├── server_network.log
+│   ├── client_network.log
+│   ├── server_process.log
+│   ├── client_process.log
+│   ├── server_stats.log
+│   ├── client_stats.log
+│   ├── server_resources.log
+│   └── client_resources.log
+└── ...
 ```
 
-## Test Scenarios
+## Error Handling
 
-### Scenario 1: Foreground Client/Server
-- Server runs in foreground
-- Client runs in foreground
-- Tests basic connectivity
-- Verifies clean shutdown
-
-### Scenario 2: Background Client, Foreground Server
-- Server runs in foreground
-- Client runs as service
-- Tests service integration
-- Verifies service management
-
-### Scenario 3: Background Client/Server
-- Both components run as services
-- Tests full service deployment
-- Verifies system integration
+The scripts include comprehensive error handling:
+- Environment validation
+- SSH connection verification
+- Process startup confirmation
+- Tunnel establishment checks
+- Connectivity verification
+- Cleanup confirmation
 
 ## Troubleshooting
 
 1. SSH Connection Issues:
-   - Verify SSH key configuration
-   - Check network connectivity
-   - Ensure correct hostnames in /etc/hosts
+   - Verify SSH key permissions (should be 600)
+   - Check VM connectivity
+   - Verify user permissions on VMs
 
-2. Build Failures:
-   - Check Go version compatibility
-   - Verify all dependencies are installed
-   - Review build.log for errors
+2. Process Cleanup Issues:
+   - Check systemd service status
+   - Verify sudo permissions for cleanup operations
+   - Use cleanup.sh with --force flag if needed
+   - Check system logs for stuck processes
 
-3. Test Failures:
-   - Check system logs in logs_* directories
-   - Verify service status on both systems
-   - Review final_report.md for error patterns
+3. Tunnel Interface Issues:
+   - Verify network interface permissions
+   - Check kernel module availability (tun)
+   - Verify network configuration
+   - Check routing table conflicts
 
-## Adding New Tests
+4. Log Collection Issues:
+   - Verify disk space availability
+   - Check file permissions in log directories
+   - Ensure journald service is running
+   - Verify log rotation settings
 
-1. Create new test script in qa_scripts/
-2. Update run_qa_tests.sh to include new test
-3. Add test results to final report generation
-4. Update this README with new test details
+## Recent Changes
 
-## Maintenance
+### February 2025
+1. Security Enhancements:
+   - Removed hardcoded sudo password
+   - Implemented SSH key-based authentication
+   - Added environment validation
+   - Improved error handling
 
-- Review and update Go version requirements
-- Keep test scenarios aligned with product features
-- Maintain QA system requirements
-- Update documentation for new test cases
+2. Testing Improvements:
+   - Added shared functions library (common.sh)
+   - Enhanced logging with severity levels
+   - Added detailed process verification
+   - Improved cleanup procedures
+   - Added comprehensive log collection
+
+3. Documentation:
+   - Added setup instructions
+   - Improved troubleshooting guide
+   - Added log structure documentation
+   - Added usage examples
+
+## Contributing
+
+When making changes to the QA scripts:
+1. Update config.env.example if adding new variables
+2. Test changes in isolation before committing
+3. Update documentation as needed
+4. Follow the established logging patterns
+5. Maintain backward compatibility when possible
+
+## Future Improvements
+
+1. Testing Enhancements:
+   - Add performance testing scenarios
+   - Implement parallel test execution
+   - Add network condition simulation
+   - Enhance metric collection
+
+2. Automation:
+   - Add CI/CD integration
+   - Implement automatic VM provisioning
+   - Add test result reporting
+   - Implement automatic issue creation
+
+3. Monitoring:
+   - Add real-time test progress monitoring
+   - Implement test result visualization
+   - Add performance trend analysis
+   - Enhance error reporting
