@@ -1,8 +1,10 @@
 package cert
 
 import (
+	"crypto/rsa"
 	"crypto/x509"
-	"encoding/pem"
+	"crypto/x509/pkix"
+	"net"
 	"time"
 )
 
@@ -10,152 +12,154 @@ import (
 type CertificateType int
 
 const (
-	// CertTypeServer represents a server certificate
-	CertTypeServer CertificateType = iota
-	// CertTypeClient represents a client certificate
-	CertTypeClient
-	// CertTypeCA represents a Certificate Authority certificate
+	CertTypeUnknown CertificateType = iota
 	CertTypeCA
-	// CertTypeIntermediate represents an intermediate CA certificate
 	CertTypeIntermediate
+	CertTypeServer
+	CertTypeClient
 )
 
 // CertificateStatus represents the status of a certificate
 type CertificateStatus int
 
 const (
-	// CertStatusValid indicates the certificate is valid
-	CertStatusValid CertificateStatus = iota
-	// CertStatusExpired indicates the certificate has expired
+	CertStatusUnknown CertificateStatus = iota
+	CertStatusValid
 	CertStatusExpired
-	// CertStatusRevoked indicates the certificate has been revoked
 	CertStatusRevoked
-	// CertStatusNotYetValid indicates the certificate is not yet valid
-	CertStatusNotYetValid
 )
 
-// Certificate represents a X.509 certificate with metadata
+// Certificate represents a certificate with additional metadata
 type Certificate struct {
-	// Raw certificate data
-	Raw []byte
-	// Parsed certificate
-	X509 *x509.Certificate
-	// Certificate type
-	Type CertificateType
-	// Certificate status
-	Status CertificateStatus
-	// Private key (if available)
-	PrivateKey []byte
-	// Creation time
-	CreatedAt time.Time
-	// Last update time
-	UpdatedAt time.Time
-	// Revocation time (if revoked)
-	RevokedAt *time.Time
-	// Revocation reason (if revoked)
+	Raw              []byte
+	X509             *x509.Certificate
+	PrivateKey       *rsa.PrivateKey
+	Type             CertificateType
+	Status           CertificateStatus
+	SerialNumber     string
+	SANs             []string
+	KeyUsage         x509.KeyUsage
+	ExtKeyUsage      []x509.ExtKeyUsage
+	IssuerSerial     string
 	RevocationReason string
-	// Serial number as string
-	SerialNumber string
-	// Subject alternative names
-	SANs []string
-	// Key usage
-	KeyUsage x509.KeyUsage
-	// Extended key usage
-	ExtKeyUsage []x509.ExtKeyUsage
-	// Issuer serial number
-	IssuerSerial string
-	// Metadata
-	Metadata map[string]string
+	RevokedAt        *time.Time
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+	Metadata         map[string]string
 }
 
-// CertificateRequest represents a certificate signing request
-type CertificateRequest struct {
-	// CSR data
-	Raw []byte
-	// Certificate type
-	Type CertificateType
-	// Subject information
-	Subject struct {
-		CommonName         string
-		Organization       []string
-		OrganizationalUnit []string
-		Country            []string
-		Province           []string
-		Locality           []string
+// CertPair represents a certificate and its private key
+type CertPair struct {
+	Cert *x509.Certificate
+	Key  *rsa.PrivateKey
+}
+
+// ToCertPair converts a Certificate to a CertPair
+func (c *Certificate) ToCertPair() *CertPair {
+	return &CertPair{
+		Cert: c.X509,
+		Key:  c.PrivateKey,
 	}
-	// Subject alternative names
-	SANs []string
-	// Key usage
-	KeyUsage x509.KeyUsage
-	// Extended key usage
+}
+
+// ToCertificate converts a CertPair to a Certificate
+func (p *CertPair) ToCertificate() *Certificate {
+	cert := &Certificate{
+		Raw:          p.Cert.Raw,
+		X509:         p.Cert,
+		PrivateKey:   p.Key,
+		Type:         CertTypeUnknown,
+		Status:       CertStatusValid,
+		SerialNumber: p.Cert.SerialNumber.String(),
+		SANs:         append(p.Cert.DNSNames, ipAddressesToStrings(p.Cert.IPAddresses)...),
+		KeyUsage:     p.Cert.KeyUsage,
+		ExtKeyUsage:  p.Cert.ExtKeyUsage,
+		CreatedAt:    time.Now(),
+		UpdatedAt:    time.Now(),
+		Metadata:     make(map[string]string),
+	}
+
+	if p.Cert.IsCA {
+		cert.Type = CertTypeCA
+	}
+
+	return cert
+}
+
+// Helper function to convert IP addresses to strings
+func ipAddressesToStrings(ips []net.IP) []string {
+	result := make([]string, len(ips))
+	for i, ip := range ips {
+		result[i] = ip.String()
+	}
+	return result
+}
+
+// CertificateRequest represents a request to create a new certificate
+type CertificateRequest struct {
+	Type        CertificateType
+	Subject     pkix.Name
+	CommonName  string
+	DNSNames    []string
+	IPAddresses []net.IP
+	KeyUsage    x509.KeyUsage
 	ExtKeyUsage []x509.ExtKeyUsage
-	// Validity period
-	NotBefore time.Time
-	NotAfter  time.Time
-	// Key size in bits
-	KeySize int
-	// Metadata
-	Metadata map[string]string
+	NotBefore   time.Time
+	NotAfter    time.Time
+	KeySize     int
+	Metadata    map[string]string
+}
+
+// RotationConfig represents configuration for certificate rotation
+type RotationConfig struct {
+	RotationInterval time.Duration
+	RenewalWindow    time.Duration
+	GracePeriod      time.Duration
+	KeySize          int
+	OnRotation       func(old, new *x509.Certificate)
+}
+
+// DefaultRotationConfig returns the default rotation configuration
+func DefaultRotationConfig() *RotationConfig {
+	return &RotationConfig{
+		RotationInterval: 1 * time.Hour,
+		RenewalWindow:    30 * 24 * time.Hour, // 30 days
+		GracePeriod:      24 * time.Hour,      // 1 day
+		KeySize:          2048,
+	}
 }
 
 // CertificateStore defines the interface for certificate storage
 type CertificateStore interface {
-	// Store stores a certificate
-	Store(cert *Certificate) error
-	// Load loads a certificate by serial number
-	Load(serialNumber string) (*Certificate, error)
-	// Delete deletes a certificate by serial number
+	// Core operations
+	LoadCurrent() (*CertPair, error)
+	Store(cert *CertPair) error
+	List() ([]*CertPair, error)
 	Delete(serialNumber string) error
-	// List lists all certificates
-	List() ([]*Certificate, error)
-	// ListByType lists certificates by type
-	ListByType(certType CertificateType) ([]*Certificate, error)
-	// ListByStatus lists certificates by status
-	ListByStatus(status CertificateStatus) ([]*Certificate, error)
-	// Update updates a certificate's metadata
+
+	// Advanced operations
+	Load(serialNumber string) (*Certificate, error)
 	Update(cert *Certificate) error
+	ListByType(certType CertificateType) ([]*Certificate, error)
+	ListByStatus(status CertificateStatus) ([]*Certificate, error)
+	GetByType(certType CertificateType) ([]*Certificate, error)
+	GetByStatus(status CertificateStatus) ([]*Certificate, error)
+	UpdateStatus(serialNumber string, status CertificateStatus) error
+	GetChain(cert *Certificate) ([]*Certificate, error)
+
+	// Validation operations
+	ValidateCRL(cert *Certificate, crl *x509.RevocationList) error
+	ValidateOCSP(cert *Certificate) error
 }
 
 // CertificateManager defines the interface for certificate management
 type CertificateManager interface {
-	// CreateCA creates a new Certificate Authority
-	CreateCA(req *CertificateRequest) (*Certificate, error)
-	// CreateIntermediate creates a new intermediate CA certificate
-	CreateIntermediate(req *CertificateRequest, parent *Certificate) (*Certificate, error)
-	// CreateServer creates a new server certificate
-	CreateServer(req *CertificateRequest, parent *Certificate) (*Certificate, error)
-	// CreateClient creates a new client certificate
-	CreateClient(req *CertificateRequest, parent *Certificate) (*Certificate, error)
-	// Revoke revokes a certificate
-	Revoke(serialNumber string, reason string) error
-	// Verify verifies a certificate chain
-	Verify(cert *Certificate) error
-	// Export exports a certificate in PEM format
-	Export(cert *Certificate) (*pem.Block, error)
-	// Import imports a certificate from PEM format
-	Import(pemBlock *pem.Block) (*Certificate, error)
-	// GetCertificateStore returns the certificate store
+	// Core operations
 	GetCertificateStore() CertificateStore
-}
-
-// CertificateValidator defines the interface for certificate validation
-type CertificateValidator interface {
-	// ValidateCertificate validates a certificate
-	ValidateCertificate(cert *Certificate) error
-	// ValidateChain validates a certificate chain
-	ValidateChain(cert *Certificate, intermediates []*Certificate, root *Certificate) error
-	// ValidateCRL validates a certificate against a CRL
-	ValidateCRL(cert *Certificate, crl *x509.RevocationList) error
-	// ValidateOCSP validates a certificate using OCSP
-	ValidateOCSP(cert *Certificate) error
-}
-
-// CertificateRotator defines the interface for certificate rotation
-type CertificateRotator interface {
-	// ShouldRotate determines if a certificate should be rotated
-	ShouldRotate(cert *Certificate) bool
-	// Rotate rotates a certificate
-	Rotate(cert *Certificate) (*Certificate, error)
-	// RotateAll rotates all certificates of a given type
-	RotateAll(certType CertificateType) error
+	CreateCA(req *CertificateRequest) (*Certificate, error)
+	CreateIntermediate(req *CertificateRequest, parent *Certificate) (*Certificate, error)
+	CreateServer(req *CertificateRequest, parent *Certificate) (*Certificate, error)
+	CreateClient(req *CertificateRequest, parent *Certificate) (*Certificate, error)
+	Revoke(serialNumber string) error
+	Validate(cert *Certificate) error
 }

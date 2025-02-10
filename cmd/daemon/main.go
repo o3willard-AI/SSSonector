@@ -34,10 +34,13 @@ func main() {
 	}
 	defer logger.Sync()
 
-	// Load configuration
-	cfg, err := config.LoadConfig(*configFile)
+	// Initialize configuration manager
+	configManager := config.CreateManager(*configFile)
+
+	// Get configuration
+	cfg, err := configManager.Get()
 	if err != nil {
-		logger.Error("Failed to load config", zap.Error(err))
+		logger.Error("Failed to get config", zap.Error(err))
 		os.Exit(1)
 	}
 

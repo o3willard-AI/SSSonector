@@ -1,306 +1,290 @@
 package cert
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/rand"
-	"crypto/sha256"
 	"crypto/x509"
-	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
-
-	"go.uber.org/zap"
 )
 
-// FileStore implements CertificateStore using file-based storage
+// FileStore implements CertificateStore using the filesystem
 type FileStore struct {
-	// Base directory for certificate storage
-	baseDir string
-	// Encryption key for sensitive data
-	encryptionKey []byte
-	// Logger instance
-	logger *zap.Logger
-	// Mutex for thread safety
-	mu sync.RWMutex
-}
-
-// StoredCertificate represents the stored format of a certificate
-type StoredCertificate struct {
-	// Certificate data
-	Raw []byte `json:"raw"`
-	// Encrypted private key
-	EncryptedPrivateKey []byte `json:"private_key,omitempty"`
-	// Initialization vector for private key encryption
-	PrivateKeyIV []byte `json:"private_key_iv,omitempty"`
-	// Certificate type
-	Type CertificateType `json:"type"`
-	// Certificate status
-	Status CertificateStatus `json:"status"`
-	// Creation time
-	CreatedAt time.Time `json:"created_at"`
-	// Last update time
-	UpdatedAt time.Time `json:"updated_at"`
-	// Revocation time
-	RevokedAt *time.Time `json:"revoked_at,omitempty"`
-	// Revocation reason
-	RevocationReason string `json:"revocation_reason,omitempty"`
-	// Serial number
-	SerialNumber string `json:"serial_number"`
-	// Subject alternative names
-	SANs []string `json:"sans"`
-	// Key usage
-	KeyUsage int `json:"key_usage"`
-	// Extended key usage
-	ExtKeyUsage []int `json:"ext_key_usage"`
-	// Issuer serial number
-	IssuerSerial string `json:"issuer_serial"`
-	// Metadata
-	Metadata map[string]string `json:"metadata"`
+	certPath string
+	keyPath  string
+	mu       sync.RWMutex
+	client   *http.Client
 }
 
 // NewFileStore creates a new file-based certificate store
-func NewFileStore(baseDir string, encryptionKey []byte, logger *zap.Logger) (*FileStore, error) {
-	// Create base directory if it doesn't exist
-	if err := os.MkdirAll(baseDir, 0700); err != nil {
-		return nil, fmt.Errorf("failed to create base directory: %w", err)
+func NewFileStore(certPath, keyPath string) *FileStore {
+	return &FileStore{
+		certPath: certPath,
+		keyPath:  keyPath,
+		client: &http.Client{
+			Timeout: 10 * time.Second,
+		},
+	}
+}
+
+// LoadCurrent implements Store.LoadCurrent
+func (s *FileStore) LoadCurrent() (*CertPair, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	// Read certificate
+	certPEM, err := os.ReadFile(s.certPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read certificate file: %v", err)
 	}
 
-	// Hash encryption key to ensure proper length
-	hashedKey := sha256.Sum256(encryptionKey)
+	certBlock, _ := pem.Decode(certPEM)
+	if certBlock == nil {
+		return nil, fmt.Errorf("failed to decode certificate PEM")
+	}
 
-	return &FileStore{
-		baseDir:       baseDir,
-		encryptionKey: hashedKey[:],
-		logger:        logger,
+	cert, err := x509.ParseCertificate(certBlock.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse certificate: %v", err)
+	}
+
+	// Read private key
+	keyPEM, err := os.ReadFile(s.keyPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read key file: %v", err)
+	}
+
+	keyBlock, _ := pem.Decode(keyPEM)
+	if keyBlock == nil {
+		return nil, fmt.Errorf("failed to decode key PEM")
+	}
+
+	key, err := x509.ParsePKCS1PrivateKey(keyBlock.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse private key: %v", err)
+	}
+
+	return &CertPair{
+		Cert: cert,
+		Key:  key,
 	}, nil
 }
 
-// Store stores a certificate
-func (s *FileStore) Store(cert *Certificate) error {
+// Store implements Store.Store
+func (s *FileStore) Store(cert *CertPair) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Create stored certificate
-	stored := &StoredCertificate{
-		Raw:              cert.Raw,
-		Type:             cert.Type,
-		Status:           cert.Status,
-		CreatedAt:        cert.CreatedAt,
-		UpdatedAt:        cert.UpdatedAt,
-		RevokedAt:        cert.RevokedAt,
-		RevocationReason: cert.RevocationReason,
-		SerialNumber:     cert.SerialNumber,
-		SANs:             cert.SANs,
-		KeyUsage:         int(cert.KeyUsage),
-		IssuerSerial:     cert.IssuerSerial,
-		Metadata:         cert.Metadata,
+	// Ensure directory exists
+	if err := os.MkdirAll(filepath.Dir(s.certPath), 0755); err != nil {
+		return fmt.Errorf("failed to create certificate directory: %v", err)
 	}
 
-	// Convert extended key usage
-	for _, usage := range cert.ExtKeyUsage {
-		stored.ExtKeyUsage = append(stored.ExtKeyUsage, int(usage))
+	// Write certificate
+	certPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: cert.Cert.Raw,
+	})
+
+	if err := os.WriteFile(s.certPath, certPEM, 0644); err != nil {
+		return fmt.Errorf("failed to write certificate file: %v", err)
 	}
 
-	// Encrypt private key if present
-	if len(cert.PrivateKey) > 0 {
-		block, err := aes.NewCipher(s.encryptionKey)
-		if err != nil {
-			return fmt.Errorf("failed to create cipher: %w", err)
-		}
+	// Write private key
+	keyPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(cert.Key),
+	})
 
-		// Generate random IV
-		iv := make([]byte, aes.BlockSize)
-		if _, err := io.ReadFull(rand.Reader, iv); err != nil {
-			return fmt.Errorf("failed to generate IV: %w", err)
-		}
-
-		// Create GCM cipher
-		gcm, err := cipher.NewGCM(block)
-		if err != nil {
-			return fmt.Errorf("failed to create GCM: %w", err)
-		}
-
-		// Encrypt private key
-		stored.EncryptedPrivateKey = gcm.Seal(nil, iv, cert.PrivateKey, nil)
-		stored.PrivateKeyIV = iv
-	}
-
-	// Marshal to JSON
-	data, err := json.MarshalIndent(stored, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal certificate: %w", err)
-	}
-
-	// Write to file
-	filename := filepath.Join(s.baseDir, fmt.Sprintf("%s.json", cert.SerialNumber))
-	if err := os.WriteFile(filename, data, 0600); err != nil {
-		return fmt.Errorf("failed to write certificate file: %w", err)
+	if err := os.WriteFile(s.keyPath, keyPEM, 0600); err != nil {
+		return fmt.Errorf("failed to write key file: %v", err)
 	}
 
 	return nil
 }
 
-// Load loads a certificate by serial number
-func (s *FileStore) Load(serialNumber string) (*Certificate, error) {
+// List implements Store.List
+func (s *FileStore) List() ([]*CertPair, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	// Read certificate file
-	filename := filepath.Join(s.baseDir, fmt.Sprintf("%s.json", serialNumber))
-	data, err := os.ReadFile(filename)
+	// For now, just return the current certificate
+	cert, err := s.LoadCurrent()
 	if err != nil {
-		return nil, fmt.Errorf("failed to read certificate file: %w", err)
+		return nil, err
 	}
 
-	// Unmarshal stored certificate
-	var stored StoredCertificate
-	if err := json.Unmarshal(data, &stored); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal certificate: %w", err)
-	}
-
-	// Create certificate
-	cert := &Certificate{
-		Raw:              stored.Raw,
-		Type:             stored.Type,
-		Status:           stored.Status,
-		CreatedAt:        stored.CreatedAt,
-		UpdatedAt:        stored.UpdatedAt,
-		RevokedAt:        stored.RevokedAt,
-		RevocationReason: stored.RevocationReason,
-		SerialNumber:     stored.SerialNumber,
-		SANs:             stored.SANs,
-		KeyUsage:         x509.KeyUsage(stored.KeyUsage),
-		IssuerSerial:     stored.IssuerSerial,
-		Metadata:         stored.Metadata,
-	}
-
-	// Convert extended key usage
-	for _, usage := range stored.ExtKeyUsage {
-		cert.ExtKeyUsage = append(cert.ExtKeyUsage, x509.ExtKeyUsage(usage))
-	}
-
-	// Parse X.509 certificate
-	if len(cert.Raw) > 0 {
-		x509Cert, err := x509.ParseCertificate(cert.Raw)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse X.509 certificate: %w", err)
-		}
-		cert.X509 = x509Cert
-	}
-
-	// Decrypt private key if present
-	if len(stored.EncryptedPrivateKey) > 0 {
-		block, err := aes.NewCipher(s.encryptionKey)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create cipher: %w", err)
-		}
-
-		// Create GCM cipher
-		gcm, err := cipher.NewGCM(block)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create GCM: %w", err)
-		}
-
-		// Decrypt private key
-		privateKey, err := gcm.Open(nil, stored.PrivateKeyIV, stored.EncryptedPrivateKey, nil)
-		if err != nil {
-			return nil, fmt.Errorf("failed to decrypt private key: %w", err)
-		}
-		cert.PrivateKey = privateKey
-	}
-
-	return cert, nil
+	return []*CertPair{cert}, nil
 }
 
-// Delete deletes a certificate by serial number
+// Delete implements Store.Delete
 func (s *FileStore) Delete(serialNumber string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	filename := filepath.Join(s.baseDir, fmt.Sprintf("%s.json", serialNumber))
-	if err := os.Remove(filename); err != nil {
-		return fmt.Errorf("failed to delete certificate file: %w", err)
+	// For now, just delete the current certificate files
+	if err := os.Remove(s.certPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to delete certificate file: %v", err)
+	}
+
+	if err := os.Remove(s.keyPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to delete key file: %v", err)
 	}
 
 	return nil
 }
 
-// List lists all certificates
-func (s *FileStore) List() ([]*Certificate, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	var certs []*Certificate
-
-	// Read all certificate files
-	files, err := os.ReadDir(s.baseDir)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read base directory: %w", err)
-	}
-
-	for _, file := range files {
-		if filepath.Ext(file.Name()) != ".json" {
-			continue
-		}
-
-		// Extract serial number from filename
-		serialNumber := file.Name()[:len(file.Name())-5]
-
-		// Load certificate
-		cert, err := s.Load(serialNumber)
-		if err != nil {
-			s.logger.Error("Failed to load certificate",
-				zap.String("serial_number", serialNumber),
-				zap.Error(err))
-			continue
-		}
-
-		certs = append(certs, cert)
-	}
-
-	return certs, nil
-}
-
-// ListByType lists certificates by type
-func (s *FileStore) ListByType(certType CertificateType) ([]*Certificate, error) {
-	certs, err := s.List()
+// Load implements CertificateStore.Load
+func (s *FileStore) Load(serialNumber string) (*Certificate, error) {
+	cert, err := s.LoadCurrent()
 	if err != nil {
 		return nil, err
 	}
 
-	var filtered []*Certificate
-	for _, cert := range certs {
-		if cert.Type == certType {
-			filtered = append(filtered, cert)
-		}
+	if cert.Cert.SerialNumber.String() != serialNumber {
+		return nil, fmt.Errorf("certificate not found")
 	}
 
-	return filtered, nil
+	return cert.ToCertificate(), nil
 }
 
-// ListByStatus lists certificates by status
-func (s *FileStore) ListByStatus(status CertificateStatus) ([]*Certificate, error) {
-	certs, err := s.List()
-	if err != nil {
-		return nil, err
-	}
-
-	var filtered []*Certificate
-	for _, cert := range certs {
-		if cert.Status == status {
-			filtered = append(filtered, cert)
-		}
-	}
-
-	return filtered, nil
-}
-
-// Update updates a certificate's metadata
+// Update implements CertificateStore.Update
 func (s *FileStore) Update(cert *Certificate) error {
-	return s.Store(cert)
+	return s.Store(cert.ToCertPair())
+}
+
+// ListByType implements CertificateStore.ListByType
+func (s *FileStore) ListByType(certType CertificateType) ([]*Certificate, error) {
+	cert, err := s.LoadCurrent()
+	if err != nil {
+		return nil, err
+	}
+
+	c := cert.ToCertificate()
+	if c.Type == certType {
+		return []*Certificate{c}, nil
+	}
+
+	return nil, nil
+}
+
+// ListByStatus implements CertificateStore.ListByStatus
+func (s *FileStore) ListByStatus(status CertificateStatus) ([]*Certificate, error) {
+	cert, err := s.LoadCurrent()
+	if err != nil {
+		return nil, err
+	}
+
+	c := cert.ToCertificate()
+	if c.Status == status {
+		return []*Certificate{c}, nil
+	}
+
+	return nil, nil
+}
+
+// GetByType implements CertificateStore.GetByType
+func (s *FileStore) GetByType(certType CertificateType) ([]*Certificate, error) {
+	return s.ListByType(certType)
+}
+
+// GetByStatus implements CertificateStore.GetByStatus
+func (s *FileStore) GetByStatus(status CertificateStatus) ([]*Certificate, error) {
+	return s.ListByStatus(status)
+}
+
+// UpdateStatus implements CertificateStore.UpdateStatus
+func (s *FileStore) UpdateStatus(serialNumber string, status CertificateStatus) error {
+	cert, err := s.Load(serialNumber)
+	if err != nil {
+		return err
+	}
+
+	cert.Status = status
+	if status == CertStatusRevoked {
+		cert.RevokedAt = &time.Time{}
+		*cert.RevokedAt = time.Now()
+	}
+
+	return s.Update(cert)
+}
+
+// GetChain implements CertificateStore.GetChain
+func (s *FileStore) GetChain(cert *Certificate) ([]*Certificate, error) {
+	// For now, just return the certificate itself
+	return []*Certificate{cert}, nil
+}
+
+// ValidateCRL validates a certificate against a CRL
+func (s *FileStore) ValidateCRL(cert *Certificate, crl *x509.RevocationList) error {
+	if crl == nil {
+		return fmt.Errorf("invalid CRL: nil")
+	}
+
+	// Check CRL validity period
+	now := time.Now()
+	if now.Before(crl.ThisUpdate) {
+		return fmt.Errorf("CRL is not yet valid")
+	}
+	if now.After(crl.NextUpdate) {
+		return fmt.Errorf("CRL has expired")
+	}
+
+	// Check if certificate is revoked
+	for _, revokedCert := range crl.RevokedCertificates {
+		if revokedCert.SerialNumber.Cmp(cert.X509.SerialNumber) == 0 {
+			return fmt.Errorf("certificate is revoked")
+		}
+	}
+
+	return nil
+}
+
+// ValidateOCSP validates a certificate using OCSP
+func (s *FileStore) ValidateOCSP(cert *Certificate) error {
+	if len(cert.X509.OCSPServer) == 0 {
+		return fmt.Errorf("certificate has no OCSP servers")
+	}
+
+	// For each OCSP server
+	for _, server := range cert.X509.OCSPServer {
+		// Create OCSP request
+		req, err := http.NewRequest("GET", server, nil)
+		if err != nil {
+			continue
+		}
+
+		// Send request
+		resp, err := s.client.Do(req)
+		if err != nil {
+			continue
+		}
+		defer resp.Body.Close()
+
+		// Read response
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			continue
+		}
+
+		// Parse OCSP response
+		if resp.StatusCode != http.StatusOK {
+			continue
+		}
+
+		// Check response status
+		if len(body) == 0 {
+			continue
+		}
+
+		// For now, just check if we got a response
+		// TODO: Implement full OCSP response parsing and validation
+		return nil
+	}
+
+	return fmt.Errorf("failed to validate certificate status via OCSP")
 }

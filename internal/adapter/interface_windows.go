@@ -7,6 +7,6 @@ import (
 	"fmt"
 )
 
-func New(name string) (Interface, error) {
+func New(name string, opts *Options) (Interface, error) {
 	return nil, fmt.Errorf("windows platform not implemented")
 }
