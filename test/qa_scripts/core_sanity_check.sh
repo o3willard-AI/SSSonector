@@ -16,115 +16,203 @@ else
     exit 1
 fi
 
-# Validate environment
-validate_qa_env || exit 1
-
 # Create log directory for this run
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-LOG_DIR="core_test_${TIMESTAMP}"
+LOG_DIR="core_sanity_${TIMESTAMP}"
 mkdir -p "$LOG_DIR"
 
 log "INFO" "Starting core functionality sanity check"
 log "INFO" "Logs will be saved to: $LOG_DIR"
 
-# Clean up any existing instances
-log "INFO" "Cleaning up existing instances..."
-cleanup_vm "$QA_SERVER_VM"
-cleanup_vm "$QA_CLIENT_VM"
-
-# Verify installation
-log "INFO" "Verifying installation on server..."
-verify_installation "$QA_SERVER_VM" || exit 1
-
-log "INFO" "Verifying installation on client..."
-verify_installation "$QA_CLIENT_VM" || exit 1
-
-# Start server in foreground
-log "INFO" "Starting server in foreground mode..."
-remote_cmd "$QA_SERVER_VM" "mkdir -p /var/log/sssonector"
-remote_cmd "$QA_SERVER_VM" "sssonector -config /etc/sssonector/config.yaml -log-level debug > /var/log/sssonector/server.log 2>&1 &"
-sleep 5
-
-# Verify server is running
-remote_cmd "$QA_SERVER_VM" "pgrep -f sssonector" || {
-    log "ERROR" "Server failed to start"
-    exit 1
+# Function to wait for tunnel to be ready
+wait_for_tunnel() {
+    local vm=$1
+    local interface="tun0"
+    local timeout=30
+    local start_time=$(date +%s)
+    
+    log "INFO" "Waiting for tunnel interface on $vm..."
+    while true; do
+        if remote_cmd $vm "ip link show $interface" > /dev/null 2>&1; then
+            if remote_cmd $vm "ip link show $interface | grep -q 'UP'"; then
+                log "INFO" "Tunnel interface is up on $vm"
+                return 0
+            fi
+        fi
+        
+        local current_time=$(date +%s)
+        local elapsed=$((current_time - start_time))
+        
+        if [ $elapsed -ge $timeout ]; then
+            log "ERROR" "Timeout waiting for tunnel interface on $vm"
+            return 1
+        fi
+        
+        sleep 1
+    done
 }
 
-# Start client in foreground
-log "INFO" "Starting client in foreground mode..."
-remote_cmd "$QA_CLIENT_VM" "mkdir -p /var/log/sssonector"
-remote_cmd "$QA_CLIENT_VM" "sssonector -config /etc/sssonector/config.yaml -log-level debug > /var/log/sssonector/client.log 2>&1 &"
-sleep 5
-
-# Verify client is running
-remote_cmd "$QA_CLIENT_VM" "pgrep -f sssonector" || {
-    log "ERROR" "Client failed to start"
-    exit 1
+# Function to verify packet transmission
+verify_packets() {
+    local src_vm=$1
+    local dest_ip=$2
+    local count=20
+    
+    log "INFO" "Testing packet transmission from $src_vm to $dest_ip..."
+    
+    # Run ping and capture output
+    local ping_output
+    ping_output=$(remote_cmd $src_vm "ping -c $count $dest_ip")
+    echo "$ping_output" > "$LOG_DIR/ping_${src_vm}_to_${dest_ip}.log"
+    
+    # Check for packet loss
+    if echo "$ping_output" | grep -q "0% packet loss"; then
+        log "INFO" "All packets transmitted successfully"
+        return 0
+    else
+        log "ERROR" "Packet loss detected"
+        return 1
+    fi
 }
 
-# Verify tunnel establishment
-log "INFO" "Verifying tunnel establishment..."
-verify_tunnel "$QA_SERVER_VM" || exit 1
-verify_tunnel "$QA_CLIENT_VM" || exit 1
-
-# Test connectivity: Client → Server
-log "INFO" "Testing connectivity: Client → Server"
-test_connectivity "Client → Server" "$QA_CLIENT_VM" "10.0.0.1" || exit 1
-
-# Test connectivity: Server → Client
-log "INFO" "Testing connectivity: Server → Client"
-test_connectivity "Server → Client" "$QA_SERVER_VM" "10.0.0.2" || exit 1
-
-# Collect tunnel statistics
-log "INFO" "Collecting tunnel statistics..."
-remote_cmd "$QA_SERVER_VM" "ip -s link show tun0" > "$LOG_DIR/server_tunnel_stats.log"
-remote_cmd "$QA_CLIENT_VM" "ip -s link show tun0" > "$LOG_DIR/client_tunnel_stats.log"
-
-# Clean shutdown of client
-log "INFO" "Initiating client shutdown..."
-remote_cmd "$QA_CLIENT_VM" "pkill -TERM -f sssonector"
-sleep 5
-
-# Verify client cleanup
-log "INFO" "Verifying client cleanup..."
-verify_cleanup "$QA_CLIENT_VM" || {
-    log "ERROR" "Client cleanup failed"
-    exit 1
+# Function to run foreground mode test
+test_foreground_mode() {
+    log "INFO" "Starting foreground mode test..."
+    
+    # Start server in background (but with output visible)
+    remote_cmd $SERVER_VM "sssonector -config /etc/sssonector/config.yaml -log-level debug > $LOG_DIR/server_fg.log 2>&1 &"
+    SERVER_PID=$!
+    
+    # Wait for server to initialize
+    sleep 5
+    
+    # Start client in foreground
+    remote_cmd $CLIENT_VM "sssonector -config /etc/sssonector/config.yaml -log-level debug > $LOG_DIR/client_fg.log 2>&1 &"
+    CLIENT_PID=$!
+    
+    # Wait for tunnel to be established
+    wait_for_tunnel $SERVER_VM || return 1
+    wait_for_tunnel $CLIENT_VM || return 1
+    
+    # Test packet transmission
+    verify_packets $CLIENT_VM "10.0.0.1" || return 1
+    verify_packets $SERVER_VM "10.0.0.2" || return 1
+    
+    # Clean shutdown
+    log "INFO" "Shutting down client..."
+    remote_cmd $CLIENT_VM "kill $CLIENT_PID"
+    sleep 2
+    
+    log "INFO" "Shutting down server..."
+    remote_cmd $SERVER_VM "kill $SERVER_PID"
+    sleep 2
+    
+    # Verify clean shutdown
+    if remote_cmd $CLIENT_VM "ip link show tun0" > /dev/null 2>&1; then
+        log "ERROR" "Client tunnel interface still exists after shutdown"
+        return 1
+    fi
+    
+    if remote_cmd $SERVER_VM "ip link show tun0" > /dev/null 2>&1; then
+        log "ERROR" "Server tunnel interface still exists after shutdown"
+        return 1
+    fi
+    
+    log "INFO" "Foreground mode test completed successfully"
+    return 0
 }
 
-# Verify server is still running
-remote_cmd "$QA_SERVER_VM" "pgrep -f sssonector" || {
-    log "ERROR" "Server stopped unexpectedly"
-    exit 1
+# Function to run background mode test
+test_background_mode() {
+    log "INFO" "Starting background mode test..."
+    
+    # Start server in foreground mode
+    remote_cmd $SERVER_VM "sssonector -config /etc/sssonector/config.yaml -log-level debug > $LOG_DIR/server_bg.log 2>&1 &"
+    SERVER_PID=$!
+    
+    # Wait for server to initialize
+    sleep 5
+    
+    # Start client in background
+    remote_cmd $CLIENT_VM "sssonector -config /etc/sssonector/config.yaml -log-level debug > $LOG_DIR/client_bg.log 2>&1 &"
+    CLIENT_PID=$!
+    
+    # Wait for tunnel to be established
+    wait_for_tunnel $SERVER_VM || return 1
+    wait_for_tunnel $CLIENT_VM || return 1
+    
+    # Verify client is running in background
+    if ! remote_cmd $CLIENT_VM "ps -p $CLIENT_PID > /dev/null"; then
+        log "ERROR" "Client process not running in background"
+        return 1
+    fi
+    
+    # Test packet transmission
+    verify_packets $CLIENT_VM "10.0.0.1" || return 1
+    verify_packets $SERVER_VM "10.0.0.2" || return 1
+    
+    # Clean shutdown
+    log "INFO" "Shutting down client..."
+    remote_cmd $CLIENT_VM "kill $CLIENT_PID"
+    sleep 2
+    
+    log "INFO" "Shutting down server..."
+    remote_cmd $SERVER_VM "kill $SERVER_PID"
+    sleep 2
+    
+    # Verify clean shutdown
+    if remote_cmd $CLIENT_VM "ip link show tun0" > /dev/null 2>&1; then
+        log "ERROR" "Client tunnel interface still exists after shutdown"
+        return 1
+    fi
+    
+    if remote_cmd $SERVER_VM "ip link show tun0" > /dev/null 2>&1; then
+        log "ERROR" "Server tunnel interface still exists after shutdown"
+        return 1
+    fi
+    
+    log "INFO" "Background mode test completed successfully"
+    return 0
 }
 
-# Collect logs
-log "INFO" "Collecting test logs..."
+# Main test execution
+main() {
+    # Clean up any existing state
+    log "INFO" "Cleaning up existing state..."
+    remote_cmd $SERVER_VM "sudo pkill -f sssonector || true"
+    remote_cmd $CLIENT_VM "sudo pkill -f sssonector || true"
+    remote_cmd $SERVER_VM "sudo ip link del tun0 2>/dev/null || true"
+    remote_cmd $CLIENT_VM "sudo ip link del tun0 2>/dev/null || true"
+    sleep 2
+    
+    # Run foreground mode test
+    if ! test_foreground_mode; then
+        log "ERROR" "Foreground mode test failed"
+        exit 1
+    fi
+    
+    # Clean up between tests
+    log "INFO" "Cleaning up between tests..."
+    remote_cmd $SERVER_VM "sudo pkill -f sssonector || true"
+    remote_cmd $CLIENT_VM "sudo pkill -f sssonector || true"
+    remote_cmd $SERVER_VM "sudo ip link del tun0 2>/dev/null || true"
+    remote_cmd $CLIENT_VM "sudo ip link del tun0 2>/dev/null || true"
+    sleep 5
+    
+    # Run background mode test
+    if ! test_background_mode; then
+        log "ERROR" "Background mode test failed"
+        exit 1
+    fi
+    
+    # Collect all logs
+    log "INFO" "Collecting logs..."
+    remote_cmd $SERVER_VM "journalctl -u sssonector --no-pager -n 500" > "$LOG_DIR/server_journal.log"
+    remote_cmd $CLIENT_VM "journalctl -u sssonector --no-pager -n 500" > "$LOG_DIR/client_journal.log"
+    
+    log "INFO" "Core functionality sanity check completed successfully"
+    log "INFO" "All test logs available in: $LOG_DIR"
+}
 
-# System logs
-remote_cmd "$QA_SERVER_VM" "journalctl -u sssonector --no-pager -n 200" > "$LOG_DIR/server_journal.log"
-remote_cmd "$QA_CLIENT_VM" "journalctl -u sssonector --no-pager -n 200" > "$LOG_DIR/client_journal.log"
-
-# Application logs
-remote_cmd "$QA_SERVER_VM" "cat /var/log/sssonector/server.log" > "$LOG_DIR/server_app.log"
-remote_cmd "$QA_CLIENT_VM" "cat /var/log/sssonector/client.log" > "$LOG_DIR/client_app.log"
-
-# Network state
-remote_cmd "$QA_SERVER_VM" "ip addr show; ip route show" > "$LOG_DIR/server_network.log"
-remote_cmd "$QA_CLIENT_VM" "ip addr show; ip route show" > "$LOG_DIR/client_network.log"
-
-# Clean up server
-log "INFO" "Cleaning up server..."
-cleanup_vm "$QA_SERVER_VM"
-
-# Final verification
-log "INFO" "Verifying final state..."
-verify_cleanup "$QA_SERVER_VM" || exit 1
-
-# Test summary
-log "INFO" "Core functionality sanity check complete"
-log "INFO" "All test logs available in: $LOG_DIR"
-
-# Exit with success
-exit 0
+# Run main function
+main
