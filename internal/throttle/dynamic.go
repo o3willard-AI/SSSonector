@@ -4,159 +4,144 @@ import (
 	"sync"
 	"time"
 
+	"github.com/o3willard-AI/SSSonector/internal/config"
 	"go.uber.org/zap"
 )
 
-const (
-	defaultAdjustmentInterval = 5 * time.Second
-	defaultIncreaseThreshold  = 0.8               // 80% utilization
-	defaultDecreaseThreshold  = 0.2               // 20% utilization
-	defaultIncreaseRatio      = 1.25              // 25% increase
-	defaultDecreaseRatio      = 0.8               // 20% decrease
-	minRate                   = 1024 * 512        // 512KB/s minimum
-	maxRate                   = 1024 * 1024 * 100 // 100MB/s maximum
-)
-
-// DynamicAdjuster implements dynamic rate adjustment based on utilization
-type DynamicAdjuster struct {
-	enabled            bool
-	minRate            float64
-	maxRate            float64
-	adjustmentInterval time.Duration
-	increaseThreshold  float64
-	decreaseThreshold  float64
-	increaseRatio      float64
-	decreaseRatio      float64
-	lastAdjustment     time.Time
-	mu                 sync.Mutex
-	logger             *zap.Logger
+// DynamicLimiter extends the base Limiter with dynamic rate adjustment
+type DynamicLimiter struct {
+	*Limiter
+	minRate     float64
+	maxRate     float64
+	adjustMu    sync.RWMutex
+	lastAdjust  time.Time
+	adjustCount int
+	logger      *zap.Logger
 }
 
-// NewDynamicAdjuster creates a new dynamic rate adjuster
-func NewDynamicAdjuster(logger *zap.Logger) *DynamicAdjuster {
-	return &DynamicAdjuster{
-		enabled:            true,
-		minRate:            minRate,
-		maxRate:            maxRate,
-		adjustmentInterval: defaultAdjustmentInterval,
-		increaseThreshold:  defaultIncreaseThreshold,
-		decreaseThreshold:  defaultDecreaseThreshold,
-		increaseRatio:      defaultIncreaseRatio,
-		decreaseRatio:      defaultDecreaseRatio,
-		lastAdjustment:     time.Now(),
-		logger:             logger,
+// NewDynamicLimiter creates a new dynamic rate limiter
+func NewDynamicLimiter(cfg *config.AppConfig, limiter *Limiter, logger *zap.Logger) *DynamicLimiter {
+	baseRate := float64(cfg.Throttle.Rate)
+	dl := &DynamicLimiter{
+		Limiter:    limiter,
+		minRate:    baseRate / 2, // Default min rate is half of base rate
+		maxRate:    baseRate * 2, // Default max rate is double base rate
+		lastAdjust: time.Now(),
+		logger:     logger,
 	}
+
+	// Start with base rate
+	dl.setRate(baseRate)
+	return dl
 }
 
-// Configure sets the dynamic adjuster parameters
-func (d *DynamicAdjuster) Configure(minRate, maxRate float64, interval time.Duration) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
+// IncreaseRate increases the rate by the specified percentage
+func (dl *DynamicLimiter) IncreaseRate(percent float64) {
+	dl.adjustMu.Lock()
+	defer dl.adjustMu.Unlock()
 
-	if minRate > 0 {
-		d.minRate = minRate
+	if time.Since(dl.lastAdjust) < time.Second {
+		return // Prevent too frequent adjustments
 	}
-	if maxRate > 0 {
-		d.maxRate = maxRate
+
+	inMetrics, _ := dl.GetMetrics()
+	currentRate := inMetrics.Rate
+	newRate := currentRate * (1 + percent/100)
+
+	// Cap at maximum rate
+	if newRate > dl.maxRate {
+		newRate = dl.maxRate
 	}
-	if interval > 0 {
-		d.adjustmentInterval = interval
-	}
+
+	dl.setRate(newRate)
+	dl.lastAdjust = time.Now()
+	dl.adjustCount++
+
+	dl.logger.Info("Increased rate",
+		zap.Float64("old_rate", currentRate),
+		zap.Float64("new_rate", newRate),
+		zap.Float64("percent", percent),
+	)
 }
 
-// SetEnabled enables or disables dynamic adjustment
-func (d *DynamicAdjuster) SetEnabled(enabled bool) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.enabled = enabled
+// DecreaseRate decreases the rate by the specified percentage
+func (dl *DynamicLimiter) DecreaseRate(percent float64) {
+	dl.adjustMu.Lock()
+	defer dl.adjustMu.Unlock()
+
+	if time.Since(dl.lastAdjust) < time.Second {
+		return // Prevent too frequent adjustments
+	}
+
+	inMetrics, _ := dl.GetMetrics()
+	currentRate := inMetrics.Rate
+	newRate := currentRate * (1 - percent/100)
+
+	// Cap at minimum rate
+	if newRate < dl.minRate {
+		newRate = dl.minRate
+	}
+
+	dl.setRate(newRate)
+	dl.lastAdjust = time.Now()
+	dl.adjustCount++
+
+	dl.logger.Info("Decreased rate",
+		zap.Float64("old_rate", currentRate),
+		zap.Float64("new_rate", newRate),
+		zap.Float64("percent", percent),
+	)
 }
 
-// AdjustRate adjusts the rate based on current utilization
-func (d *DynamicAdjuster) AdjustRate(currentRate float64, utilization float64) float64 {
-	d.mu.Lock()
-	defer d.mu.Unlock()
+// setRate updates the rate in the underlying limiter
+func (dl *DynamicLimiter) setRate(rate float64) {
+	// Calculate burst as 10% of rate
+	burst := rate * 0.1
 
-	if !d.enabled {
-		return currentRate
+	// Apply TCP overhead factor
+	adjustedRate := rate * tcpOverheadFactor
+	adjustedBurst := burst * tcpOverheadFactor
+
+	dl.mu.Lock()
+	defer dl.mu.Unlock()
+
+	// Update token buckets directly
+	dl.inBucket.Update(adjustedRate, adjustedBurst)
+	dl.outBucket.Update(adjustedRate, adjustedBurst)
+
+	// Update metrics (store the pre-adjusted values)
+	dl.inMetrics = LimiterMetrics{
+		Rate:      rate,
+		Burst:     burst,
+		LimitHits: dl.inMetrics.LimitHits,
+	}
+	dl.outMetrics = LimiterMetrics{
+		Rate:      rate,
+		Burst:     burst,
+		LimitHits: dl.outMetrics.LimitHits,
 	}
 
-	now := time.Now()
-	if now.Sub(d.lastAdjustment) < d.adjustmentInterval {
-		return currentRate
-	}
-	d.lastAdjustment = now
+	// Update base limiter state
+	dl.enabled = true
 
-	var newRate float64
-	switch {
-	case utilization > d.increaseThreshold:
-		// High utilization - increase rate
-		newRate = currentRate * d.increaseRatio
-		d.logger.Info("Increasing rate due to high utilization",
-			zap.Float64("utilization", utilization),
-			zap.Float64("old_rate", currentRate),
-			zap.Float64("new_rate", newRate))
-
-	case utilization < d.decreaseThreshold:
-		// Low utilization - decrease rate
-		newRate = currentRate * d.decreaseRatio
-		d.logger.Info("Decreasing rate due to low utilization",
-			zap.Float64("utilization", utilization),
-			zap.Float64("old_rate", currentRate),
-			zap.Float64("new_rate", newRate))
-
-	default:
-		// Utilization within acceptable range
-		return currentRate
-	}
-
-	// Ensure rate stays within bounds
-	if newRate < d.minRate {
-		newRate = d.minRate
-	}
-	if newRate > d.maxRate {
-		newRate = d.maxRate
-	}
-
-	return newRate
+	dl.logger.Info("Updated rate limiter",
+		zap.Float64("rate", rate),
+		zap.Float64("burst", burst),
+		zap.Float64("adjusted_rate", adjustedRate),
+		zap.Float64("adjusted_burst", adjustedBurst),
+	)
 }
 
-// UtilizationStats tracks utilization statistics
-type UtilizationStats struct {
-	bytesProcessed uint64
-	startTime      time.Time
-	mu             sync.Mutex
+// GetAdjustCount returns the number of rate adjustments made
+func (dl *DynamicLimiter) GetAdjustCount() int {
+	dl.adjustMu.RLock()
+	defer dl.adjustMu.RUnlock()
+	return dl.adjustCount
 }
 
-// NewUtilizationStats creates a new utilization stats tracker
-func NewUtilizationStats() *UtilizationStats {
-	return &UtilizationStats{
-		startTime: time.Now(),
-	}
-}
-
-// AddBytes records processed bytes
-func (s *UtilizationStats) AddBytes(n uint64) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.bytesProcessed += n
-}
-
-// GetUtilization calculates current utilization ratio
-func (s *UtilizationStats) GetUtilization(targetRate float64) float64 {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	elapsed := time.Since(s.startTime).Seconds()
-	if elapsed == 0 {
-		return 0
-	}
-
-	actualRate := float64(s.bytesProcessed) / elapsed
-	utilization := actualRate / targetRate
-
-	// Reset stats for next period
-	s.bytesProcessed = 0
-	s.startTime = time.Now()
-
-	return utilization
+// ResetAdjustCount resets the adjustment counter
+func (dl *DynamicLimiter) ResetAdjustCount() {
+	dl.adjustMu.Lock()
+	defer dl.adjustMu.Unlock()
+	dl.adjustCount = 0
 }
