@@ -51,6 +51,12 @@ ls -l /etc/sssonector/certs/
 # Check config file
 cat /etc/sssonector/config.yaml
 # Verify mode: "server" and correct IP/port
+
+# Verify state directory permissions
+ls -l /var/lib/sssonector/
+# Should show:
+# drwx------ state/
+# drwxr-x--- stats/
 ```
 
 #### Client VM
@@ -65,6 +71,10 @@ ls -l /etc/sssonector/certs/
 # Check config file
 cat /etc/sssonector/config.yaml
 # Verify mode: "client" and correct server IP/port
+
+# Verify state directory
+ls -l /var/lib/sssonector/
+# Should show same permissions as server
 ```
 
 ### 2. Service Management
@@ -76,9 +86,20 @@ sudo systemctl start sssonector
 sudo systemctl status sssonector
 # Should show: active (running)
 
-# Check logs
+# Check logs for state transitions
 sudo journalctl -u sssonector -n 50
-# Verify: No errors, listening on configured port
+# Verify sequence:
+# 1. StateUninitialized -> StateInitializing
+# 2. StateInitializing -> StateReady
+# 3. No error states or unexpected transitions
+
+# Verify resource allocation
+sudo lsof -p $(pidof sssonector)
+# Check for:
+# - TUN device
+# - Config files
+# - State files
+# - Network sockets
 ```
 
 #### Client VM
@@ -88,9 +109,13 @@ sudo systemctl start sssonector
 sudo systemctl status sssonector
 # Should show: active (running)
 
-# Check logs
+# Check logs for state transitions
 sudo journalctl -u sssonector -n 50
-# Verify: Connected to server successfully
+# Verify same state transition sequence as server
+
+# Verify connection establishment
+sudo journalctl -u sssonector | grep "Connection established"
+# Should show successful connection with retry count
 ```
 
 ### 3. Rate Limiting Tests
@@ -118,6 +143,8 @@ iperf3 -c <client-ip> -t 30 -J
 # - Actual throughput ~5.25 Mbps (includes 5% TCP overhead)
 # - Stable latency
 # - No packet loss
+# - Connection state remains stable
+# - No resource leaks
 ```
 
 #### Dynamic Rate Tests
@@ -135,20 +162,8 @@ done
 # - Actual throughput ~105% of configured rate
 # - Stable performance
 # - Proper burst control
-```
-
-#### Monitoring Verification
-```bash
-# Monitor throughput during tests
-watch -n 1 '/usr/local/bin/sssonector-snmp throughput'
-
-# Check rate limiting metrics
-snmpwalk -v2c -c public localhost:10161 .1.3.6.1.4.1.54321.1.3
-
-# Verify:
-# - Metrics update in real-time
-# - Values match iperf3 results
-# - TCP overhead is accounted for
+# - Clean state transitions
+# - Resource cleanup between tests
 ```
 
 ### 4. Network Interface Tests
@@ -165,6 +180,13 @@ ip addr show tun0
 # Verify routing
 ip route show
 # Should include route for 10.0.0.0/24 via tun0
+
+# Check interface statistics
+ip -s link show tun0
+# Verify:
+# - No packet drops
+# - No errors
+# - Consistent RX/TX counts
 ```
 
 #### Client VM
@@ -179,6 +201,10 @@ ip addr show tun0
 # Verify routing
 ip route show
 # Should include route for 10.0.0.0/24 via tun0
+
+# Check interface statistics
+ip -s link show tun0
+# Verify same metrics as server
 ```
 
 ### 5. Performance Tests
@@ -194,6 +220,12 @@ done
 iperf3 -c 10.0.0.1 -t 30 --json > iperf_5mbps.json
 jq '.end.streams[0].sender.mean_rtt' iperf_5mbps.json
 # Should be < 50ms
+
+# Monitor resource usage
+while true; do
+  ps -p $(pidof sssonector) -o %cpu,%mem,rss,vsz
+  sleep 1
+done > resource_usage.log
 ```
 
 ### 6. Stress Tests
@@ -212,7 +244,181 @@ done
 # - Rate limiting effectiveness
 # - System resource usage
 # - Latency impact
+# - State stability
+# - Connection tracking
 ```
+
+### 7. Reliability Testing
+
+#### State Transition Verification
+```bash
+# Monitor state transitions
+journalctl -u sssonector -f | grep "State transition:"
+
+# Verify proper sequence:
+# 1. Uninitialized -> Initializing
+# 2. Initializing -> Ready
+# 3. Ready -> Running
+# 4. Running -> Stopping (on shutdown)
+# 5. Stopping -> Stopped
+
+# Check for error states:
+journalctl -u sssonector | grep -i "error state"
+# Should show no unexpected error states
+```
+
+#### Retry Mechanism Testing
+```bash
+# Test network interruption recovery
+sudo ip link set tun0 down
+sleep 5
+sudo ip link set tun0 up
+
+# Verify in logs:
+# - Connection retry attempts
+# - Backoff timing
+# - Successful recovery
+# - State consistency
+
+# Test configuration reload
+sudo systemctl reload sssonector
+# Verify:
+# - Clean reload
+# - State preservation
+# - Connection maintenance
+```
+
+#### Resource Cleanup Verification
+```bash
+# Check for resource leaks
+watch -n 1 'sudo lsof -p $(pidof sssonector)'
+
+# Monitor file descriptors
+watch -n 1 'ls -l /proc/$(pidof sssonector)/fd'
+
+# Check memory usage over time
+ps -p $(pidof sssonector) -o pid,ppid,%cpu,%mem,cmd --forest
+
+# Verify cleanup after restart
+systemctl restart sssonector
+# Check:
+# - TUN interface removed
+# - Sockets closed
+# - File handles released
+# - Memory freed
+```
+
+#### Connection Tracking
+```bash
+# Monitor active connections
+ss -tnp | grep sssonector
+
+# Check connection states
+netstat -anp | grep sssonector
+
+# Verify connection cleanup
+systemctl stop sssonector
+# Check:
+# - All connections closed
+# - No lingering sockets
+# - Clean state file
+```
+
+#### Statistics Monitoring
+```bash
+# Check SNMP metrics
+snmpwalk -v2c -c public localhost .1.3.6.1.4.1.54321
+
+# Monitor throughput
+iftop -i tun0
+
+# Check interface statistics
+ip -s link show tun0
+
+# Verify metrics accuracy
+# Compare reported vs actual:
+# - Bandwidth usage
+# - Packet counts
+# - Error rates
+# - Retry counts
+```
+
+## Troubleshooting Guide
+
+### State Transition Issues
+
+1. Stuck in Initializing State
+   - Check TUN device permissions
+   - Verify network interface availability
+   - Check system capabilities
+   - Review initialization logs
+
+2. Unexpected Error States
+   - Check system resources
+   - Verify configuration
+   - Review connection logs
+   - Check for network issues
+
+3. Failed State Transitions
+   - Review transition sequence
+   - Check for blocked operations
+   - Verify resource availability
+   - Check for permission issues
+
+### Resource Cleanup Problems
+
+1. Lingering TUN Interfaces
+   ```bash
+   # List interfaces
+   ip link show
+   # Clean up manually
+   sudo ip link delete tun0
+   ```
+
+2. Stuck File Handles
+   ```bash
+   # List open files
+   sudo lsof -p $(pidof sssonector)
+   # Force close if needed
+   kill -9 $(pidof sssonector)
+   ```
+
+3. Memory Leaks
+   ```bash
+   # Monitor memory
+   ps -o pid,ppid,rss,vsize,pcpu,pmem,cmd -p $(pidof sssonector)
+   # Check for growth
+   ```
+
+### Connection Tracking Errors
+
+1. Stale Connections
+   ```bash
+   # List connections
+   ss -tnp | grep sssonector
+   # Clean up
+   sudo ss -K dst <ip:port>
+   ```
+
+2. Connection State Mismatch
+   ```bash
+   # Compare states
+   ss -tnp | grep sssonector
+   netstat -anp | grep sssonector
+   # Restart if inconsistent
+   ```
+
+### Statistics Monitoring Issues
+
+1. Missing Metrics
+   - Check SNMP configuration
+   - Verify monitoring permissions
+   - Restart statistics collection
+
+2. Inaccurate Counts
+   - Compare with system tools
+   - Reset counters if needed
+   - Verify collection intervals
 
 ## Test Results Documentation
 
@@ -230,12 +436,18 @@ For each test run, document:
    - Latency measurements
    - TCP overhead impact
    - SNMP metrics accuracy
+   - State transition sequence
+   - Resource usage patterns
+   - Connection tracking status
 
 3. Issues found:
    - Description
    - Steps to reproduce
    - Performance impact
    - Metrics/logs showing the issue
+   - State at time of failure
+   - Resource status
+   - Connection status
 
 ## Common Issues
 
@@ -257,6 +469,12 @@ For each test run, document:
    - Validate metric collection
    - Review update frequency
 
+4. State Management Issues
+   - Check state file permissions
+   - Verify transition sequences
+   - Monitor resource availability
+   - Check cleanup procedures
+
 ## Reporting Bugs
 
 When reporting issues:
@@ -267,3 +485,6 @@ When reporting issues:
 4. Include config files (sanitized)
 5. Add iperf3 test results
 6. Include SNMP metrics data
+7. Attach state transition logs
+8. Include resource usage data
+9. Provide connection tracking info
