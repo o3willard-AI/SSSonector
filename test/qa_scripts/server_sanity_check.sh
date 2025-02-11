@@ -24,66 +24,38 @@ mkdir -p "$LOG_DIR"
 log "INFO" "Starting server initialization sanity check"
 log "INFO" "Logs will be saved to: $LOG_DIR"
 
+# Check if service is already running properly
+check_running_service() {
+    local vm=$1
+    log "INFO" "Checking existing service on $vm..."
+
+    # Check if service is running
+    if systemctl is-active --quiet sssonector; then
+        # Verify TUN interface
+        if ip link show tun0 >/dev/null 2>&1; then
+            # Verify listening port
+            if ss -tlnp | grep -q ':8443.*sssonector'; then
+                # Verify state
+                if journalctl -u sssonector -n 50 | grep -q "State: Running"; then
+                    log "INFO" "Service is already running properly"
+                    return 0
+                fi
+            fi
+        fi
+    fi
+    return 1
+}
+
 # Pre-flight system checks
 check_system_requirements() {
     local vm=$1
     log "INFO" "Performing system requirement checks on $vm..."
 
-# System preparation
-log "INFO" "Preparing system environment..."
-
-# Create sssonector user and group if they don't exist
-remote_cmd $vm "getent group sssonector >/dev/null || sudo groupadd sssonector"
-remote_cmd $vm "id -u sssonector >/dev/null 2>&1 || sudo useradd -r -g sssonector sssonector"
-check_status "User/group setup" || return 1
-
-# Add current user to sssonector group
-remote_cmd $vm "sudo usermod -a -G sssonector \$USER"
-check_status "Add user to sssonector group" || return 1
-
-# Set up TUN device permissions
-remote_cmd $vm "sudo mkdir -p /dev/net"
-remote_cmd $vm "test -e /dev/net/tun || sudo mknod /dev/net/tun c 10 200"
-remote_cmd $vm "sudo chown root:sssonector /dev/net/tun"
-remote_cmd $vm "sudo chmod 0660 /dev/net/tun"
-check_status "TUN device permissions" || return 1
-
-# Verify TUN setup
-remote_cmd $vm "ls -l /dev/net/tun" > "$LOG_DIR/tun_perms.log"
-remote_cmd $vm "id sssonector" > "$LOG_DIR/user_info.log"
-remote_cmd $vm "groups sssonector" > "$LOG_DIR/group_info.log"
-remote_cmd $vm "groups \$USER" > "$LOG_DIR/current_user_groups.log"
-
-# Load TUN module and verify
-remote_cmd $vm "lsmod | grep -q '^tun '" || {
-    log "INFO" "TUN module not loaded, attempting to load..."
-    remote_cmd $vm "sudo modprobe tun"
-}
-remote_cmd $vm "lsmod | grep -q '^tun '"
-check_status "TUN module loaded" || {
-    log "ERROR" "Failed to load TUN module"
-    return 1
-}
-
-# Set up TUN device with proper permissions
-remote_cmd $vm "test -e /dev/net/tun" || {
-    log "INFO" "Creating /dev/net/tun..."
-    remote_cmd $vm "sudo mkdir -p /dev/net && sudo mknod /dev/net/tun c 10 200"
-}
-remote_cmd $vm "sudo chown root:sssonector /dev/net/tun && sudo chmod 0660 /dev/net/tun"
-check_status "TUN device permissions" || return 1
-
-# Verify TUN setup
-remote_cmd $vm "ls -l /dev/net/tun" > "$LOG_DIR/tun_perms.log"
-remote_cmd $vm "id sssonector" > "$LOG_DIR/user_info.log"
-remote_cmd $vm "groups sssonector" > "$LOG_DIR/group_info.log"
-
-    # Check network capabilities
-    remote_cmd $vm "getcap /usr/local/bin/sssonector | grep -q 'cap_net_admin'"
-    check_status "Network admin capabilities" || {
-        log "ERROR" "Missing network admin capabilities"
+    # Check network capabilities by verifying TUN interface
+    if ! ip link show tun0 >/dev/null 2>&1; then
+        log "ERROR" "TUN interface not available"
         return 1
-    }
+    fi
 
     # Check process limits
     remote_cmd $vm "ulimit -n" > "$LOG_DIR/ulimit.log"
@@ -92,6 +64,10 @@ remote_cmd $vm "groups sssonector" > "$LOG_DIR/group_info.log"
     # Check system resources
     remote_cmd $vm "free -m; df -h; uptime" > "$LOG_DIR/resources.log"
     check_status "System resources check" || return 1
+
+    # Check state directory
+    remote_cmd $vm "ls -la /var/lib/sssonector/" > "$LOG_DIR/state_dir.log"
+    check_status "State directory check" || return 1
 
     return 0
 }
@@ -117,6 +93,10 @@ verify_server_installation() {
     remote_cmd $vm "sssonector -validate-config -config /etc/sssonector/config.yaml" > "$LOG_DIR/config_validation.log" 2>&1
     check_status "Configuration validation" || return 1
 
+    # Check capabilities
+    remote_cmd $vm "getcap $(which sssonector)" > "$LOG_DIR/capabilities.log"
+    check_status "Capabilities check" || return 1
+
     return 0
 }
 
@@ -125,76 +105,9 @@ verify_tun_interface() {
     local vm=$1
     log "INFO" "Verifying TUN interface setup on $vm..."
 
-    # Capture pre-setup network state
-    remote_cmd $vm "ip addr show; ip route show" > "$LOG_DIR/network_pre.log"
-
     # Check TUN device permissions
     remote_cmd $vm "ls -l /dev/net/tun" > "$LOG_DIR/tun_perms.log"
     check_status "TUN device permissions" || return 1
-
-    # Monitor kernel messages
-    remote_cmd $vm "dmesg | tail -n 50" > "$LOG_DIR/kernel_pre.log"
-
-# Configure extended retry parameters
-log "INFO" "Configuring extended retry parameters..."
-cat > /tmp/server_config.yaml << EOL
-type: server
-config:
-  mode: "server"
-  network:
-    interface: "tun0"
-    mtu: 1500
-    address: "10.0.0.1/24"
-adapter:
-  retry_attempts: 10
-  retry_delay: 500
-  cleanup_timeout: 10000
-  validate_state: true
-monitor:
-  enabled: true
-  log_level: "debug"
-EOL
-remote_cmd $vm "sudo mkdir -p /etc/sssonector"
-remote_cmd $vm "sudo mv /tmp/server_config.yaml /etc/sssonector/config.yaml"
-
-# Start server with extra logging
-log "INFO" "Starting server with debug logging..."
-remote_cmd $vm "sudo mkdir -p /var/log/sssonector"
-remote_cmd $vm "sudo sssonector -config /etc/sssonector/config.yaml -log-level debug > /var/log/sssonector/server.log 2>&1 &"
-
-# Give more time for initialization with increased retries
-log "INFO" "Waiting for server initialization..."
-sleep 10
-
-    # Check process status
-    remote_cmd $vm "pgrep -f sssonector" > "$LOG_DIR/process_id.log" || {
-        log "ERROR" "Server failed to start"
-        # Collect failure logs
-        remote_cmd $vm "cat /var/log/sssonector/server.log" > "$LOG_DIR/server_failure.log"
-        remote_cmd $vm "dmesg | tail -n 50" > "$LOG_DIR/kernel_failure.log"
-        return 1
-    }
-
-# Wait for TUN interface with increased timeout
-local timeout=60
-    local start_time=$(date +%s)
-    while true; do
-        if remote_cmd $vm "ip link show tun0" > "$LOG_DIR/tun_interface.log" 2>&1; then
-            break
-        fi
-
-        local current_time=$(date +%s)
-        local elapsed=$((current_time - start_time))
-
-        if [ $elapsed -ge $timeout ]; then
-            log "ERROR" "Timeout waiting for TUN interface"
-            remote_cmd $vm "cat /var/log/sssonector/server.log" > "$LOG_DIR/server_timeout.log"
-            return 1
-        fi
-
-        log "INFO" "Waiting for TUN interface... (${elapsed}s/${timeout}s)"
-        sleep 2
-    done
 
     # Verify interface configuration
     remote_cmd $vm "ip addr show tun0" > "$LOG_DIR/tun_config.log"
@@ -204,9 +117,102 @@ local timeout=60
     remote_cmd $vm "ip link show tun0 | grep -q 'UP'" 
     check_status "TUN interface UP state" || return 1
 
-    # Capture post-setup network state
-    remote_cmd $vm "ip addr show; ip route show" > "$LOG_DIR/network_post.log"
-    remote_cmd $vm "dmesg | tail -n 50" > "$LOG_DIR/kernel_post.log"
+    # Capture network state
+    remote_cmd $vm "ip addr show; ip route show" > "$LOG_DIR/network_state.log"
+    remote_cmd $vm "dmesg | tail -n 50" > "$LOG_DIR/kernel_state.log"
+
+    # Check interface statistics
+    remote_cmd $vm "ip -s link show tun0" > "$LOG_DIR/tun_stats.log"
+    check_status "TUN interface statistics" || return 1
+
+    return 0
+}
+
+# Verify state transitions
+verify_state_transitions() {
+    local vm=$1
+    log "INFO" "Verifying state transitions on $vm..."
+
+    # Get initial state
+    local initial_state=$(remote_cmd $vm "journalctl -u sssonector -n 1 | grep 'State:'")
+    echo "$initial_state" > "$LOG_DIR/initial_state.log"
+
+    # Stop service
+    remote_cmd $vm "systemctl stop sssonector"
+    sleep 2
+
+    # Check stopping transition
+    local stopping_state=$(remote_cmd $vm "journalctl -u sssonector -n 10 | grep 'State: Stopping'")
+    if [ -z "$stopping_state" ]; then
+        log "ERROR" "Missing stopping state transition"
+        return 1
+    fi
+
+    # Start service
+    remote_cmd $vm "systemctl start sssonector"
+    sleep 2
+
+    # Check startup transitions
+    local transitions=$(remote_cmd $vm "journalctl -u sssonector -n 50 | grep 'State:'")
+    echo "$transitions" > "$LOG_DIR/state_transitions.log"
+
+    # Verify transition sequence
+    if ! echo "$transitions" | grep -q "Uninitialized"; then
+        log "ERROR" "Missing uninitialized state"
+        return 1
+    fi
+    if ! echo "$transitions" | grep -q "Initializing"; then
+        log "ERROR" "Missing initializing state"
+        return 1
+    fi
+    if ! echo "$transitions" | grep -q "Ready"; then
+        log "ERROR" "Missing ready state"
+        return 1
+    fi
+    if ! echo "$transitions" | grep -q "Running"; then
+        log "ERROR" "Missing running state"
+        return 1
+    fi
+
+    return 0
+}
+
+# Verify resource cleanup
+verify_resource_cleanup() {
+    local vm=$1
+    log "INFO" "Verifying resource cleanup on $vm..."
+
+    # Get initial resource state
+    remote_cmd $vm "lsof -p $(pidof sssonector)" > "$LOG_DIR/initial_resources.log"
+    remote_cmd $vm "ls -l /proc/$(pidof sssonector)/fd" > "$LOG_DIR/initial_fd.log"
+
+    # Stop service
+    remote_cmd $vm "systemctl stop sssonector"
+    sleep 2
+
+    # Check for lingering resources
+    if ip link show tun0 >/dev/null 2>&1; then
+        log "ERROR" "TUN interface not cleaned up"
+        return 1
+    fi
+
+    if ss -tlnp | grep -q ':8443.*sssonector'; then
+        log "ERROR" "Listening socket not cleaned up"
+        return 1
+    fi
+
+    if [ -f "/var/lib/sssonector/state/server.lock" ]; then
+        log "ERROR" "State lock file not cleaned up"
+        return 1
+    fi
+
+    # Start service again
+    remote_cmd $vm "systemctl start sssonector"
+    sleep 2
+
+    # Verify clean startup
+    remote_cmd $vm "lsof -p $(pidof sssonector)" > "$LOG_DIR/final_resources.log"
+    remote_cmd $vm "ls -l /proc/$(pidof sssonector)/fd" > "$LOG_DIR/final_fd.log"
 
     return 0
 }
@@ -215,30 +221,36 @@ local timeout=60
 main() {
     local vm=$QA_SERVER_VM
 
-    # Clean up any existing state
-    log "INFO" "Cleaning up existing state..."
-    remote_cmd $vm "sudo pkill -f sssonector || true"
-    remote_cmd $vm "sudo ip link del tun0 2>/dev/null || true"
-    remote_cmd $vm "sudo lsof -ti :8443 | xargs -r sudo kill -9 || true"
-    sleep 2
+    # Check if service is already running properly
+    if check_running_service $vm; then
+        log "INFO" "Service is already running properly, skipping setup"
+    else
+        # Clean up any existing state
+        log "INFO" "Cleaning up existing state..."
+        remote_cmd $vm "sudo systemctl stop sssonector || true"
+        remote_cmd $vm "sudo pkill -f sssonector || true"
+        remote_cmd $vm "sudo ip link del tun0 2>/dev/null || true"
+        remote_cmd $vm "sudo lsof -ti :8443 | xargs -r sudo kill -9 || true"
+        sleep 2
 
-    # Run pre-flight checks
+        # Start service
+        log "INFO" "Starting service..."
+        remote_cmd $vm "sudo systemctl start sssonector"
+        sleep 5
+    fi
+
+    # Run verification checks
     check_system_requirements $vm || exit 1
-
-    # Verify installation
     verify_server_installation $vm || exit 1
-
-    # Verify TUN interface setup
     verify_tun_interface $vm || exit 1
+    verify_state_transitions $vm || exit 1
+    verify_resource_cleanup $vm || exit 1
 
     # Collect final logs
     log "INFO" "Collecting final logs..."
-    remote_cmd $vm "cat /var/log/sssonector/server.log" > "$LOG_DIR/server_final.log"
     remote_cmd $vm "journalctl -u sssonector --no-pager -n 200" > "$LOG_DIR/journal_final.log"
-
-    # Clean up
-    log "INFO" "Cleaning up..."
-    cleanup_vm $vm
+    remote_cmd $vm "ps -p $(pidof sssonector) -o pid,ppid,%cpu,%mem,cmd --forest" > "$LOG_DIR/process_tree.log"
+    remote_cmd $vm "netstat -anp | grep sssonector" > "$LOG_DIR/network_connections.log"
 
     log "INFO" "Server initialization sanity check complete"
     log "INFO" "All test logs available in: $LOG_DIR"

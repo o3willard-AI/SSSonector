@@ -191,3 +191,35 @@ When making changes to the QA scripts:
    - Implement test result visualization
    - Add performance trend analysis
    - Enhance error reporting
+
+## Deprecated Scripts
+
+The following scripts have been deprecated and moved to backup as they do not utilize 
+the new reliability improvements:
+
+1. Old test scripts without state transition handling:
+   - test_ssh_auth.exp
+   - test_local_auth.exp
+   - test_remote_auth.exp
+   - verify_ssh_basic.exp
+   - verify_snmp_basic.exp
+
+2. Scripts now covered by core_sanity_check.sh:
+   - sanity_check.sh
+   - test_scenarios.sh
+   - test_rate_limit.sh
+
+3. Deprecated setup scripts:
+   - setup_sssonector_repo.exp
+   - setup_sssonector_repo2.exp
+   - verify_automation.exp
+
+These scripts have been replaced by the enhanced reliability testing framework in:
+- server_sanity_check.sh
+- core_sanity_check.sh
+
+The new scripts include:
+- State transition verification
+- Resource cleanup validation
+- Connection tracking
+- Statistics monitoring
