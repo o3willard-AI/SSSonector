@@ -1,45 +1,36 @@
 package tunnel
 
 import (
-	"context"
 	"fmt"
 	"net"
 	"path/filepath"
 	"sync"
-	"time"
+	"sync/atomic"
 
 	"github.com/o3willard-AI/SSSonector/internal/adapter"
 	"github.com/o3willard-AI/SSSonector/internal/config/interfaces"
 	"github.com/o3willard-AI/SSSonector/internal/config/types"
-	"github.com/o3willard-AI/SSSonector/internal/monitor"
-	"github.com/o3willard-AI/SSSonector/internal/pool"
 	"go.uber.org/zap"
 )
 
-// Tunnel defines the interface for tunnel operations
+// State represents the tunnel state
+type State int32
+
+const (
+	// StateStopped indicates the tunnel is stopped
+	StateStopped State = iota
+	// StateStarting indicates the tunnel is starting
+	StateStarting
+	// StateRunning indicates the tunnel is running
+	StateRunning
+	// StateStopping indicates the tunnel is stopping
+	StateStopping
+)
+
+// Tunnel represents a network tunnel
 type Tunnel interface {
-	// Start starts the tunnel
 	Start() error
-	// Stop stops the tunnel
 	Stop() error
-}
-
-// UpdateCertificatePaths updates certificate paths to be absolute
-func UpdateCertificatePaths(cfg *types.AppConfig, baseDir string) error {
-	// Helper function to resolve path
-	resolvePath := func(path string) string {
-		if path == "" || filepath.IsAbs(path) {
-			return path
-		}
-		return filepath.Join(baseDir, path)
-	}
-
-	// Update certificate paths
-	cfg.Config.Auth.CertFile = resolvePath(cfg.Config.Auth.CertFile)
-	cfg.Config.Auth.KeyFile = resolvePath(cfg.Config.Auth.KeyFile)
-	cfg.Config.Auth.CAFile = resolvePath(cfg.Config.Auth.CAFile)
-
-	return nil
 }
 
 // Server represents a tunnel server
@@ -47,266 +38,158 @@ type Server struct {
 	config  *types.AppConfig
 	manager interfaces.ConfigManager
 	logger  *zap.Logger
-	pool    *pool.Pool
-	ln      net.Listener
-	wg      sync.WaitGroup
-	ctx     context.Context
-	cancel  context.CancelFunc
+	state   State
+
+	adapter   adapter.AdapterInterface
+	listener  net.Listener
+	transfers sync.WaitGroup
+	mu        sync.Mutex
 }
 
 // NewServer creates a new tunnel server
-func NewServer(cfg *types.AppConfig, manager interfaces.ConfigManager, logger *zap.Logger) *Server {
-	ctx, cancel := context.WithCancel(context.Background())
-
-	// Create connection pool
-	poolConfig := &pool.Config{
-		IdleTimeout:   time.Minute * 5,
-		MaxIdle:       100,
-		MaxActive:     1000,
-		RetryInterval: time.Second * 5,
-		MaxRetries:    3,
-	}
-
-	// Connection factory for the pool
-	factory := func(ctx context.Context) (net.Conn, error) {
-		// Create new connection
-		conn, err := net.Dial("tcp", cfg.Config.Network.Name)
-		if err != nil {
-			return nil, err
-		}
-		return conn, nil
-	}
-
+func NewServer(cfg *types.AppConfig, manager interfaces.ConfigManager, logger *zap.Logger) Tunnel {
 	return &Server{
 		config:  cfg,
 		manager: manager,
 		logger:  logger,
-		pool:    pool.NewPool(factory, poolConfig, logger),
-		ctx:     ctx,
-		cancel:  cancel,
+		state:   StateStopped,
 	}
+}
+
+// UpdateCertificatePaths updates certificate paths to be relative to config directory
+func UpdateCertificatePaths(cfg *types.AppConfig, configDir string) error {
+	if cfg.Config == nil || cfg.Config.Auth.CertFile == "" {
+		return fmt.Errorf("invalid configuration: missing certificate paths")
+	}
+
+	// Update certificate paths to be relative to config directory
+	cfg.Config.Auth.CertFile = filepath.Join(configDir, cfg.Config.Auth.CertFile)
+	cfg.Config.Auth.KeyFile = filepath.Join(configDir, cfg.Config.Auth.KeyFile)
+	cfg.Config.Auth.CAFile = filepath.Join(configDir, cfg.Config.Auth.CAFile)
+
+	return nil
 }
 
 // Start starts the tunnel server
 func (s *Server) Start() error {
-	// Create adapter first
-	adapterOpts := adapter.DefaultOptions()
-	iface, err := adapter.New(s.config.Config.Network.Name, adapterOpts)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.getState() != StateStopped {
+		return fmt.Errorf("tunnel is not in stopped state")
+	}
+
+	s.setState(StateStarting)
+	s.logger.Info("Starting tunnel server")
+
+	// Create TUN adapter
+	var err error
+	s.adapter, err = adapter.FromConfig(s.config)
 	if err != nil {
+		s.setState(StateStopped)
 		return fmt.Errorf("failed to create adapter: %w", err)
 	}
 
-	// Configure adapter
-	if err := iface.Configure(&adapter.Config{
-		Name:    s.config.Config.Network.Name,
-		Address: s.config.Config.Network.Address,
-		MTU:     s.config.Config.Network.MTU,
-	}); err != nil {
-		return fmt.Errorf("failed to configure adapter: %w", err)
+	// Create TCP listener
+	addr := fmt.Sprintf("%s:%d",
+		s.config.Config.Tunnel.ListenAddress,
+		s.config.Config.Tunnel.ListenPort,
+	)
+	s.listener, err = net.Listen("tcp", addr)
+	if err != nil {
+		s.setState(StateStopped)
+		if err := s.adapter.Cleanup(); err != nil {
+			s.logger.Error("Failed to cleanup adapter", zap.Error(err))
+		}
+		return fmt.Errorf("failed to create listener: %w", err)
 	}
 
-	// Start listener
-	listenAddr := fmt.Sprintf("%s:%d", s.config.Config.Tunnel.ListenAddress, s.config.Config.Tunnel.ListenPort)
-	s.logger.Info("Starting tunnel server",
-		zap.String("address", listenAddr),
+	s.setState(StateRunning)
+	s.logger.Info("Tunnel server started",
+		zap.String("address", addr),
 	)
 
-	ln, err := net.Listen("tcp4", listenAddr) // Force IPv4
-	if err != nil {
-		return fmt.Errorf("failed to start listener: %w", err)
-	}
-	s.ln = ln
-
 	// Accept connections
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		for {
-			select {
-			case <-s.ctx.Done():
-				return
-			default:
-				conn, err := ln.Accept()
-				if err != nil {
-					if s.ctx.Err() == nil {
-						s.logger.Error("Failed to accept connection", zap.Error(err))
-					}
-					continue
-				}
-
-				s.wg.Add(1)
-				go func() {
-					defer s.wg.Done()
-					s.handleConnection(conn)
-				}()
-			}
-		}
-	}()
+	go s.acceptConnections()
 
 	return nil
 }
 
 // Stop stops the tunnel server
 func (s *Server) Stop() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.getState() != StateRunning {
+		return fmt.Errorf("tunnel is not in running state")
+	}
+
+	s.setState(StateStopping)
 	s.logger.Info("Stopping tunnel server")
 
-	// Stop accepting new connections
-	s.cancel()
-	if s.ln != nil {
-		s.ln.Close()
-	}
-
-	// Close connection pool
-	s.pool.Close()
-
-	// Wait for all connections to finish
-	s.wg.Wait()
-
-	return nil
-}
-
-// handleConnection handles a client connection
-func (s *Server) handleConnection(clientConn net.Conn) {
-	defer clientConn.Close()
-
-	// Get connection from pool
-	conn, err := s.pool.Get(s.ctx)
-	if err != nil {
-		s.logger.Error("Failed to get connection from pool", zap.Error(err))
-		return
-	}
-	defer s.pool.Put(conn)
-
-	// Create transfer
-	transfer := NewTransfer(clientConn, conn, s.config, s.logger)
-	if err := transfer.Start(); err != nil {
-		s.logger.Error("Transfer failed", zap.Error(err))
-	}
-}
-
-// Client represents a tunnel client
-type Client struct {
-	config  *types.AppConfig
-	manager interfaces.ConfigManager
-	logger  *zap.Logger
-	pool    *pool.Pool
-	ctx     context.Context
-	cancel  context.CancelFunc
-}
-
-// NewClient creates a new tunnel client
-func NewClient(cfg *types.AppConfig, manager interfaces.ConfigManager, logger *zap.Logger) *Client {
-	ctx, cancel := context.WithCancel(context.Background())
-
-	// Create connection pool
-	poolConfig := &pool.Config{
-		IdleTimeout:   time.Minute * 5,
-		MaxIdle:       100,
-		MaxActive:     1000,
-		RetryInterval: time.Second * 5,
-		MaxRetries:    3,
-	}
-
-	// Connection factory for the pool
-	factory := func(ctx context.Context) (net.Conn, error) {
-		// Create new connection to server
-		serverAddr := fmt.Sprintf("%s:%d", cfg.Config.Tunnel.ServerAddress, cfg.Config.Tunnel.ServerPort)
-		conn, err := net.Dial("tcp4", serverAddr) // Force IPv4
-		if err != nil {
-			return nil, fmt.Errorf("failed to connect to server: %w", err)
+	// Close listener
+	if s.listener != nil {
+		if err := s.listener.Close(); err != nil {
+			s.logger.Error("Failed to close listener", zap.Error(err))
 		}
-		return conn, nil
 	}
 
-	return &Client{
-		config:  cfg,
-		manager: manager,
-		logger:  logger,
-		pool:    pool.NewPool(factory, poolConfig, logger),
-		ctx:     ctx,
-		cancel:  cancel,
-	}
-}
+	// Wait for transfers to complete
+	s.transfers.Wait()
 
-// Start starts the tunnel client
-func (c *Client) Start() error {
-	// Create adapter with default options
-	adapterOpts := adapter.DefaultOptions()
-	iface, err := adapter.New(c.config.Config.Network.Name, adapterOpts)
-	if err != nil {
-		return fmt.Errorf("failed to create adapter: %w", err)
+	// Cleanup adapter
+	if s.adapter != nil {
+		if err := s.adapter.Cleanup(); err != nil {
+			s.logger.Error("Failed to cleanup adapter", zap.Error(err))
+		}
 	}
 
-	// Configure adapter
-	if err := iface.Configure(&adapter.Config{
-		Name:    c.config.Config.Network.Name,
-		Address: c.config.Config.Network.Address,
-		MTU:     c.config.Config.Network.MTU,
-	}); err != nil {
-		return fmt.Errorf("failed to configure adapter: %w", err)
-	}
-
-	// Get connection from pool
-	conn, err := c.pool.Get(c.ctx)
-	if err != nil {
-		return err
-	}
-	defer c.pool.Put(conn)
-
-	// Create tunnel
-	tunnel, err := New(conn, iface, c.config, nil)
-	if err != nil {
-		return fmt.Errorf("failed to create tunnel: %w", err)
-	}
-
-	return tunnel.Start()
-}
-
-// Stop stops the tunnel client
-func (c *Client) Stop() error {
-	c.logger.Info("Stopping tunnel client")
-
-	// Cancel context
-	c.cancel()
-
-	// Close connection pool
-	c.pool.Close()
+	s.setState(StateStopped)
+	s.logger.Info("Tunnel server stopped")
 
 	return nil
 }
 
-// tunnelImpl represents a tunnel implementation
-type tunnelImpl struct {
-	conn    net.Conn
-	adapter adapter.Interface
-	config  *types.AppConfig
-	monitor *monitor.Monitor
+// setState atomically sets the tunnel state
+func (s *Server) setState(state State) {
+	atomic.StoreInt32((*int32)(&s.state), int32(state))
 }
 
-// New creates a new tunnel
-func New(conn net.Conn, adapter adapter.Interface, cfg *types.AppConfig, monitor *monitor.Monitor) (Tunnel, error) {
-	return &tunnelImpl{
-		conn:    conn,
-		adapter: adapter,
-		config:  cfg,
-		monitor: monitor,
-	}, nil
+// getState atomically gets the tunnel state
+func (s *Server) getState() State {
+	return State(atomic.LoadInt32((*int32)(&s.state)))
 }
 
-// Start starts the tunnel
-func (t *tunnelImpl) Start() error {
-	// Wrap adapter in net.Conn interface
-	adapterConn := NewAdapterWrapper(t.adapter)
+// acceptConnections accepts incoming connections
+func (s *Server) acceptConnections() {
+	for s.getState() == StateRunning {
+		conn, err := s.listener.Accept()
+		if err != nil {
+			if s.getState() != StateRunning {
+				return
+			}
+			s.logger.Error("Failed to accept connection", zap.Error(err))
+			continue
+		}
 
-	// Create transfer to handle data between connection and adapter
-	transfer := NewTransfer(t.conn, adapterConn, t.config, nil)
-	return transfer.Start()
-}
+		s.logger.Debug("Accepted connection",
+			zap.String("remote", conn.RemoteAddr().String()),
+		)
 
-// Stop stops the tunnel
-func (t *tunnelImpl) Stop() error {
-	if err := t.conn.Close(); err != nil {
-		return err
+		s.transfers.Add(1)
+		go func() {
+			defer s.transfers.Done()
+			defer conn.Close()
+
+			transfer := NewTransfer(
+				conn,
+				NewAdapterWrapper(s.adapter),
+				s.config,
+				s.logger,
+			)
+			if err := transfer.Start(); err != nil {
+				s.logger.Error("Transfer failed", zap.Error(err))
+			}
+		}()
 	}
-	return t.adapter.Close()
 }

@@ -1,328 +1,266 @@
-//go:build linux
-// +build linux
-
 package adapter
 
 import (
+	"context"
 	"fmt"
-	"net"
 	"os"
-	"os/exec"
 	"sync"
 	"sync/atomic"
 	"syscall"
-	"time"
 	"unsafe"
+
+	"go.uber.org/zap"
 )
 
 const (
+	tunDevice = "/dev/net/tun"
+	ifReqSize = 40
 	TUNSETIFF = 0x400454ca
-	IFF_TUN   = 0x0001
-	IFF_NO_PI = 0x1000
-	IFF_UP    = 0x1
 )
 
-type linuxInterface struct {
-	name    string
-	file    *os.File
-	address string
-	mtu     int
-	isUp    bool
-	state   atomic.Value // Holds InterfaceState
-	stateMu sync.Mutex   // Protects state transitions
-	opts    *Options
+// tunAdapter represents a TUN interface adapter
+type tunAdapter struct {
+	opts      *Options
+	logger    *zap.Logger
+	file      *os.File
+	state     State
+	lastError error
+	stats     Statistics
+	stateMu   sync.RWMutex
+	closeChan chan struct{}
+	closeOnce sync.Once
 }
 
-// transitionState attempts to transition the interface from one state to another
-func (i *linuxInterface) transitionState(from, to InterfaceState) bool {
-	i.stateMu.Lock()
-	defer i.stateMu.Unlock()
-
-	if current := i.state.Load().(InterfaceState); current != from {
-		return false
-	}
-
-	i.state.Store(to)
-	return true
-}
-
-// setState sets the interface state directly
-func (i *linuxInterface) setState(state InterfaceState) {
-	i.stateMu.Lock()
-	defer i.stateMu.Unlock()
-	i.state.Store(state)
-}
-
-// getState returns the current interface state
-func (i *linuxInterface) getState() InterfaceState {
-	return i.state.Load().(InterfaceState)
-}
-
-func New(name string, opts *Options) (Interface, error) {
+// newTUNAdapter creates a new TUN adapter
+func newTUNAdapter(opts *Options) (AdapterInterface, error) {
 	if opts == nil {
 		opts = DefaultOptions()
 	}
-	return newLinuxInterface(name, opts)
-}
 
-func newLinuxInterface(name string, opts *Options) (Interface, error) {
-	iface := &linuxInterface{
-		name: name,
-		opts: opts,
+	adapter := &tunAdapter{
+		opts:      opts,
+		state:     StateUninitialized,
+		closeChan: make(chan struct{}),
 	}
-	iface.state.Store(StateUninitialized)
 
-	if err := iface.initialize(); err != nil {
+	if err := adapter.initialize(); err != nil {
 		return nil, err
 	}
 
-	return iface, nil
+	return adapter, nil
 }
 
-func (i *linuxInterface) initialize() error {
-	if !i.transitionState(StateUninitialized, StateInitializing) {
-		return ErrInvalidStateTransition
+// Configure configures the adapter with new options
+func (i *tunAdapter) Configure(opts *Options) error {
+	if i.GetState() != StateStopped {
+		return fmt.Errorf("adapter must be stopped before reconfiguring")
 	}
 
-	// First, check if interface already exists and remove it
-	if _, err := os.Stat(fmt.Sprintf("/sys/class/net/%s", i.name)); err == nil {
-		if out, err := exec.Command("sudo", "ip", "tuntap", "del", "dev", i.name, "mode", "tun").CombinedOutput(); err != nil {
-			fmt.Printf("Warning: Failed to remove existing interface: %v (output: %s)\n", err, string(out))
-		}
-		time.Sleep(time.Second) // Wait for interface to be removed
+	i.opts = opts
+	return i.initialize()
+}
+
+// Read implements io.Reader
+func (i *tunAdapter) Read(p []byte) (n int, err error) {
+	if i.GetState() != StateReady {
+		return 0, ErrInterfaceNotReady
 	}
 
-	// Create TUN device
-	if out, err := exec.Command("sudo", "ip", "tuntap", "add", "dev", i.name, "mode", "tun").CombinedOutput(); err != nil {
-		i.setState(StateError)
-		return fmt.Errorf("failed to create TUN device: %w (output: %s)", err, string(out))
-	}
-
-	// Set ownership and permissions
-	if out, err := exec.Command("sudo", "chown", "root:sssonector", fmt.Sprintf("/sys/class/net/%s", i.name)).CombinedOutput(); err != nil {
-		i.setState(StateError)
-		return fmt.Errorf("failed to set interface ownership: %w (output: %s)", err, string(out))
-	}
-
-	if out, err := exec.Command("sudo", "chmod", "0660", fmt.Sprintf("/sys/class/net/%s", i.name)).CombinedOutput(); err != nil {
-		i.setState(StateError)
-		return fmt.Errorf("failed to set interface permissions: %w (output: %s)", err, string(out))
-	}
-
-	// Wait for interface to be created
-	ready := false
-	for attempt := 0; attempt < i.opts.RetryAttempts; attempt++ {
-		if _, err := os.Stat(fmt.Sprintf("/sys/class/net/%s", i.name)); err == nil {
-			ready = true
-			break
-		}
-		time.Sleep(time.Duration(i.opts.RetryDelay) * time.Millisecond)
-	}
-
-	if !ready {
-		i.setState(StateError)
-		return fmt.Errorf("interface failed to appear after creation")
-	}
-
-	// Open TUN device
-	file, err := os.OpenFile("/dev/net/tun", os.O_RDWR, 0)
+	n, err = i.file.Read(p)
 	if err != nil {
-		i.setState(StateError)
-		return fmt.Errorf("failed to open /dev/net/tun: %w", err)
+		atomic.AddUint64(&i.stats.Errors, 1)
+		return n, err
 	}
 
-	ifreq, err := createIfreq(i.name)
+	atomic.AddUint64(&i.stats.BytesReceived, uint64(n))
+	return n, nil
+}
+
+// Write implements io.Writer
+func (i *tunAdapter) Write(p []byte) (n int, err error) {
+	if i.GetState() != StateReady {
+		return 0, ErrInterfaceNotReady
+	}
+
+	n, err = i.file.Write(p)
 	if err != nil {
-		file.Close()
-		i.setState(StateError)
-		return err
+		atomic.AddUint64(&i.stats.Errors, 1)
+		return n, err
 	}
 
-	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, file.Fd(), uintptr(TUNSETIFF), uintptr(unsafe.Pointer(&ifreq[0])))
-	if errno != 0 {
-		file.Close()
-		i.setState(StateError)
-		return fmt.Errorf("failed to create TUN interface: %v", errno)
-	}
-
-	// Ensure interface is down before configuration
-	if out, err := exec.Command("sudo", "ip", "link", "set", "dev", i.name, "down").CombinedOutput(); err != nil {
-		file.Close()
-		i.setState(StateError)
-		return fmt.Errorf("failed to bring interface down: %w (output: %s)", err, string(out))
-	}
-
-	// Set interface ownership
-	if out, err := exec.Command("sudo", "chown", "sssonector:sssonector", fmt.Sprintf("/dev/net/tun")).CombinedOutput(); err != nil {
-		file.Close()
-		i.setState(StateError)
-		return fmt.Errorf("failed to set TUN device ownership: %w (output: %s)", err, string(out))
-	}
-
-	i.file = file
-	i.mtu = 1500 // Default MTU
-	i.setState(StateReady)
-	return nil
+	atomic.AddUint64(&i.stats.BytesSent, uint64(n))
+	return n, nil
 }
 
-func createIfreq(name string) ([]byte, error) {
-	var ifreq [40]byte
-	copy(ifreq[:16], []byte(name))
-	*(*uint16)(unsafe.Pointer(&ifreq[16])) = IFF_TUN | IFF_NO_PI
-	return ifreq[:], nil
-}
+// Close implements io.Closer
+func (i *tunAdapter) Close() error {
+	var err error
+	i.closeOnce.Do(func() {
+		i.setState(StateStopping)
 
-func (i *linuxInterface) Configure(cfg *Config) error {
-	if state := i.getState(); state != StateReady {
-		return fmt.Errorf("%w: current state %s", ErrInterfaceNotReady, state)
-	}
-
-	// Parse IP address and network to validate format
-	if _, _, err := net.ParseCIDR(cfg.Address); err != nil {
-		i.setState(StateError)
-		return fmt.Errorf("invalid address format: %w", err)
-	}
-
-	// Configure with retries
-	configured := false
-	var lastErr error
-	for attempt := 0; attempt < i.opts.RetryAttempts; attempt++ {
-		if err := i.applyConfiguration(cfg); err == nil {
-			configured = true
-			break
-		} else {
-			lastErr = err
-			time.Sleep(time.Duration(i.opts.RetryDelay) * time.Millisecond)
+		// Close file descriptor
+		if i.file != nil {
+			err = i.file.Close()
+			if err != nil {
+				i.setError(fmt.Errorf("failed to close file: %w", err))
+			}
 		}
-	}
 
-	if !configured {
-		i.setState(StateError)
-		return fmt.Errorf("configuration failed after %d attempts: %v", i.opts.RetryAttempts, lastErr)
-	}
-
-	i.address = cfg.Address
-	i.mtu = cfg.MTU
-	i.isUp = true
-
-	return nil
+		close(i.closeChan)
+		i.setState(StateStopped)
+	})
+	return err
 }
 
-func (i *linuxInterface) applyConfiguration(cfg *Config) error {
-	// Verify interface exists
-	if _, err := os.Stat(fmt.Sprintf("/sys/class/net/%s", i.name)); err != nil {
-		return fmt.Errorf("interface does not exist: %w", err)
-	}
+// Cleanup performs cleanup operations
+func (i *tunAdapter) Cleanup() error {
+	// Set cleanup state
+	i.setState(StateStopping)
 
-	// Set MTU first
-	if out, err := exec.Command("sudo", "ip", "link", "set", "dev", i.name, "mtu", fmt.Sprintf("%d", cfg.MTU)).CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to set MTU: %w (output: %s)", err, string(out))
-	}
+	// Create cleanup timeout context
+	ctx, cancel := context.WithTimeout(context.Background(), i.opts.CleanupTimeout)
+	defer cancel()
 
-	// Set IP address
-	if out, err := exec.Command("sudo", "ip", "addr", "add", cfg.Address, "dev", i.name).CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to set IP address: %w (output: %s)", err, string(out))
-	}
-
-	// Bring interface up last
-	if out, err := exec.Command("sudo", "ip", "link", "set", "dev", i.name, "up").CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to bring interface up: %w (output: %s)", err, string(out))
-	}
-
-	// Verify configuration
-	if i.opts.ValidateState {
-		out, err := exec.Command("sudo", "ip", "addr", "show", "dev", i.name).CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("failed to validate interface configuration: %w (output: %s)", err, string(out))
-		}
-		fmt.Printf("Interface %s configuration: %s\n", i.name, string(out))
-	}
-
-	return nil
-}
-
-func (i *linuxInterface) Read(p []byte) (int, error) {
-	return i.file.Read(p)
-}
-
-func (i *linuxInterface) Write(p []byte) (int, error) {
-	return i.file.Write(p)
-}
-
-func (i *linuxInterface) Close() error {
-	if i.file != nil {
-		return i.file.Close()
-	}
-	return nil
-}
-
-func (i *linuxInterface) GetName() string {
-	return i.name
-}
-
-func (i *linuxInterface) GetMTU() int {
-	return i.mtu
-}
-
-func (i *linuxInterface) GetAddress() string {
-	return i.address
-}
-
-func (i *linuxInterface) IsUp() bool {
-	return i.isUp
-}
-
-func (i *linuxInterface) Cleanup() error {
-	if !i.transitionState(StateReady, StateStopping) {
-		return ErrInvalidStateTransition
-	}
-
-	// Create cleanup channel with timeout
+	// Create done channel
 	done := make(chan error, 1)
+
+	// Run cleanup in goroutine
 	go func() {
-		done <- i.performCleanup()
+		// Close adapter
+		err := i.Close()
+		if err != nil {
+			done <- fmt.Errorf("failed to close adapter: %w", err)
+			return
+		}
+
+		// Delete interface
+		if err := deleteInterface(i.opts.Name); err != nil {
+			done <- fmt.Errorf("failed to delete interface: %w", err)
+			return
+		}
+
+		done <- nil
 	}()
 
-	// Wait for cleanup with timeout
+	// Wait for cleanup or timeout
 	select {
 	case err := <-done:
 		if err != nil {
+			i.setError(err)
 			i.setState(StateError)
 			return err
 		}
 		i.setState(StateStopped)
 		return nil
-	case <-time.After(time.Duration(i.opts.CleanupTimeout) * time.Millisecond):
+	case <-ctx.Done():
+		i.setError(ErrCleanupTimeout)
 		i.setState(StateError)
 		return ErrCleanupTimeout
 	}
 }
 
-func (i *linuxInterface) performCleanup() error {
-	if i.isUp {
-		// Bring interface down
-		if out, err := exec.Command("sudo", "ip", "link", "set", "dev", i.name, "down").CombinedOutput(); err != nil {
-			return fmt.Errorf("failed to bring interface down: %w (output: %s)", err, string(out))
-		}
+// GetAddress returns the interface address
+func (i *tunAdapter) GetAddress() string {
+	return i.opts.Address
+}
 
-		// Remove IP address with retries
-		for attempt := 0; attempt < i.opts.RetryAttempts; attempt++ {
-			out, err := exec.Command("sudo", "ip", "addr", "del", i.address, "dev", i.name).CombinedOutput()
-			if err == nil {
-				break
-			} else if attempt == i.opts.RetryAttempts-1 {
-				return fmt.Errorf("failed to remove IP address after %d attempts: %w (output: %s)", i.opts.RetryAttempts, err, string(out))
-			}
-			time.Sleep(time.Duration(i.opts.RetryDelay) * time.Millisecond)
-		}
+// GetState returns the current state
+func (i *tunAdapter) GetState() State {
+	i.stateMu.RLock()
+	defer i.stateMu.RUnlock()
+	return i.state
+}
 
-		// Delete the TUN interface
-		if out, err := exec.Command("sudo", "ip", "tuntap", "del", "dev", i.name, "mode", "tun").CombinedOutput(); err != nil {
-			return fmt.Errorf("failed to delete TUN interface: %w (output: %s)", err, string(out))
-		}
+// GetStatus returns the current status
+func (i *tunAdapter) GetStatus() Status {
+	return Status{
+		State:      i.GetState(),
+		Statistics: i.GetStatistics(),
+		LastError:  i.lastError,
+	}
+}
 
-		i.isUp = false
+// GetStatistics returns the current statistics
+func (i *tunAdapter) GetStatistics() Statistics {
+	return Statistics{
+		BytesReceived:  atomic.LoadUint64(&i.stats.BytesReceived),
+		BytesSent:      atomic.LoadUint64(&i.stats.BytesSent),
+		PacketsDropped: atomic.LoadUint64(&i.stats.PacketsDropped),
+		Errors:         atomic.LoadUint64(&i.stats.Errors),
+	}
+}
+
+// setState sets the adapter state
+func (i *tunAdapter) setState(state State) {
+	i.stateMu.Lock()
+	defer i.stateMu.Unlock()
+	i.state = state
+}
+
+// setError sets the last error
+func (i *tunAdapter) setError(err error) {
+	i.stateMu.Lock()
+	defer i.stateMu.Unlock()
+	i.lastError = err
+}
+
+// createInterface creates the TUN interface
+func (i *tunAdapter) createInterface() error {
+	// Open TUN device
+	file, err := os.OpenFile(tunDevice, os.O_RDWR, 0)
+	if err != nil {
+		return fmt.Errorf("failed to open TUN device: %w", err)
 	}
 
-	return i.Close()
+	// Create interface request
+	var ifr [ifReqSize]byte
+	copy(ifr[:], i.opts.Name)
+	*(*uint16)(unsafe.Pointer(&ifr[16])) = syscall.IFF_TUN | syscall.IFF_NO_PI
+
+	// Set interface flags
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, file.Fd(), uintptr(TUNSETIFF), uintptr(unsafe.Pointer(&ifr[0])))
+	if errno != 0 {
+		file.Close()
+		return fmt.Errorf("failed to set interface flags: %w", errno)
+	}
+
+	i.file = file
+	return nil
+}
+
+// deleteInterface deletes the network interface
+func deleteInterface(name string) error {
+	// Create socket
+	sock, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_DGRAM, 0)
+	if err != nil {
+		return fmt.Errorf("failed to create socket: %w", err)
+	}
+	defer syscall.Close(sock)
+
+	// Create interface request
+	var ifr [ifReqSize]byte
+	copy(ifr[:], name)
+
+	// Delete interface
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(sock), syscall.SIOCDIFADDR, uintptr(unsafe.Pointer(&ifr[0])))
+	if errno != 0 {
+		return fmt.Errorf("failed to delete interface: %w", errno)
+	}
+
+	return nil
+}
+
+// initialize initializes the adapter
+func (i *tunAdapter) initialize() error {
+	i.setState(StateInitializing)
+
+	// Create interface
+	if err := i.createInterface(); err != nil {
+		i.setError(err)
+		i.setState(StateError)
+		return err
+	}
+
+	i.setState(StateReady)
+	return nil
 }

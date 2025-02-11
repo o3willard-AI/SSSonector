@@ -2,22 +2,19 @@ package tunnel
 
 import (
 	"net"
-	"strings"
 	"time"
 
 	"github.com/o3willard-AI/SSSonector/internal/adapter"
 )
 
-// adapterWrapper wraps an adapter.Interface to implement net.Conn
+// adapterWrapper wraps an adapter.AdapterInterface to implement net.Conn
 type adapterWrapper struct {
-	adapter adapter.Interface
+	adapter adapter.AdapterInterface
 }
 
 // NewAdapterWrapper creates a new adapter wrapper
-func NewAdapterWrapper(adapter adapter.Interface) net.Conn {
-	return &adapterWrapper{
-		adapter: adapter,
-	}
+func NewAdapterWrapper(adapter adapter.AdapterInterface) net.Conn {
+	return &adapterWrapper{adapter: adapter}
 }
 
 func (w *adapterWrapper) Read(b []byte) (n int, err error) {
@@ -33,30 +30,28 @@ func (w *adapterWrapper) Close() error {
 }
 
 func (w *adapterWrapper) LocalAddr() net.Addr {
-	// Handle CIDR format addresses
-	addr := w.adapter.GetAddress()
-	if strings.Contains(addr, "/") {
-		addr = strings.Split(addr, "/")[0]
-	}
-	return &net.IPAddr{IP: net.ParseIP(addr)}
+	return &net.IPAddr{IP: net.ParseIP(w.adapter.GetAddress())}
 }
 
 func (w *adapterWrapper) RemoteAddr() net.Addr {
-	// Remote address is not applicable for adapter
-	return nil
+	// For TUN devices, local and remote addresses are the same
+	return w.LocalAddr()
 }
 
 func (w *adapterWrapper) SetDeadline(t time.Time) error {
-	// Deadlines not supported for adapter
+	// TUN devices don't support deadlines
 	return nil
 }
 
 func (w *adapterWrapper) SetReadDeadline(t time.Time) error {
-	// Read deadlines not supported for adapter
+	// TUN devices don't support deadlines
 	return nil
 }
 
 func (w *adapterWrapper) SetWriteDeadline(t time.Time) error {
-	// Write deadlines not supported for adapter
+	// TUN devices don't support deadlines
 	return nil
 }
+
+// Ensure adapterWrapper implements net.Conn
+var _ net.Conn = &adapterWrapper{}
