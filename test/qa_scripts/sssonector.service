@@ -1,29 +1,33 @@
 [Unit]
 Description=SSSonector Secure Tunnel Service
-Documentation=https://github.com/o3willard-AI/SSSonector/docs
-After=network-online.target
-Wants=network-online.target
+After=network.target
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-ExecStartPre=/bin/mkdir -p /var/log/sssonector /var/lib/sssonector /var/run/sssonector
-ExecStartPre=/bin/chown -R sssonector:sssonector /var/log/sssonector /var/lib/sssonector /var/run/sssonector
-ExecStartPre=/bin/chmod -R 755 /var/log/sssonector /var/lib/sssonector /var/run/sssonector
+User=root
+Group=root
+RuntimeDirectory=sssonector
+RuntimeDirectoryMode=0770
+ExecStartPre=-/usr/sbin/ip link delete tun0
+ExecStartPre=/usr/sbin/ip tuntap add dev tun0 mode tun user root
+ExecStartPre=/usr/sbin/ip link set tun0 up
 ExecStart=/usr/local/bin/sssonector -config /etc/sssonector/config.yaml
-ExecReload=/bin/kill -HUP $MAINPID
-Restart=on-failure
-RestartSec=5s
+ExecStopPost=-/usr/sbin/ip link delete tun0
+Restart=always
+RestartSec=1
+StandardOutput=journal
+StandardError=journal
 
-User=sssonector
-Group=sssonector
-AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
-PrivateTmp=true
-ReadWritePaths=/var/lib/sssonector /var/run/sssonector /dev/net/tun /var/log/sssonector
-
-# Resource limits
-LimitNOFILE=65535
-LimitNPROC=4096
+# Security settings
+ProtectSystem=no
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=no
+DevicePolicy=closed
+DeviceAllow=/dev/net/tun rw
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE
 
 [Install]
 WantedBy=multi-user.target

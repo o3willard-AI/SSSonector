@@ -7,26 +7,28 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/o3willard-AI/SSSonector/internal/config"
+	"github.com/o3willard-AI/SSSonector/internal/config/interfaces"
+	"github.com/o3willard-AI/SSSonector/internal/config/types"
 	"github.com/o3willard-AI/SSSonector/internal/tunnel"
 	"go.uber.org/zap"
 )
 
 // Server represents a tunnel server
 type Server struct {
-	config  *config.AppConfig
-	manager config.ConfigManager
+	config  *types.AppConfig
+	manager interfaces.ConfigManager
 	logger  *zap.Logger
 	tunnel  tunnel.Tunnel
 }
 
 // NewServer creates a new tunnel server
-func NewServer(cfg *config.AppConfig, manager config.ConfigManager, logger *zap.Logger) (*Server, error) {
+func NewServer(cfg *types.AppConfig, manager interfaces.ConfigManager, logger *zap.Logger) (*Server, error) {
+	t := tunnel.NewServer(cfg, manager, logger)
 	return &Server{
 		config:  cfg,
 		manager: manager,
 		logger:  logger,
-		tunnel:  tunnel.NewServer(cfg, manager, logger),
+		tunnel:  t,
 	}, nil
 }
 

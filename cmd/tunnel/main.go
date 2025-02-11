@@ -7,7 +7,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/o3willard-AI/SSSonector/internal/config"
+	"github.com/o3willard-AI/SSSonector/internal/config/store"
+	"github.com/o3willard-AI/SSSonector/internal/config/types"
 	"github.com/o3willard-AI/SSSonector/internal/tunnel"
 	"go.uber.org/zap"
 )
@@ -40,16 +41,11 @@ func main() {
 		configPath = "/etc/sssonector/config.yaml"
 	}
 
-	// Create configuration manager
-	manager := config.CreateManager(filepath.Dir(configPath))
-
-	// Copy config file to manager's directory if it's not already there
-	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
-		logger.Fatal("Failed to create config directory", zap.Error(err))
-	}
+	// Create configuration store
+	configStore := store.NewFileStore(filepath.Dir(configPath))
 
 	// Load configuration
-	appCfg, err := manager.Get()
+	appCfg, err := configStore.Load()
 	if err != nil {
 		logger.Fatal("Failed to load configuration",
 			zap.String("path", configPath),
@@ -59,8 +55,8 @@ func main() {
 
 	// Set server type if not already set
 	if appCfg.Type == "" {
-		appCfg.Type = config.TypeServer
-		if err := manager.Set(appCfg); err != nil {
+		appCfg.Type = types.TypeServer
+		if err := configStore.Store(appCfg); err != nil {
 			logger.Fatal("Failed to set configuration type", zap.Error(err))
 		}
 	}
@@ -76,14 +72,14 @@ func main() {
 	}
 
 	if appCfg.Config == nil {
-		appCfg.Config = &config.Config{Mode: string(appCfg.Type)}
+		appCfg.Config = &types.Config{Mode: string(appCfg.Type)}
 	}
 
 	switch appCfg.Config.Mode {
-	case string(config.TypeServer):
-		t, err = NewServer(appCfg, manager, logger)
-	case string(config.TypeClient):
-		t, err = NewClient(appCfg, manager, logger)
+	case string(types.TypeServer):
+		t, err = NewServer(appCfg, configStore, logger)
+	case string(types.TypeClient):
+		t, err = NewClient(appCfg, configStore, logger)
 	default:
 		logger.Fatal("Invalid mode", zap.String("mode", appCfg.Config.Mode))
 	}

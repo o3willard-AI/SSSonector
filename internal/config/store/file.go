@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"gopkg.in/yaml.v2"
 
@@ -17,11 +19,16 @@ import (
 // FileStore implements ConfigStore interface for file-based storage
 type FileStore struct {
 	configDir string
+	watchers  []chan<- *types.AppConfig
+	mu        sync.RWMutex
 }
 
 // NewFileStore creates a new FileStore instance
 func NewFileStore(configDir string) *FileStore {
-	return &FileStore{configDir: configDir}
+	return &FileStore{
+		configDir: configDir,
+		watchers:  make([]chan<- *types.AppConfig, 0),
+	}
 }
 
 // Load loads configuration from file
@@ -57,6 +64,16 @@ func (s *FileStore) Store(config *types.AppConfig) error {
 		return fmt.Errorf("failed to write config file: %v", err)
 	}
 
+	// Notify watchers
+	s.mu.RLock()
+	for _, w := range s.watchers {
+		select {
+		case w <- config:
+		default:
+		}
+	}
+	s.mu.RUnlock()
+
 	return nil
 }
 
@@ -89,4 +106,54 @@ func (s *FileStore) ListVersions(configType types.Type) ([]string, error) {
 
 	sort.Strings(versions)
 	return versions, nil
+}
+
+// Close implements io.Closer
+func (s *FileStore) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, w := range s.watchers {
+		close(w)
+	}
+	s.watchers = nil
+	return nil
+}
+
+// Get returns the current configuration
+func (s *FileStore) Get() (*types.AppConfig, error) {
+	return s.Load()
+}
+
+// Set updates the current configuration
+func (s *FileStore) Set(config *types.AppConfig) error {
+	return s.Store(config)
+}
+
+// Update updates the configuration with the provided config
+func (s *FileStore) Update(config *types.AppConfig) error {
+	return s.Store(config)
+}
+
+// Watch returns a channel that receives configuration updates
+func (s *FileStore) Watch() (<-chan *types.AppConfig, error) {
+	ch := make(chan *types.AppConfig, 1)
+
+	s.mu.Lock()
+	s.watchers = append(s.watchers, ch)
+	s.mu.Unlock()
+
+	// Send initial configuration
+	cfg, err := s.Load()
+	if err != nil {
+		return nil, err
+	}
+
+	select {
+	case ch <- cfg:
+	case <-time.After(time.Second):
+		return nil, fmt.Errorf("timeout sending initial configuration")
+	}
+
+	return ch, nil
 }

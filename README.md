@@ -17,20 +17,18 @@ SSSonector is a high-performance, secure tunnel service with advanced monitoring
 - macOS: Basic support (future TUN implementation)
 
 ### Monitoring
-- SNMP v2c monitoring
-- Custom MIB implementation
+- Basic and advanced monitoring modes
 - Real-time metrics collection
 - System resource monitoring
 - Prometheus integration
 - Grafana dashboards
 
-### Rate Limiting
-- Token bucket algorithm
-- Per-connection limits
-- Global rate limiting
-- Dynamic rate adjustment
-- Burst allowance
-- Fair queuing support
+### Security
+- TLS 1.2/1.3 support
+- Strong cipher suites
+- Memory protection features
+- Namespace isolation
+- Capability restrictions
 
 ### Performance
 - Optimized buffer management
@@ -73,47 +71,103 @@ sudo mv sssonector_2.0.0_darwin_* /usr/local/bin/sssonector
 
 #### Server Setup
 ```yaml
-mode: "server"
-network:
-  interface: "tun0"
-  address: "10.0.0.1/24"
-  mtu: 1500
-tunnel:
-  cert_file: "/etc/sssonector/certs/server.crt"
-  key_file: "/etc/sssonector/certs/server.key"
-  ca_file: "/etc/sssonector/certs/ca.crt"
-  listen_address: "0.0.0.0"
-  listen_port: 8443
-monitor:
-  enabled: true
-  snmp_enabled: true
-  snmp_port: 10161
+type: server
+config:
+  mode: server
+  network:
+    name: tun0
+    interface: tun0
+    address: 10.0.0.1/24
+    mtu: 1500
+  tunnel:
+    listen_port: 8443
+    protocol: tcp
+    cert_file: /etc/sssonector/certs/server.crt
+    key_file: /etc/sssonector/certs/server.key
+    ca_file: /etc/sssonector/certs/ca.crt
+    listen_address: 0.0.0.0
+    max_clients: 10
+  security:
+    memory_protections:
+      enabled: true
+    namespace:
+      enabled: true
+    capabilities:
+      enabled: true
+    tls:
+      min_version: "1.2"
+      max_version: "1.3"
+      ciphers:
+        - TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
+        - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+  monitor:
+    enabled: true
+    type: basic
+    interval: 1s
+  metrics:
+    enabled: true
+    address: 127.0.0.1:9091
+    interval: 5s
+    buffer_size: 1000
+version: 1.0.0
+metadata:
+  version: 1.0.0
+  environment: development
+  region: local
 throttle:
-  enabled: true
-  rate_limit: 10485760  # 10 MB/s
-  burst_limit: 20971520 # 20 MB burst
+  enabled: false
+  rate: 1048576
+  burst: 1048576
 ```
 
 #### Client Setup
 ```yaml
-mode: "client"
-network:
-  interface: "tun0"
-  address: "10.0.0.2/24"
-  mtu: 1500
-tunnel:
-  cert_file: "/etc/sssonector/certs/client.crt"
-  key_file: "/etc/sssonector/certs/client.key"
-  ca_file: "/etc/sssonector/certs/ca.crt"
-  server_address: "server.example.com"
-  server_port: 8443
-monitor:
-  enabled: true
-  log_file: "/var/log/sssonector/client.log"
+type: client
+config:
+  mode: client
+  network:
+    name: tun0
+    interface: tun0
+    address: 10.0.0.2/24
+    mtu: 1500
+  tunnel:
+    server_port: 8443
+    protocol: tcp
+    cert_file: /etc/sssonector/certs/client.crt
+    key_file: /etc/sssonector/certs/client.key
+    ca_file: /etc/sssonector/certs/ca.crt
+    server_address: 192.168.50.210
+  security:
+    memory_protections:
+      enabled: true
+    namespace:
+      enabled: true
+    capabilities:
+      enabled: true
+    tls:
+      min_version: "1.2"
+      max_version: "1.3"
+      ciphers:
+        - TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
+        - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+  monitor:
+    enabled: true
+    type: basic
+    interval: 1s
+  metrics:
+    enabled: true
+    address: 127.0.0.1:9091
+    interval: 5s
+    buffer_size: 1000
+version: 1.0.0
+metadata:
+  version: 1.0.0
+  environment: development
+  region: local
 throttle:
-  enabled: true
-  rate_limit: 5242880   # 5 MB/s
-  burst_limit: 10485760 # 10 MB burst
+  enabled: false
+  rate: 1048576
+  burst: 1048576
 ```
 
 ### Running the Service
@@ -153,7 +207,7 @@ Get-EventLog -LogName Application -Source "SSonector"
   - [Linux Installation](docs/linux_install.md)
   - [Windows Installation](docs/windows_install.md)
   - [macOS Installation](docs/macos_install.md)
-- [SNMP Monitoring](docs/snmp_monitoring.md)
+- [Monitoring Guide](docs/monitoring_guide.md)
 - [Rate Limiting Implementation](docs/rate_limiting_implementation.md)
 - [Release Notes](docs/RELEASE_NOTES.md)
 
