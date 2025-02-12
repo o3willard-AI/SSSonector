@@ -1,0 +1,21 @@
+type: server
+config:
+  mode: server
+  logging:
+    level: debug
+    file: /var/log/sssonector/server.log
+    format: text
+  auth:
+    cert_file: /etc/sssonector/certs/server.crt
+    key_file: /etc/sssonector/certs/server.key
+    ca_file: /etc/sssonector/certs/ca.crt
+  network:
+    name: tun0
+    interface: tun0
+    address: 10.0.0.1/24
+    mtu: 1500
+  tunnel:
+    listen_port: 8443
+    protocol: tcp
+    listen_address: 0.0.0.0
+version: 1.0.0

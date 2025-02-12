@@ -1,0 +1,59 @@
+#!/bin/bash
+set -e
+
+# Check if running as root
+if [ "$EUID" -ne 0 ]; then
+  echo "Please run as root"
+  exit 1
+fi
+
+# Ensure TUN module is loaded
+if ! lsmod | grep -q "^tun"; then
+  echo "Loading TUN module..."
+  modprobe tun || { echo "Failed to load TUN module"; exit 1; }
+fi
+
+# Clean up existing interfaces
+if ip link show tun0 >/dev/null 2>&1; then
+  echo "Cleaning up existing tun0 interface..."
+  ip link delete tun0 || true
+fi
+
+# Set up permissions
+if [ ! -e /dev/net/tun ]; then
+  echo "Creating /dev/net/tun..."
+  mkdir -p /dev/net
+  mknod /dev/net/tun c 10 200
+fi
+
+echo "Setting TUN device permissions..."
+chown root:sssonector /dev/net/tun
+chmod 0660 /dev/net/tun
+
+# Set capabilities
+echo "Setting capabilities..."
+setcap cap_net_admin,cap_net_raw,cap_net_bind_service+ep /usr/local/bin/sssonector
+
+# Create log directory
+echo "Setting up logging..."
+mkdir -p /var/log/sssonector
+chown -R sssonector:sssonector /var/log/sssonector
+chmod 755 /var/log/sssonector
+
+# Check configuration
+if [ ! -f /etc/sssonector/config.yaml ]; then
+  echo "Configuration file not found at /etc/sssonector/config.yaml"
+  exit 1
+fi
+
+# Check certificates
+if [ ! -d /etc/sssonector/certs ]; then
+  echo "Certificates directory not found at /etc/sssonector/certs"
+  exit 1
+fi
+
+# Start server as sssonector user
+echo "Starting SSSonector server..."
+exec sudo -u sssonector \
+  SSSONECTOR_LOG=debug \
+  sssonector -config /etc/sssonector/config.yaml
