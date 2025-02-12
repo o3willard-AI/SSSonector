@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/o3willard-AI/SSSonector/internal/config"
+	"github.com/o3willard-AI/SSSonector/internal/config/types"
 	"go.uber.org/zap"
 )
 
@@ -20,7 +20,7 @@ type DynamicLimiter struct {
 }
 
 // NewDynamicLimiter creates a new dynamic rate limiter
-func NewDynamicLimiter(cfg *config.AppConfig, limiter *Limiter, logger *zap.Logger) *DynamicLimiter {
+func NewDynamicLimiter(cfg *types.AppConfig, limiter *Limiter, logger *zap.Logger) *DynamicLimiter {
 	baseRate := float64(cfg.Throttle.Rate)
 	dl := &DynamicLimiter{
 		Limiter:    limiter,

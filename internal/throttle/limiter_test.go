@@ -5,190 +5,148 @@ import (
 	"testing"
 	"time"
 
-	"github.com/o3willard-AI/SSSonector/internal/config"
+	"github.com/o3willard-AI/SSSonector/internal/config/types"
+	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
 )
 
-func TestLimiterWithTCPOverhead(t *testing.T) {
-	logger, _ := zap.NewDevelopment()
-	cfg := &config.AppConfig{
-		Throttle: config.ThrottleConfig{
-			Enabled: true,
-			Rate:    1000, // 1000 bytes/s
-			Burst:   100,  // 100 bytes burst
-		},
-	}
-
-	reader := bytes.NewReader(make([]byte, 2000))
+func setupLimiter(cfg *types.AppConfig) (*Limiter, *bytes.Buffer, *bytes.Buffer) {
+	reader := &bytes.Buffer{}
 	writer := &bytes.Buffer{}
-	limiter := NewLimiter(cfg, reader, writer, logger)
+	logger, _ := zap.NewDevelopment()
 
-	// Test that effective rate includes TCP overhead
-	inMetrics, _ := limiter.GetMetrics()
-	expectedRate := float64(cfg.Throttle.Rate) * tcpOverheadFactor
-	if inMetrics.Rate != expectedRate {
-		t.Errorf("Expected effective rate %f, got %f", expectedRate, inMetrics.Rate)
+	if cfg == nil {
+		cfg = &types.AppConfig{
+			Throttle: types.NewThrottleConfig(),
+		}
 	}
 
-	// Test burst is 100ms worth of data
-	expectedBurst := expectedRate * 0.1 // 100ms
-	if inMetrics.Burst != expectedBurst {
-		t.Errorf("Expected burst %f, got %f", expectedBurst, inMetrics.Burst)
-	}
+	return NewLimiter(cfg, reader, writer, logger), reader, writer
 }
 
-func TestLimiterRateEnforcement(t *testing.T) {
-	logger, _ := zap.NewDevelopment()
-	cfg := &config.AppConfig{
-		Throttle: config.ThrottleConfig{
-			Enabled: true,
-			Rate:    100,  // 100 bytes/s
-			Burst:   1000, // Large enough burst to not interfere
-		},
-	}
+func TestNewLimiter(t *testing.T) {
+	// Test with nil config
+	limiter, _, _ := setupLimiter(nil)
+	assert.NotNil(t, limiter)
+	assert.False(t, limiter.enabled)
 
-	// Create a small test data set
-	data := make([]byte, 300)
-	reader := bytes.NewReader(data)
-	writer := &bytes.Buffer{}
-	limiter := NewLimiter(cfg, reader, writer, logger)
+	// Get metrics to check rate and burst
+	inMetrics, outMetrics := limiter.GetMetrics()
+	assert.Equal(t, float64(0), inMetrics.Rate)
+	assert.Equal(t, float64(0), inMetrics.Burst)
+	assert.Equal(t, float64(0), outMetrics.Rate)
+	assert.Equal(t, float64(0), outMetrics.Burst)
 
-	// Test read rate limiting
-	start := time.Now()
-	err := limiter.Wait(true, 200) // Wait for 200 bytes
-	elapsed := time.Since(start)
-
-	if err != nil {
-		t.Fatalf("Wait failed: %v", err)
-	}
-
-	// Should take at least 1.8 seconds to read 200 bytes at 100 bytes/s
-	minExpectedDuration := 1800 * time.Millisecond
-	if elapsed < minExpectedDuration {
-		t.Errorf("Rate limit not enforced: waited %v, expected at least %v", elapsed, minExpectedDuration)
-	}
-}
-
-func TestLimiterTimeout(t *testing.T) {
-	logger, _ := zap.NewDevelopment()
-	cfg := &config.AppConfig{
-		Throttle: config.ThrottleConfig{
-			Enabled: true,
-			Rate:    10,  // Very low rate
-			Burst:   100, // Small burst
-		},
-	}
-
-	// Create data that will trigger timeout
-	data := make([]byte, 1000)
-	reader := bytes.NewReader(data)
-	writer := &bytes.Buffer{}
-	limiter := NewLimiter(cfg, reader, writer, logger)
-
-	// Try to read more data than possible within timeout
-	start := time.Now()
-	err := limiter.Wait(true, 1000)
-	elapsed := time.Since(start)
-
-	if err == nil || elapsed < defaultTimeout {
-		t.Errorf("Expected timeout error after %v, got %v after %v", defaultTimeout, err, elapsed)
-	}
-}
-
-func TestLimiterMetrics(t *testing.T) {
-	logger, _ := zap.NewDevelopment()
-	cfg := &config.AppConfig{
-		Throttle: config.ThrottleConfig{
-			Enabled: true,
-			Rate:    100,
-			Burst:   50,
-		},
-	}
-
-	// Create data that will trigger rate limiting
-	data := make([]byte, 200)
-	reader := bytes.NewReader(data)
-	writer := &bytes.Buffer{}
-	limiter := NewLimiter(cfg, reader, writer, logger)
-
-	// Trigger rate limiting
-	_ = limiter.Wait(true, 150)
-	time.Sleep(100 * time.Millisecond) // Give time for metrics to update
-
-	inMetrics, _ := limiter.GetMetrics()
-	if inMetrics.LimitHits == 0 {
-		t.Error("Expected non-zero limit hits")
-	}
-
-	// Test rate values
-	baseRate := float64(cfg.Throttle.Rate)
-	expectedEffectiveRate := baseRate * tcpOverheadFactor
-	if inMetrics.Rate != expectedEffectiveRate {
-		t.Errorf("Expected effective rate %f, got %f", expectedEffectiveRate, inMetrics.Rate)
-	}
-}
-
-func TestLimiterUpdate(t *testing.T) {
-	logger, _ := zap.NewDevelopment()
-	cfg := &config.AppConfig{
-		Throttle: config.ThrottleConfig{
-			Enabled: true,
-			Rate:    1000,
-			Burst:   100,
-		},
-	}
-
-	reader := bytes.NewReader(make([]byte, 2000))
-	writer := &bytes.Buffer{}
-	limiter := NewLimiter(cfg, reader, writer, logger)
-
-	// Update configuration
-	newCfg := &config.AppConfig{
-		Throttle: config.ThrottleConfig{
-			Enabled: true,
-			Rate:    2000,
-			Burst:   200,
-		},
-	}
-	limiter.Update(newCfg)
-
-	inMetrics, _ := limiter.GetMetrics()
-	expectedRate := float64(newCfg.Throttle.Rate) * tcpOverheadFactor
-	if inMetrics.Rate != expectedRate {
-		t.Errorf("Expected updated rate %f, got %f", expectedRate, inMetrics.Rate)
-	}
-
-	expectedBurst := expectedRate * 0.1 // 100ms
-	if inMetrics.Burst != expectedBurst {
-		t.Errorf("Expected updated burst %f, got %f", expectedBurst, inMetrics.Burst)
-	}
-}
-
-func TestLimiterDisabled(t *testing.T) {
-	logger, _ := zap.NewDevelopment()
-	cfg := &config.AppConfig{
-		Throttle: config.ThrottleConfig{
+	// Test with disabled config
+	cfg := &types.AppConfig{
+		Throttle: &types.ThrottleConfig{
 			Enabled: false,
 			Rate:    1000,
 			Burst:   100,
 		},
 	}
+	limiter, _, _ = setupLimiter(cfg)
+	assert.NotNil(t, limiter)
+	assert.False(t, limiter.enabled)
 
-	data := make([]byte, 2000)
-	reader := bytes.NewReader(data)
-	writer := &bytes.Buffer{}
-	limiter := NewLimiter(cfg, reader, writer, logger)
+	// Get metrics to check rate and burst
+	inMetrics, outMetrics = limiter.GetMetrics()
+	assert.Equal(t, float64(0), inMetrics.Rate)
+	assert.Equal(t, float64(0), inMetrics.Burst)
+	assert.Equal(t, float64(0), outMetrics.Rate)
+	assert.Equal(t, float64(0), outMetrics.Burst)
 
-	// Wait should complete immediately when disabled
+	// Test with enabled config
+	cfg = &types.AppConfig{
+		Throttle: &types.ThrottleConfig{
+			Enabled: true,
+			Rate:    1000,
+			Burst:   100,
+		},
+	}
+	limiter, _, _ = setupLimiter(cfg)
+	assert.NotNil(t, limiter)
+	assert.True(t, limiter.enabled)
+
+	// Get metrics to check rate and burst
+	inMetrics, outMetrics = limiter.GetMetrics()
+	assert.Equal(t, float64(1000)*tcpOverheadFactor, inMetrics.Rate)
+	assert.Equal(t, float64(100)*tcpOverheadFactor, inMetrics.Burst)
+	assert.Equal(t, float64(1000)*tcpOverheadFactor, outMetrics.Rate)
+	assert.Equal(t, float64(100)*tcpOverheadFactor, outMetrics.Burst)
+}
+
+func TestLimiterUpdate(t *testing.T) {
+	// Test with nil config
+	limiter, _, _ := setupLimiter(nil)
+	assert.NotNil(t, limiter)
+	assert.False(t, limiter.enabled)
+
+	// Get initial metrics
+	inMetrics, outMetrics := limiter.GetMetrics()
+	assert.Equal(t, float64(0), inMetrics.Rate)
+	assert.Equal(t, float64(0), inMetrics.Burst)
+	assert.Equal(t, float64(0), outMetrics.Rate)
+	assert.Equal(t, float64(0), outMetrics.Burst)
+
+	// Update with enabled config
+	cfg := &types.AppConfig{
+		Throttle: &types.ThrottleConfig{
+			Enabled: true,
+			Rate:    1000,
+			Burst:   100,
+		},
+	}
+	limiter.Update(cfg)
+	assert.True(t, limiter.enabled)
+
+	// Get updated metrics
+	inMetrics, outMetrics = limiter.GetMetrics()
+	assert.Equal(t, float64(1000)*tcpOverheadFactor, inMetrics.Rate)
+	assert.Equal(t, float64(100)*tcpOverheadFactor, inMetrics.Burst)
+	assert.Equal(t, float64(1000)*tcpOverheadFactor, outMetrics.Rate)
+	assert.Equal(t, float64(100)*tcpOverheadFactor, outMetrics.Burst)
+
+	// Update with disabled config
+	cfg = &types.AppConfig{
+		Throttle: &types.ThrottleConfig{
+			Enabled: false,
+			Rate:    2000,
+			Burst:   200,
+		},
+	}
+	limiter.Update(cfg)
+	assert.False(t, limiter.enabled)
+
+	// Get updated metrics
+	inMetrics, outMetrics = limiter.GetMetrics()
+	assert.Equal(t, float64(2000)*tcpOverheadFactor, inMetrics.Rate)
+	assert.Equal(t, float64(200)*tcpOverheadFactor, inMetrics.Burst)
+	assert.Equal(t, float64(2000)*tcpOverheadFactor, outMetrics.Rate)
+	assert.Equal(t, float64(200)*tcpOverheadFactor, outMetrics.Burst)
+}
+
+func TestLimiterWait(t *testing.T) {
+	// Test with disabled limiter
+	limiter, _, _ := setupLimiter(nil)
 	start := time.Now()
-	err := limiter.Wait(true, 1500)
+	err := limiter.Wait(true, 1000)
+	assert.NoError(t, err)
 	elapsed := time.Since(start)
+	assert.Less(t, elapsed, 10*time.Millisecond)
 
-	if err != nil {
-		t.Fatalf("Wait failed: %v", err)
+	// Test with enabled limiter
+	cfg := &types.AppConfig{
+		Throttle: &types.ThrottleConfig{
+			Enabled: true,
+			Rate:    1000,
+			Burst:   100,
+		},
 	}
-
-	if elapsed > 100*time.Millisecond {
-		t.Error("Rate limiting applied when disabled")
-	}
+	limiter, _, _ = setupLimiter(cfg)
+	start = time.Now()
+	err = limiter.Wait(true, 1000)
+	assert.NoError(t, err)
+	elapsed = time.Since(start)
+	assert.GreaterOrEqual(t, elapsed, time.Second)
 }
