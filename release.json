@@ -1,0 +1,3 @@
+{"body":"Release packages for SSSonector v1.0.0\n\nSHA256 checksums:\nb740c0b0d9b81e18c39d2676954d8476299cae0a57eec0a54be7bd9f22ee2c66  build/sssonector_1.0.0_amd64.deb
+66f1b54ed9042c21aa8b330148e247991862c056018b678a94b0e96ed149c067  build/sssonector-1.0.0-1.x86_64.rpm
+0eb7884226b4870131096580ca66e2cfff1f77b5528c88fb41ad5345a5eeea11  build/sssonector-1.0.0-setup.exe\n\nInstallation instructions: https://github.com/o3willard-AI/SSSonector/blob/main/docs/installation.md"}

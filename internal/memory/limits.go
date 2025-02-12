@@ -2,7 +2,6 @@ package memory
 
 import (
 	"fmt"
-	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -11,198 +10,139 @@ import (
 )
 
 const (
-	defaultMaxMemoryMB     = 512
-	defaultCheckInterval   = 30 * time.Second
-	defaultCleanupInterval = 5 * time.Second
-	defaultSoftLimitRatio  = 0.85 // 85% of max memory
+	// Default memory limits
+	DefaultMaxMemoryMB     = 512
+	DefaultMonitorInterval = time.Second * 5
+
+	// Memory units
+	MB = 1024 * 1024
 )
 
-// LimitConfig holds memory limit configuration
-type LimitConfig struct {
-	// Maximum memory usage in MB
-	MaxMemoryMB int64
-
-	// Interval between memory usage checks
-	CheckInterval time.Duration
-
-	// Interval between cleanup attempts when near limit
-	CleanupInterval time.Duration
-
-	// Ratio of max memory that triggers cleanup (0.0-1.0)
-	SoftLimitRatio float64
-}
-
-// DefaultLimitConfig returns default memory limit configuration
-func DefaultLimitConfig() *LimitConfig {
-	return &LimitConfig{
-		MaxMemoryMB:     defaultMaxMemoryMB,
-		CheckInterval:   defaultCheckInterval,
-		CleanupInterval: defaultCleanupInterval,
-		SoftLimitRatio:  defaultSoftLimitRatio,
-	}
-}
-
-// Manager manages memory limits and cleanup
+// Manager handles memory allocation and limits
 type Manager struct {
-	config *LimitConfig
-	logger *zap.Logger
-
-	// Current memory stats
-	stats struct {
-		sync.RWMutex
-		current    int64
-		max        int64
-		cleanups   int64
-		rejections int64
-	}
-
-	// Cleanup callback functions
+	maxBytes     uint64
+	currentBytes uint64
+	interval     time.Duration
+	logger       *zap.Logger
 	cleanupFuncs []func()
-
-	// Control channels
-	stop    chan struct{}
-	stopped chan struct{}
+	mu           sync.RWMutex
+	stopCh       chan struct{}
 }
 
-// NewManager creates a new memory limit manager
-func NewManager(config *LimitConfig, logger *zap.Logger) *Manager {
-	if config == nil {
-		config = DefaultLimitConfig()
+// NewManager creates a new memory manager
+func NewManager(maxMemoryMB uint64, interval time.Duration, logger *zap.Logger) *Manager {
+	if maxMemoryMB == 0 {
+		maxMemoryMB = DefaultMaxMemoryMB
+	}
+	if interval == 0 {
+		interval = DefaultMonitorInterval
+	}
+	if logger == nil {
+		var err error
+		logger, err = zap.NewDevelopment()
+		if err != nil {
+			panic(fmt.Sprintf("failed to create logger: %v", err))
+		}
 	}
 
 	m := &Manager{
-		config:  config,
-		logger:  logger,
-		stop:    make(chan struct{}),
-		stopped: make(chan struct{}),
+		maxBytes:     maxMemoryMB * MB,
+		interval:     interval,
+		logger:       logger,
+		cleanupFuncs: make([]func(), 0),
+		stopCh:       make(chan struct{}),
 	}
 
 	go m.monitor()
+
 	return m
 }
 
-// RegisterCleanupFunc registers a function to be called during cleanup
-func (m *Manager) RegisterCleanupFunc(f func()) {
-	m.stats.Lock()
-	m.cleanupFuncs = append(m.cleanupFuncs, f)
-	m.stats.Unlock()
-}
-
-// CheckAndReserve checks if allocating size bytes would exceed limits
-// Returns true if allocation is allowed, false if it would exceed limits
-func (m *Manager) CheckAndReserve(size int64) bool {
-	current := atomic.LoadInt64(&m.stats.current)
-	if current+size > m.config.MaxMemoryMB*1024*1024 {
-		atomic.AddInt64(&m.stats.rejections, 1)
+// CheckAndReserve checks if memory can be allocated and reserves it
+func (m *Manager) CheckAndReserve(bytes uint64) bool {
+	current := atomic.LoadUint64(&m.currentBytes)
+	if current+bytes > m.maxBytes {
 		m.logger.Warn("Memory allocation rejected",
-			zap.Int64("requested_bytes", size),
-			zap.Int64("current_mb", current/(1024*1024)),
-			zap.Int64("max_mb", m.config.MaxMemoryMB),
-		)
+			zap.Uint64("requested_bytes", bytes),
+			zap.Uint64("current_mb", current/MB),
+			zap.Uint64("max_mb", m.maxBytes/MB))
 		return false
 	}
 
-	atomic.AddInt64(&m.stats.current, size)
+	atomic.AddUint64(&m.currentBytes, bytes)
 	return true
 }
 
 // Release releases previously reserved memory
-func (m *Manager) Release(size int64) {
-	atomic.AddInt64(&m.stats.current, -size)
+func (m *Manager) Release(bytes uint64) {
+	atomic.AddUint64(&m.currentBytes, ^(bytes - 1))
 }
 
-// GetStats returns current memory statistics
-func (m *Manager) GetStats() (current, max, cleanups, rejections int64) {
-	m.stats.RLock()
-	defer m.stats.RUnlock()
-	return m.stats.current, m.stats.max, m.stats.cleanups, m.stats.rejections
+// RegisterCleanup registers a cleanup function
+func (m *Manager) RegisterCleanup(cleanup func()) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.cleanupFuncs = append(m.cleanupFuncs, cleanup)
 }
 
-// Stop stops the memory monitor
+// Stop stops the memory manager
 func (m *Manager) Stop() {
-	close(m.stop)
-	<-m.stopped
+	close(m.stopCh)
 }
 
-// monitor periodically checks memory usage and triggers cleanup if needed
+// monitor periodically checks memory usage
 func (m *Manager) monitor() {
-	defer close(m.stopped)
-
-	checkTicker := time.NewTicker(m.config.CheckInterval)
-	defer checkTicker.Stop()
-
-	cleanupTicker := time.NewTicker(m.config.CleanupInterval)
-	defer cleanupTicker.Stop()
-
-	var memStats runtime.MemStats
+	ticker := time.NewTicker(m.interval)
+	defer ticker.Stop()
 
 	for {
 		select {
-		case <-m.stop:
+		case <-ticker.C:
+			current := atomic.LoadUint64(&m.currentBytes)
+			if current > m.maxBytes {
+				m.logger.Info("Running memory cleanup",
+					zap.Uint64("current_mb", current/MB),
+					zap.Uint64("max_mb", m.maxBytes/MB),
+					zap.Int("cleanup_funcs", len(m.cleanupFuncs)))
+
+				m.runCleanup()
+			}
+		case <-m.stopCh:
 			return
-
-		case <-checkTicker.C:
-			runtime.ReadMemStats(&memStats)
-			current := int64(memStats.Alloc)
-			atomic.StoreInt64(&m.stats.current, current)
-
-			if current > atomic.LoadInt64(&m.stats.max) {
-				atomic.StoreInt64(&m.stats.max, current)
-			}
-
-			// Check if we're approaching the limit
-			if float64(current) > float64(m.config.MaxMemoryMB*1024*1024)*m.config.SoftLimitRatio {
-				m.cleanup()
-			}
-
-		case <-cleanupTicker.C:
-			// Periodically run cleanup regardless of current usage
-			m.cleanup()
 		}
 	}
 }
 
-// cleanup runs registered cleanup functions
-func (m *Manager) cleanup() {
-	m.stats.RLock()
-	funcs := make([]func(), len(m.cleanupFuncs))
-	copy(funcs, m.cleanupFuncs)
-	m.stats.RUnlock()
+// runCleanup executes registered cleanup functions
+func (m *Manager) runCleanup() {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 
-	if len(funcs) == 0 {
-		return
+	for _, cleanup := range m.cleanupFuncs {
+		cleanup()
 	}
-
-	m.logger.Info("Running memory cleanup",
-		zap.Int64("current_mb", atomic.LoadInt64(&m.stats.current)/(1024*1024)),
-		zap.Int64("max_mb", m.config.MaxMemoryMB),
-		zap.Int("cleanup_funcs", len(funcs)),
-	)
-
-	for _, f := range funcs {
-		f()
-	}
-
-	atomic.AddInt64(&m.stats.cleanups, 1)
-
-	// Force garbage collection after cleanup
-	runtime.GC()
 }
 
-// FormatStats formats current memory statistics as a string
-func (m *Manager) FormatStats() string {
-	current, max, cleanups, rejections := m.GetStats()
-	return fmt.Sprintf(
-		"Memory Stats:\n"+
-			"  Current: %d MB\n"+
-			"  Max: %d MB\n"+
-			"  Limit: %d MB\n"+
-			"  Cleanups: %d\n"+
-			"  Rejections: %d",
-		current/(1024*1024),
-		max/(1024*1024),
-		m.config.MaxMemoryMB,
-		cleanups,
-		rejections,
-	)
+// GetStats returns current memory statistics
+func (m *Manager) GetStats() string {
+	current := atomic.LoadUint64(&m.currentBytes)
+	return fmt.Sprintf("Memory Usage: %d/%d MB (%.1f%%)",
+		current/MB,
+		m.maxBytes/MB,
+		float64(current)/float64(m.maxBytes)*100)
+}
+
+// SetMaxMemory updates the maximum memory limit
+func (m *Manager) SetMaxMemory(maxMemoryMB uint64) {
+	atomic.StoreUint64(&m.maxBytes, maxMemoryMB*MB)
+}
+
+// GetMaxMemory returns the maximum memory limit in MB
+func (m *Manager) GetMaxMemory() uint64 {
+	return atomic.LoadUint64(&m.maxBytes) / MB
+}
+
+// GetCurrentMemory returns the current memory usage in MB
+func (m *Manager) GetCurrentMemory() uint64 {
+	return atomic.LoadUint64(&m.currentBytes) / MB
 }

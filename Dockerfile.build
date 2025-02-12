@@ -1,0 +1,70 @@
+# Multi-stage build for SSSonector
+FROM golang:1.21-alpine AS builder
+
+# Install build dependencies
+RUN apk add --no-cache \
+    git \
+    make \
+    bash \
+    build-base \
+    gcc \
+    musl-dev \
+    openssl-dev \
+    ca-certificates \
+    tzdata \
+    zip
+
+# Set working directory
+WORKDIR /build
+
+# Copy go mod files
+COPY go.mod go.sum ./
+
+# Download dependencies
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Make scripts executable
+RUN chmod +x scripts/*.sh
+
+# Build for all platforms
+RUN ./scripts/build_all.sh
+
+# Create verification stage
+FROM alpine:latest AS verify
+
+# Install verification tools
+RUN apk add --no-cache \
+    bash \
+    file \
+    coreutils \
+    zip \
+    tar
+
+# Copy build artifacts and verification script
+COPY --from=builder /build/build /verify/build
+COPY --from=builder /build/scripts/verify_builds.sh /verify/verify_builds.sh
+
+# Make verification script executable
+RUN chmod +x /verify/verify_builds.sh
+
+# Set working directory
+WORKDIR /verify
+
+# Run verification
+RUN ./verify_builds.sh
+
+# Final stage for distributable artifacts
+FROM alpine:latest AS artifacts
+
+# Copy verified artifacts
+COPY --from=verify /verify/build /build
+
+# Add a command to keep container running
+CMD ["/bin/sh", "-c", "tail -f /dev/null"]
+
+# Usage:
+# Build: docker build -t ssonector-builder -f Dockerfile.build .
+# Extract: docker create --name temp ssonector-builder && docker cp temp:/build ./build && docker rm temp

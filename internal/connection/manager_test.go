@@ -1,176 +1,228 @@
 package connection
 
 import (
-	"errors"
 	"net"
 	"testing"
 	"time"
 
+	"github.com/o3willard-AI/SSSonector/internal/breaker"
+	"github.com/o3willard-AI/SSSonector/internal/ratelimit"
+	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
 )
 
-func TestConnectionManager(t *testing.T) {
-	logger := zap.NewNop()
+func TestManager(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	cfg := &Config{
+		MaxConnections: 2,
+		KeepAlive:      true,
+		KeepAliveIdle:  time.Second,
+		RetryAttempts:  3,
+		RetryInterval:  time.Second,
+		ConnectTimeout: 5 * time.Second,
+	}
 
-	t.Run("respects connection limit", func(t *testing.T) {
-		config := &Config{
-			MaxConnections: 2,
-			KeepAlive:      true,
-			KeepAliveIdle:  30 * time.Second,
-		}
+	t.Run("basic connection management", func(t *testing.T) {
+		mgr := NewManager(logger, cfg)
+		conn := SetupMockConn()
 
-		manager := NewManager(logger, config)
-		defer manager.Stop()
+		err := mgr.Accept(conn)
+		assert.NoError(t, err)
+		assert.Equal(t, 1, mgr.GetConnectionCount())
+		assert.Equal(t, ManagerStateConnected, mgr.GetState())
 
-		// Create test connections
-		conn1 := newTestConn("client1")
-		conn2 := newTestConn("client2")
-		conn3 := newTestConn("client3")
-
-		// First two connections should succeed
-		if err := manager.Accept(conn1); err != nil {
-			t.Errorf("first connection failed: %v", err)
-		}
-		if err := manager.Accept(conn2); err != nil {
-			t.Errorf("second connection failed: %v", err)
-		}
-
-		// Third connection should fail
-		if err := manager.Accept(conn3); err == nil {
-			t.Error("expected third connection to fail")
-		}
-
-		// Verify connection count
-		if count := manager.GetConnectionCount(); count != 2 {
-			t.Errorf("expected 2 connections, got %d", count)
-		}
+		mgr.Remove(conn)
+		assert.Equal(t, 0, mgr.GetConnectionCount())
+		assert.Equal(t, ManagerStateDisconnected, mgr.GetState())
+		assert.True(t, conn.closed)
 	})
 
-	t.Run("handles connection callbacks", func(t *testing.T) {
-		config := &Config{
-			MaxConnections: 1,
+	t.Run("circuit breaker", func(t *testing.T) {
+		cfg := &Config{
+			MaxConnections: 10,
+			CircuitBreaker: &breaker.Config{
+				MaxFailures:      2,
+				ResetTimeout:     100 * time.Millisecond,
+				HalfOpenMaxCalls: 2,
+				FailureWindow:    time.Minute,
+			},
 		}
+		mgr := NewManager(logger, cfg)
+
+		// Set up failing dialer
+		failingDialer := &MockDialer{ShouldFail: true}
+		mgr.SetDialer(failingDialer)
+
+		// First failure
+		_, err := mgr.Connect("tcp", "localhost:8080")
+		assert.Error(t, err)
+
+		// Second failure should trip the circuit breaker
+		_, err = mgr.Connect("tcp", "localhost:8080")
+		assert.Error(t, err)
+
+		// Next attempt should be rejected by circuit breaker
+		_, err = mgr.Connect("tcp", "localhost:8080")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "circuit breaker is open")
+
+		// Get circuit breaker stats
+		stats := mgr.GetCircuitBreakerStats()
+		assert.NotNil(t, stats)
+		assert.Equal(t, "open", stats.State)
+		assert.Equal(t, 2, stats.Failures)
+
+		// Wait for reset timeout
+		time.Sleep(200 * time.Millisecond)
+
+		// Set up working dialer
+		workingDialer := &MockDialer{
+			ShouldFail: false,
+			Conn:       SetupMockConn(),
+		}
+		mgr.SetDialer(workingDialer)
+
+		// Should transition to half-open and then closed after successful calls
+		conn, err := mgr.Connect("tcp", "localhost:8080")
+		assert.NoError(t, err)
+		assert.NotNil(t, conn)
+
+		stats = mgr.GetCircuitBreakerStats()
+		assert.Equal(t, "half-open", stats.State)
+
+		// Second successful call
+		conn, err = mgr.Connect("tcp", "localhost:8080")
+		assert.NoError(t, err)
+		assert.NotNil(t, conn)
+
+		stats = mgr.GetCircuitBreakerStats()
+		assert.Equal(t, "closed", stats.State)
+	})
+
+	t.Run("rate limiting", func(t *testing.T) {
+		cfg := &Config{
+			MaxConnections: 10,
+			RateLimit: &ratelimit.Config{
+				DefaultRate:  2,
+				DefaultBurst: 1,
+				CleanupTime:  time.Hour,
+			},
+		}
+		mgr := NewManager(logger, cfg)
+		defer mgr.Stop()
+
+		// First connection should be allowed
+		conn1 := SetupMockConn()
+		err := mgr.Accept(conn1)
+		assert.NoError(t, err)
+
+		// Second connection should be rate limited
+		conn2 := SetupMockConn()
+		err = mgr.Accept(conn2)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "rate limit exceeded")
+
+		// Wait for token replenishment
+		time.Sleep(time.Second)
+
+		// Third connection should be allowed after waiting
+		conn3 := SetupMockConn()
+		err = mgr.Accept(conn3)
+		assert.NoError(t, err)
+
+		// Update stats to trigger rate adjustment
+		mgr.UpdateStats(conn1.RemoteAddr().String(), 11*1024*1024, 0) // Over 10MB
+		metrics := mgr.GetRateLimitMetrics()
+		assert.NotNil(t, metrics)
+		assert.Equal(t, 2, metrics.ActiveBuckets)
+	})
+
+	t.Run("connection callbacks", func(t *testing.T) {
+		mgr := NewManager(logger, cfg)
+		conn := SetupMockConn()
 
 		var (
 			connectCalled    bool
 			disconnectCalled bool
 		)
 
-		manager := NewManager(logger, config)
-		defer manager.Stop()
-
-		manager.SetCallbacks(
-			func(conn net.Conn) { connectCalled = true },
-			func(conn net.Conn, err error) { disconnectCalled = true },
+		mgr.SetCallbacks(
+			func(c net.Conn) { connectCalled = true },
+			func(c net.Conn, err error) { disconnectCalled = true },
 		)
 
-		// Test connect callback
-		conn := newTestConn("client")
-		if err := manager.Accept(conn); err != nil {
-			t.Errorf("connection failed: %v", err)
-		}
+		err := mgr.Accept(conn)
+		assert.NoError(t, err)
+		assert.True(t, connectCalled)
 
-		if !connectCalled {
-			t.Error("connect callback not called")
-		}
-
-		// Test disconnect callback
-		manager.Stop()
-
-		if !disconnectCalled {
-			t.Error("disconnect callback not called")
-		}
+		mgr.Remove(conn)
+		assert.True(t, disconnectCalled)
 	})
 
-	t.Run("tracks connection info", func(t *testing.T) {
-		config := &Config{
-			MaxConnections: 1,
-		}
+	t.Run("max connections", func(t *testing.T) {
+		mgr := NewManager(logger, cfg)
 
-		manager := NewManager(logger, config)
-		defer manager.Stop()
+		// Add first connection
+		conn1 := SetupMockConn()
+		err := mgr.Accept(conn1)
+		assert.NoError(t, err)
 
-		// Add connection
-		conn := newTestConn("client")
-		if err := manager.Accept(conn); err != nil {
-			t.Errorf("connection failed: %v", err)
-		}
+		// Add second connection
+		conn2 := SetupMockConn()
+		err = mgr.Accept(conn2)
+		assert.NoError(t, err)
 
-		// Update stats
-		manager.UpdateStats("client", 100, 200)
-
-		// Get connection info
-		infos := manager.GetConnections()
-		if len(infos) != 1 {
-			t.Fatalf("expected 1 connection info, got %d", len(infos))
-		}
-
-		info := infos[0]
-		if info.RemoteAddr != "client" {
-			t.Errorf("expected remote addr 'client', got %s", info.RemoteAddr)
-		}
-		if info.State != StateConnected {
-			t.Errorf("expected state Connected, got %s", info.State)
-		}
-		if info.BytesSent != 100 {
-			t.Errorf("expected 100 bytes sent, got %d", info.BytesSent)
-		}
-		if info.BytesReceived != 200 {
-			t.Errorf("expected 200 bytes received, got %d", info.BytesReceived)
-		}
+		// Try to add third connection
+		conn3 := SetupMockConn()
+		err = mgr.Accept(conn3)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "maximum connections reached")
 	})
 
-	t.Run("handles connection retry", func(t *testing.T) {
-		config := &Config{
-			RetryAttempts:  2,
-			RetryInterval:  10 * time.Millisecond,
-			ConnectTimeout: 50 * time.Millisecond,
-		}
+	t.Run("connection stats", func(t *testing.T) {
+		mgr := NewManager(logger, cfg)
+		conn := SetupMockConn()
 
-		manager := NewManager(logger, config)
-		defer manager.Stop()
+		err := mgr.Accept(conn)
+		assert.NoError(t, err)
 
-		// Try to connect to non-existent server
-		_, err := manager.Connect("tcp", "127.0.0.1:1")
-		if err == nil {
-			t.Error("expected connection to fail")
-		}
+		mgr.UpdateStats(conn.RemoteAddr().String(), 100, 200)
 
-		// Verify error type
-		var netErr *net.OpError
-		if !errors.As(err, &netErr) {
-			t.Errorf("expected net.OpError, got %T", err)
-		}
+		conns := mgr.GetConnections()
+		assert.Equal(t, 1, len(conns))
+		assert.Equal(t, int64(100), conns[0].BytesSent)
+		assert.Equal(t, int64(200), conns[0].BytesReceived)
+	})
 
-		state := manager.GetState()
-		if state != StateDisconnected {
-			t.Errorf("expected state Disconnected, got %s", state)
+	t.Run("rate limit cleanup", func(t *testing.T) {
+		cfg := &Config{
+			MaxConnections: 10,
+			RateLimit: &ratelimit.Config{
+				DefaultRate:  10,
+				DefaultBurst: 5,
+				CleanupTime:  100 * time.Millisecond,
+			},
 		}
+		mgr := NewManager(logger, cfg)
+		defer mgr.Stop()
+
+		// Add some connections
+		conn1 := SetupMockConn()
+		conn2 := SetupMockConn()
+		mgr.Accept(conn1)
+		mgr.Accept(conn2)
+
+		// Wait for cleanup cycle
+		time.Sleep(200 * time.Millisecond)
+
+		// Remove connections
+		mgr.Remove(conn1)
+		mgr.Remove(conn2)
+
+		// Wait for another cleanup cycle
+		time.Sleep(200 * time.Millisecond)
+
+		metrics := mgr.GetRateLimitMetrics()
+		assert.Equal(t, 0, metrics.ActiveBuckets)
 	})
 }
-
-// testConn implements a mock net.Conn for testing
-type testConn struct {
-	addr string
-}
-
-func newTestConn(addr string) net.Conn {
-	return &testConn{addr: addr}
-}
-
-func (c *testConn) Read(b []byte) (n int, err error)   { return 0, nil }
-func (c *testConn) Write(b []byte) (n int, err error)  { return len(b), nil }
-func (c *testConn) Close() error                       { return nil }
-func (c *testConn) LocalAddr() net.Addr                { return &testAddr{c.addr} }
-func (c *testConn) RemoteAddr() net.Addr               { return &testAddr{c.addr} }
-func (c *testConn) SetDeadline(t time.Time) error      { return nil }
-func (c *testConn) SetReadDeadline(t time.Time) error  { return nil }
-func (c *testConn) SetWriteDeadline(t time.Time) error { return nil }
-
-// testAddr implements net.Addr for testing
-type testAddr struct {
-	addr string
-}
-
-func (a *testAddr) Network() string { return "test" }
-func (a *testAddr) String() string  { return a.addr }

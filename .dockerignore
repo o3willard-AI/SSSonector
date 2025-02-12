@@ -1,0 +1,47 @@
+# Ignore sensitive files
+*.key
+*.pem
+*.crt
+*.cert
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.truststore
+
+# Ignore build artifacts
+build/
+dist/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Ignore development files
+.git/
+.gitignore
+.env*
+*.log
+*.tmp
+*.temp
+*.swp
+*.swo
+
+# Ignore test files
+*_test.go
+testdata/
+
+# Ignore documentation
+docs/
+*.md
+
+# Ignore IDE files
+.idea/
+.vscode/
+*.iml
+*.iws
+*.ipr
+
+# Ignore OS files
+.DS_Store
+Thumbs.db

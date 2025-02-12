@@ -7,224 +7,189 @@ import (
 	"testing"
 	"time"
 
-	"go.uber.org/zap"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.uber.org/zap/zaptest"
 )
 
-type mockFactory struct {
-	failCount int
-	maxFails  int
-	delay     time.Duration
-}
-
-func (f *mockFactory) createConn(ctx context.Context) (net.Conn, error) {
-	if f.delay > 0 {
-		time.Sleep(f.delay)
-	}
-
-	f.failCount++
-	if f.failCount <= f.maxFails {
-		return nil, errors.New("mock connection failed")
-	}
-
-	return &mockConn{}, nil
-}
-
 func TestRetryManagerImmediateSuccess(t *testing.T) {
-	logger, _ := zap.NewDevelopment()
-	factory := &mockFactory{maxFails: 1}
-	config := &RetryConfig{
-		ImmediateAttempts: 3,
-		ImmediateInterval: time.Millisecond,
+	logger := zaptest.NewLogger(t)
+	failCount := 0
+
+	factory := func(ctx context.Context) (net.Conn, error) {
+		if failCount < 1 {
+			failCount++
+			return nil, errors.New("mock connection failed")
+		}
+		return &mockConn{}, nil
 	}
 
-	manager := NewRetryManager(factory.createConn, config, logger)
+	manager := NewRetryManager(logger, factory)
+	manager.WithConfig(RetryConfig{
+		MaxImmediateRetries:  3,
+		ImmediateDelay:       time.Millisecond,
+		MaxGradualRetries:    0,
+		MaxPersistentRetries: 0,
+	})
+
 	conn, err := manager.GetConnection(context.Background())
-	if err != nil {
-		t.Fatalf("Expected successful connection, got error: %v", err)
-	}
-	if conn == nil {
-		t.Fatal("Expected connection to be non-nil")
-	}
+	require.NoError(t, err)
+	require.NotNil(t, conn)
 
-	attempts, failures, successes := manager.GetMetrics()
-	if attempts != 1 {
-		t.Errorf("Expected 1 attempt, got %d", attempts)
-	}
-	if failures != 0 {
-		t.Errorf("Expected 0 failures, got %d", failures)
-	}
-	if successes != 1 {
-		t.Errorf("Expected 1 success, got %d", successes)
-	}
+	success, failures := manager.GetMetrics()
+	assert.Equal(t, uint64(1), success)
+	assert.Equal(t, uint64(1), failures)
 }
 
 func TestRetryManagerGradualSuccess(t *testing.T) {
-	logger, _ := zap.NewDevelopment()
-	factory := &mockFactory{maxFails: 4}
-	config := &RetryConfig{
-		ImmediateAttempts:  3,
-		ImmediateInterval:  time.Millisecond,
-		GradualAttempts:    5,
-		GradualInterval:    time.Millisecond,
-		MaxGradualInterval: time.Millisecond * 10,
+	logger := zaptest.NewLogger(t)
+	failCount := 0
+
+	factory := func(ctx context.Context) (net.Conn, error) {
+		if failCount < 4 {
+			failCount++
+			return nil, errors.New("mock connection failed")
+		}
+		return &mockConn{}, nil
 	}
 
-	manager := NewRetryManager(factory.createConn, config, logger)
+	manager := NewRetryManager(logger, factory)
+	manager.WithConfig(RetryConfig{
+		MaxImmediateRetries:  3,
+		ImmediateDelay:       time.Millisecond,
+		MaxGradualRetries:    5,
+		InitialInterval:      time.Millisecond,
+		MaxInterval:          10 * time.Millisecond,
+		BackoffMultiplier:    2.0,
+		MaxPersistentRetries: 0,
+	})
+
 	conn, err := manager.GetConnection(context.Background())
-	if err != nil {
-		t.Fatalf("Expected successful connection, got error: %v", err)
-	}
-	if conn == nil {
-		t.Fatal("Expected connection to be non-nil")
-	}
+	require.NoError(t, err)
+	require.NotNil(t, conn)
 
-	attempts, failures, successes := manager.GetMetrics()
-	if attempts != 1 {
-		t.Errorf("Expected 1 attempt, got %d", attempts)
-	}
-	if failures != 0 {
-		t.Errorf("Expected 0 failures, got %d", failures)
-	}
-	if successes != 1 {
-		t.Errorf("Expected 1 success, got %d", successes)
-	}
+	success, failures := manager.GetMetrics()
+	assert.Equal(t, uint64(1), success)
+	assert.Equal(t, uint64(4), failures)
 }
 
 func TestRetryManagerPersistentSuccess(t *testing.T) {
-	logger, _ := zap.NewDevelopment()
-	factory := &mockFactory{maxFails: 9}
-	config := &RetryConfig{
-		ImmediateAttempts:  3,
-		ImmediateInterval:  time.Millisecond,
-		GradualAttempts:    5,
-		GradualInterval:    time.Millisecond,
-		MaxGradualInterval: time.Millisecond * 10,
-		PersistentEnabled:  true,
-		PersistentInterval: time.Millisecond,
+	logger := zaptest.NewLogger(t)
+	failCount := 0
+
+	factory := func(ctx context.Context) (net.Conn, error) {
+		if failCount < 9 {
+			failCount++
+			return nil, errors.New("mock connection failed")
+		}
+		return &mockConn{}, nil
 	}
 
-	manager := NewRetryManager(factory.createConn, config, logger)
+	manager := NewRetryManager(logger, factory)
+	manager.WithConfig(RetryConfig{
+		MaxImmediateRetries:  3,
+		ImmediateDelay:       time.Millisecond,
+		MaxGradualRetries:    5,
+		InitialInterval:      time.Millisecond,
+		MaxInterval:          10 * time.Millisecond,
+		BackoffMultiplier:    2.0,
+		MaxPersistentRetries: 2,
+		PersistentDelay:      5 * time.Millisecond,
+	})
+
 	conn, err := manager.GetConnection(context.Background())
-	if err != nil {
-		t.Fatalf("Expected successful connection, got error: %v", err)
-	}
-	if conn == nil {
-		t.Fatal("Expected connection to be non-nil")
-	}
+	require.NoError(t, err)
+	require.NotNil(t, conn)
 
-	attempts, failures, successes := manager.GetMetrics()
-	if attempts != 1 {
-		t.Errorf("Expected 1 attempt, got %d", attempts)
-	}
-	if failures != 0 {
-		t.Errorf("Expected 0 failures, got %d", failures)
-	}
-	if successes != 1 {
-		t.Errorf("Expected 1 success, got %d", successes)
-	}
+	success, failures := manager.GetMetrics()
+	assert.Equal(t, uint64(1), success)
+	assert.Equal(t, uint64(9), failures)
 }
 
 func TestRetryManagerContextCancellation(t *testing.T) {
-	logger, _ := zap.NewDevelopment()
-	factory := &mockFactory{maxFails: 100, delay: time.Millisecond * 100}
-	config := &RetryConfig{
-		ImmediateAttempts: 3,
-		ImmediateInterval: time.Millisecond,
-	}
-
-	manager := NewRetryManager(factory.createConn, config, logger)
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond*50)
+	logger := zaptest.NewLogger(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
 
+	factory := func(ctx context.Context) (net.Conn, error) {
+		time.Sleep(20 * time.Millisecond)
+		return nil, errors.New("mock connection failed")
+	}
+
+	manager := NewRetryManager(logger, factory)
 	_, err := manager.GetConnection(ctx)
-	if err == nil {
-		t.Fatal("Expected error due to context cancellation")
-	}
-	if err != context.DeadlineExceeded {
-		t.Errorf("Expected deadline exceeded error, got: %v", err)
-	}
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
 }
 
 func TestRetryManagerAllPhasesFailure(t *testing.T) {
-	logger, _ := zap.NewDevelopment()
-	factory := &mockFactory{maxFails: 1000}
-	config := &RetryConfig{
-		ImmediateAttempts:  2,
-		ImmediateInterval:  time.Millisecond,
-		GradualAttempts:    2,
-		GradualInterval:    time.Millisecond,
-		MaxGradualInterval: time.Millisecond * 10,
-		PersistentEnabled:  false,
+	logger := zaptest.NewLogger(t)
+
+	factory := func(ctx context.Context) (net.Conn, error) {
+		return nil, errors.New("mock connection failed")
 	}
 
-	manager := NewRetryManager(factory.createConn, config, logger)
+	manager := NewRetryManager(logger, factory)
+	manager.WithConfig(RetryConfig{
+		MaxImmediateRetries:  2,
+		ImmediateDelay:       time.Millisecond,
+		MaxGradualRetries:    2,
+		InitialInterval:      time.Millisecond,
+		MaxInterval:          10 * time.Millisecond,
+		BackoffMultiplier:    2.0,
+		MaxPersistentRetries: 0,
+	})
+
 	_, err := manager.GetConnection(context.Background())
-	if err != ErrMaxRetriesExceeded {
-		t.Errorf("Expected max retries exceeded error, got: %v", err)
-	}
+	assert.ErrorIs(t, err, ErrMaxRetriesExceeded)
 
-	attempts, failures, successes := manager.GetMetrics()
-	if attempts != 1 {
-		t.Errorf("Expected 1 attempt, got %d", attempts)
-	}
-	if failures != 1 {
-		t.Errorf("Expected 1 failure, got %d", failures)
-	}
-	if successes != 0 {
-		t.Errorf("Expected 0 successes, got %d", successes)
-	}
+	success, failures := manager.GetMetrics()
+	assert.Equal(t, uint64(0), success)
+	assert.Equal(t, uint64(4), failures)
 }
 
 func TestRetryManagerMetricsReset(t *testing.T) {
-	logger, _ := zap.NewDevelopment()
-	factory := &mockFactory{maxFails: 1}
-	manager := NewRetryManager(factory.createConn, nil, logger)
+	logger := zaptest.NewLogger(t)
 
-	// Make some attempts
-	manager.GetConnection(context.Background())
-	manager.GetConnection(context.Background())
+	factory := func(ctx context.Context) (net.Conn, error) {
+		return &mockConn{}, nil
+	}
 
-	// Reset metrics
+	manager := NewRetryManager(logger, factory)
+	conn, err := manager.GetConnection(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, conn)
+
+	success, failures := manager.GetMetrics()
+	assert.Equal(t, uint64(1), success)
+	assert.Equal(t, uint64(0), failures)
+
 	manager.ResetMetrics()
 
-	attempts, failures, successes := manager.GetMetrics()
-	if attempts != 0 {
-		t.Errorf("Expected 0 attempts after reset, got %d", attempts)
-	}
-	if failures != 0 {
-		t.Errorf("Expected 0 failures after reset, got %d", failures)
-	}
-	if successes != 0 {
-		t.Errorf("Expected 0 successes after reset, got %d", successes)
-	}
+	success, failures = manager.GetMetrics()
+	assert.Equal(t, uint64(0), success)
+	assert.Equal(t, uint64(0), failures)
 }
 
 func TestRetryManagerExponentialBackoff(t *testing.T) {
-	logger, _ := zap.NewDevelopment()
-	factory := &mockFactory{maxFails: 3}
-	config := &RetryConfig{
-		GradualAttempts:    3,
-		GradualInterval:    time.Millisecond,
-		MaxGradualInterval: time.Millisecond * 4,
+	logger := zaptest.NewLogger(t)
+
+	factory := func(ctx context.Context) (net.Conn, error) {
+		return nil, errors.New("mock connection failed")
 	}
 
-	manager := NewRetryManager(factory.createConn, config, logger)
+	manager := NewRetryManager(logger, factory)
+	manager.WithConfig(RetryConfig{
+		MaxImmediateRetries: 0,
+		MaxGradualRetries:   3,
+		InitialInterval:     time.Millisecond,
+		MaxInterval:         10 * time.Millisecond,
+		BackoffMultiplier:   2.0,
+	})
+
 	start := time.Now()
-	conn, err := manager.GetConnection(context.Background())
+	_, err := manager.GetConnection(context.Background())
 	duration := time.Since(start)
 
-	if err != nil {
-		t.Fatalf("Expected successful connection, got error: %v", err)
-	}
-	if conn == nil {
-		t.Fatal("Expected connection to be non-nil")
-	}
-
-	// Check that backoff was applied
-	// Expected delays: 1ms, 2ms, 4ms
-	minExpected := time.Millisecond * 7
-	if duration < minExpected {
-		t.Errorf("Expected minimum duration of %v, got %v", minExpected, duration)
-	}
+	assert.ErrorIs(t, err, ErrMaxRetriesExceeded)
+	assert.GreaterOrEqual(t, duration, 7*time.Millisecond) // 1ms + 2ms + 4ms
 }
