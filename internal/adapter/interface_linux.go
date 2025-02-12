@@ -3,6 +3,7 @@ package adapter
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -31,14 +32,20 @@ type tunAdapter struct {
 	closeOnce sync.Once
 }
 
-// newTUNAdapter creates a new TUN adapter
-func newTUNAdapter(opts *Options) (AdapterInterface, error) {
+// NewTUNAdapter creates a new TUN adapter
+func NewTUNAdapter(opts *Options) (AdapterInterface, error) {
 	if opts == nil {
 		opts = DefaultOptions()
 	}
 
+	logger, err := zap.NewProduction()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create logger: %w", err)
+	}
+
 	adapter := &tunAdapter{
 		opts:      opts,
+		logger:    logger,
 		state:     StateUninitialized,
 		closeChan: make(chan struct{}),
 	}
@@ -135,8 +142,11 @@ func (i *tunAdapter) Cleanup() error {
 
 		// Delete interface
 		if err := deleteInterface(i.opts.Name); err != nil {
-			done <- fmt.Errorf("failed to delete interface: %w", err)
-			return
+			// Ignore "no such device" errors during cleanup
+			if !os.IsNotExist(err) {
+				done <- fmt.Errorf("failed to delete interface: %w", err)
+				return
+			}
 		}
 
 		done <- nil
@@ -195,6 +205,7 @@ func (i *tunAdapter) setState(state State) {
 	i.stateMu.Lock()
 	defer i.stateMu.Unlock()
 	i.state = state
+	i.logger.Info(fmt.Sprintf("State: %s", state.String()))
 }
 
 // setError sets the last error
@@ -202,6 +213,9 @@ func (i *tunAdapter) setError(err error) {
 	i.stateMu.Lock()
 	defer i.stateMu.Unlock()
 	i.lastError = err
+	if err != nil {
+		i.logger.Error("Adapter error", zap.Error(err))
+	}
 }
 
 // createInterface creates the TUN interface
@@ -225,6 +239,68 @@ func (i *tunAdapter) createInterface() error {
 	}
 
 	i.file = file
+
+	// Set interface up and configure address
+	if err := configureInterface(i.opts.Name, i.opts.Address, i.opts.MTU); err != nil {
+		file.Close()
+		return fmt.Errorf("failed to configure interface: %w", err)
+	}
+
+	return nil
+}
+
+// configureInterface sets up the network interface
+func configureInterface(name, address string, mtu int) error {
+	// Create socket
+	sock, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_DGRAM, 0)
+	if err != nil {
+		return fmt.Errorf("failed to create socket: %w", err)
+	}
+	defer syscall.Close(sock)
+
+	// Create interface request
+	var ifr [ifReqSize]byte
+	copy(ifr[:], name)
+
+	// Set interface up
+	*(*uint16)(unsafe.Pointer(&ifr[16])) = syscall.IFF_UP | syscall.IFF_RUNNING
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(sock), syscall.SIOCSIFFLAGS, uintptr(unsafe.Pointer(&ifr[0])))
+	if errno != 0 {
+		return fmt.Errorf("failed to set interface up: %w", errno)
+	}
+
+	// Set MTU
+	*(*int32)(unsafe.Pointer(&ifr[16])) = int32(mtu)
+	_, _, errno = syscall.Syscall(syscall.SYS_IOCTL, uintptr(sock), syscall.SIOCSIFMTU, uintptr(unsafe.Pointer(&ifr[0])))
+	if errno != 0 {
+		return fmt.Errorf("failed to set interface MTU: %w", errno)
+	}
+
+	// Parse IP address and netmask
+	ip, ipNet, err := net.ParseCIDR(address)
+	if err != nil {
+		return fmt.Errorf("failed to parse address: %w", err)
+	}
+
+	// Set IP address
+	var sockaddr syscall.RawSockaddrInet4
+	sockaddr.Family = syscall.AF_INET
+	copy(sockaddr.Addr[:], ip.To4())
+
+	*(*syscall.RawSockaddrInet4)(unsafe.Pointer(&ifr[16])) = sockaddr
+	_, _, errno = syscall.Syscall(syscall.SYS_IOCTL, uintptr(sock), syscall.SIOCSIFADDR, uintptr(unsafe.Pointer(&ifr[0])))
+	if errno != 0 {
+		return fmt.Errorf("failed to set interface address: %w", errno)
+	}
+
+	// Set netmask
+	copy(sockaddr.Addr[:], ipNet.Mask)
+	*(*syscall.RawSockaddrInet4)(unsafe.Pointer(&ifr[16])) = sockaddr
+	_, _, errno = syscall.Syscall(syscall.SYS_IOCTL, uintptr(sock), syscall.SIOCSIFNETMASK, uintptr(unsafe.Pointer(&ifr[0])))
+	if errno != 0 {
+		return fmt.Errorf("failed to set interface netmask: %w", errno)
+	}
+
 	return nil
 }
 
@@ -241,10 +317,25 @@ func deleteInterface(name string) error {
 	var ifr [ifReqSize]byte
 	copy(ifr[:], name)
 
-	// Delete interface
-	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(sock), syscall.SIOCDIFADDR, uintptr(unsafe.Pointer(&ifr[0])))
+	// Get current interface flags
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(sock), syscall.SIOCGIFFLAGS, uintptr(unsafe.Pointer(&ifr[0])))
 	if errno != 0 {
-		return fmt.Errorf("failed to delete interface: %w", errno)
+		if errno == syscall.ENODEV {
+			// Interface doesn't exist, which is fine during cleanup
+			return nil
+		}
+		return fmt.Errorf("failed to get interface flags: %w", errno)
+	}
+
+	// Clear IFF_UP flag to bring interface down
+	flags := *(*uint16)(unsafe.Pointer(&ifr[16]))
+	flags &^= syscall.IFF_UP
+	*(*uint16)(unsafe.Pointer(&ifr[16])) = flags
+
+	// Set new interface flags
+	_, _, errno = syscall.Syscall(syscall.SYS_IOCTL, uintptr(sock), syscall.SIOCSIFFLAGS, uintptr(unsafe.Pointer(&ifr[0])))
+	if errno != 0 {
+		return fmt.Errorf("failed to set interface flags: %w", errno)
 	}
 
 	return nil

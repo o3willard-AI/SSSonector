@@ -6,18 +6,18 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/o3willard-AI/SSSonector/internal/config"
+	"github.com/o3willard-AI/SSSonector/internal/config/types"
 	"go.uber.org/zap"
 )
 
 // CertManager handles TLS certificate management
 type CertManager struct {
 	logger *zap.Logger
-	config *config.AppConfig
+	config *types.AppConfig
 }
 
 // NewCertManager creates a new certificate manager
-func NewCertManager(logger *zap.Logger, cfg *config.AppConfig) *CertManager {
+func NewCertManager(logger *zap.Logger, cfg *types.AppConfig) *CertManager {
 	return &CertManager{
 		logger: logger,
 		config: cfg,

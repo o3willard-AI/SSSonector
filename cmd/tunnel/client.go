@@ -24,6 +24,9 @@ type Client struct {
 // NewClient creates a new tunnel client
 func NewClient(cfg *types.AppConfig, manager interfaces.ConfigManager, logger *zap.Logger) (*Client, error) {
 	t := tunnel.NewClient(cfg, manager, logger)
+	if err := t.Start(); err != nil {
+		return nil, fmt.Errorf("failed to start tunnel client: %w", err)
+	}
 	return &Client{
 		config:  cfg,
 		manager: manager,
@@ -34,11 +37,6 @@ func NewClient(cfg *types.AppConfig, manager interfaces.ConfigManager, logger *z
 
 // Start starts the tunnel client
 func (c *Client) Start() error {
-	// Start tunnel
-	if err := c.tunnel.Start(); err != nil {
-		return fmt.Errorf("failed to start tunnel: %w", err)
-	}
-
 	// Handle signals
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)

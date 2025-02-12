@@ -2,99 +2,97 @@ package tunnel
 
 import (
 	"io"
-	"net"
-	"time"
+	"sync"
+	"sync/atomic"
 
 	"github.com/o3willard-AI/SSSonector/internal/config/types"
-	"github.com/o3willard-AI/SSSonector/internal/throttle"
 	"go.uber.org/zap"
 )
 
-// Transfer handles data transfer between connections
+// Transfer handles data transfer between two connections
 type Transfer struct {
-	src      net.Conn
-	dst      net.Conn
-	srcToDst *throttle.Limiter
-	dstToSrc *throttle.Limiter
-	logger   *zap.Logger
+	conn1  io.ReadWriteCloser
+	conn2  io.ReadWriteCloser
+	config *types.AppConfig
+	logger *zap.Logger
+	wg     sync.WaitGroup
+	done   chan struct{}
+	bytes  atomic.Uint64
 }
 
 // NewTransfer creates a new transfer
-func NewTransfer(src, dst net.Conn, cfg *types.AppConfig, logger *zap.Logger) *Transfer {
-	// Create rate limiters for each direction
-	srcToDst := throttle.NewLimiter(cfg, src, dst, logger)
-	dstToSrc := throttle.NewLimiter(cfg, dst, src, logger)
-
+func NewTransfer(conn1, conn2 io.ReadWriteCloser, cfg *types.AppConfig, logger *zap.Logger) *Transfer {
 	return &Transfer{
-		src:      src,
-		dst:      dst,
-		srcToDst: srcToDst,
-		dstToSrc: dstToSrc,
-		logger:   logger,
+		conn1:  conn1,
+		conn2:  conn2,
+		config: cfg,
+		logger: logger,
+		done:   make(chan struct{}),
 	}
 }
 
 // Start starts the transfer
 func (t *Transfer) Start() error {
-	// Start bidirectional transfer
-	errChan := make(chan error, 2)
-
-	// Forward src -> dst
-	go func() {
-		// Read from src and write to dst through limiter
-		_, err := io.Copy(t.dst, t.srcToDst)
-		errChan <- err
-	}()
-
-	// Forward dst -> src
-	go func() {
-		// Read from dst and write to src through limiter
-		_, err := io.Copy(t.src, t.dstToSrc)
-		errChan <- err
-	}()
-
-	// Wait for first error or completion
-	var err error
-	for i := 0; i < 2; i++ {
-		if e := <-errChan; e != nil {
-			err = e
-		}
+	if t.logger != nil {
+		t.logger.Debug("Starting transfer")
 	}
 
-	// Close connections
-	t.src.Close()
-	t.dst.Close()
+	// Start bidirectional copy
+	t.wg.Add(2)
+	go t.copy(t.conn1, t.conn2)
+	go t.copy(t.conn2, t.conn1)
 
-	return err
-}
+	// Wait for both copies to complete
+	t.wg.Wait()
+	close(t.done)
 
-// Stop stops the transfer
-func (t *Transfer) Stop() error {
-	// Close connections
-	if err := t.src.Close(); err != nil {
-		t.logger.Error("Failed to close source connection", zap.Error(err))
-	}
-	if err := t.dst.Close(); err != nil {
-		t.logger.Error("Failed to close destination connection", zap.Error(err))
+	if t.logger != nil {
+		t.logger.Debug("Transfer complete",
+			zap.Uint64("bytes_transferred", t.bytes.Load()),
+		)
 	}
 
 	return nil
 }
 
-// SetDeadline sets the read/write deadlines
-func (t *Transfer) SetDeadline(deadline time.Time) {
-	t.src.SetDeadline(deadline)
-	t.dst.SetDeadline(deadline)
+// copy copies data from src to dst
+func (t *Transfer) copy(dst io.Writer, src io.Reader) {
+	defer t.wg.Done()
+
+	// Create buffer for copying
+	buf := make([]byte, t.config.Config.Network.MTU)
+
+	// Copy data
+	for {
+		select {
+		case <-t.done:
+			return
+		default:
+			n, err := src.Read(buf)
+			if err != nil {
+				if err != io.EOF && t.logger != nil {
+					t.logger.Error("Read failed", zap.Error(err))
+				}
+				return
+			}
+
+			if n > 0 {
+				_, err := dst.Write(buf[:n])
+				if err != nil {
+					if t.logger != nil {
+						t.logger.Error("Write failed", zap.Error(err))
+					}
+					return
+				}
+				t.bytes.Add(uint64(n))
+			}
+		}
+	}
 }
 
-// SetReadDeadline sets the read deadline
-func (t *Transfer) SetReadDeadline(deadline time.Time) {
-	t.src.SetReadDeadline(deadline)
-	t.dst.SetReadDeadline(deadline)
-}
-
-// SetWriteDeadline sets the write deadline
-func (t *Transfer) SetWriteDeadline(deadline time.Time) {
-	t.src.SetWriteDeadline(deadline)
-	t.dst.SetWriteDeadline(deadline)
+// Stop stops the transfer
+func (t *Transfer) Stop() error {
+	close(t.done)
+	t.wg.Wait()
+	return nil
 }
