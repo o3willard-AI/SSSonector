@@ -21,54 +21,32 @@ func (v *Validator) Validate(config *types.AppConfig) error {
 		return fmt.Errorf("config is nil")
 	}
 
-	if config.Config == nil {
-		config.Config = types.NewConfig()
-	}
-
-	if err := v.validateMode(config.Config.Mode.String()); err != nil {
+	if err := v.validateMode(config.Config.Mode); err != nil {
 		return err
 	}
 
-	if config.Config.Logging != nil {
-		if err := v.validateLogging(config.Config.Logging); err != nil {
-			return err
-		}
+	if err := v.validateNetwork(&config.Config.Network); err != nil {
+		return err
 	}
 
-	if config.Config.Network != nil {
-		if err := v.validateNetwork(config.Config.Network); err != nil {
-			return err
-		}
+	if err := v.validateTunnel(&config.Config.Tunnel); err != nil {
+		return err
 	}
 
-	if config.Config.Tunnel != nil {
-		if err := v.validateTunnel(config.Config.Tunnel); err != nil {
-			return err
-		}
+	if err := v.validateSecurity(&config.Config.Security); err != nil {
+		return err
 	}
 
-	if config.Config.Security != nil {
-		if err := v.validateSecurity(config.Config.Security); err != nil {
-			return err
-		}
+	if err := v.validateMonitor(&config.Config.Monitor); err != nil {
+		return err
 	}
 
-	if config.Config.Monitor != nil {
-		if err := v.validateMonitor(config.Config.Monitor); err != nil {
-			return err
-		}
+	if err := v.validateMetrics(&config.Config.Metrics); err != nil {
+		return err
 	}
 
-	if config.Config.Metrics != nil {
-		if err := v.validateMetrics(config.Config.Metrics); err != nil {
-			return err
-		}
-	}
-
-	if config.Throttle != nil {
-		if err := v.validateThrottle(config.Throttle); err != nil {
-			return err
-		}
+	if err := v.validateThrottle(&config.Throttle); err != nil {
+		return err
 	}
 
 	return nil
@@ -84,33 +62,8 @@ func (v *Validator) validateMode(mode string) error {
 	}
 }
 
-// validateLogging validates logging configuration
-func (v *Validator) validateLogging(config *types.LoggingConfig) error {
-	if config == nil {
-		return nil
-	}
-
-	if config.Level == "" {
-		config.Level = "info"
-	}
-
-	if config.Format == "" {
-		config.Format = "text"
-	}
-
-	if config.Output == "" {
-		config.Output = "stdout"
-	}
-
-	return nil
-}
-
 // validateNetwork validates network configuration
 func (v *Validator) validateNetwork(config *types.NetworkConfig) error {
-	if config == nil {
-		return nil
-	}
-
 	if config.MTU <= 0 {
 		config.MTU = 1500
 	}
@@ -120,20 +73,16 @@ func (v *Validator) validateNetwork(config *types.NetworkConfig) error {
 
 // validateTunnel validates tunnel configuration
 func (v *Validator) validateTunnel(config *types.TunnelConfig) error {
-	if config == nil {
-		return nil
-	}
-
-	if config.MTU <= 0 {
-		config.MTU = 1500
-	}
-
 	if config.Protocol == "" {
 		config.Protocol = "tcp"
 	}
 
-	if config.Keepalive.Duration == 0 {
-		config.Keepalive = types.NewDuration(60 * time.Second)
+	if config.ServerPort <= 0 {
+		config.ServerPort = 8080
+	}
+
+	if config.ListenPort <= 0 {
+		config.ListenPort = 8080
 	}
 
 	return nil
@@ -141,14 +90,8 @@ func (v *Validator) validateTunnel(config *types.TunnelConfig) error {
 
 // validateSecurity validates security configuration
 func (v *Validator) validateSecurity(config *types.SecurityConfig) error {
-	if config == nil {
-		return nil
-	}
-
-	if config.TLS != nil {
-		if err := v.validateTLS(config.TLS); err != nil {
-			return err
-		}
+	if err := v.validateTLS(&config.TLS); err != nil {
+		return err
 	}
 
 	return nil
@@ -156,10 +99,6 @@ func (v *Validator) validateSecurity(config *types.SecurityConfig) error {
 
 // validateTLS validates TLS configuration
 func (v *Validator) validateTLS(config *types.TLSConfig) error {
-	if config == nil {
-		return nil
-	}
-
 	if config.MinVersion == "" {
 		config.MinVersion = "1.2"
 	}
@@ -173,16 +112,13 @@ func (v *Validator) validateTLS(config *types.TLSConfig) error {
 
 // validateMonitor validates monitor configuration
 func (v *Validator) validateMonitor(config *types.MonitorConfig) error {
-	if config == nil {
-		return nil
-	}
-
 	if config.Type == "" {
 		config.Type = "basic"
 	}
 
-	if config.Interval.Duration == 0 {
-		config.Interval = types.NewDuration(time.Minute)
+	// Set default interval if not set
+	if config.Interval == (types.Duration{}) {
+		config.Interval = types.Duration{Duration: time.Minute}
 	}
 
 	return nil
@@ -190,16 +126,13 @@ func (v *Validator) validateMonitor(config *types.MonitorConfig) error {
 
 // validateMetrics validates metrics configuration
 func (v *Validator) validateMetrics(config *types.MetricsConfig) error {
-	if config == nil {
-		return nil
-	}
-
 	if config.Address == "" {
 		config.Address = "localhost:8080"
 	}
 
-	if config.Interval.Duration == 0 {
-		config.Interval = types.NewDuration(10 * time.Second)
+	// Set default interval if not set
+	if config.Interval == (types.Duration{}) {
+		config.Interval = types.Duration{Duration: 10 * time.Second}
 	}
 
 	if config.BufferSize <= 0 {
@@ -211,10 +144,6 @@ func (v *Validator) validateMetrics(config *types.MetricsConfig) error {
 
 // validateThrottle validates throttle configuration
 func (v *Validator) validateThrottle(config *types.ThrottleConfig) error {
-	if config == nil {
-		return nil
-	}
-
 	if config.Rate < 0 {
 		return fmt.Errorf("invalid rate: %d", config.Rate)
 	}

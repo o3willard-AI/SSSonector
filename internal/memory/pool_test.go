@@ -1,234 +1,143 @@
 package memory
 
 import (
-	"runtime"
-	"sync"
 	"testing"
 	"time"
 
 	"go.uber.org/zap"
 )
 
-func TestBufferPool(t *testing.T) {
+const (
+	size4K  = 4 * 1024
+	size8K  = 8 * 1024
+	size16K = 16 * 1024
+	size32K = 32 * 1024
+	size64K = 64 * 1024
+)
+
+func TestBufferPool_BasicOperations(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
-	manager := NewManager(&LimitConfig{MaxMemoryMB: 100}, logger)
-	pool := NewBufferPool(manager)
+	manager := NewManager(100, time.Second, logger)
+	pool := NewBufferPool(manager, logger)
 
-	t.Run("Get and Put Standard Size", func(t *testing.T) {
-		buf := pool.Get(size4K)
-		if buf == nil {
-			t.Fatal("Expected buffer allocation to succeed")
-		}
-		if len(buf) != size4K {
-			t.Errorf("Expected buffer size %d, got %d", size4K, len(buf))
-		}
-
-		pool.Put(buf)
-	})
-
-	t.Run("Get Non-Standard Size", func(t *testing.T) {
-		size := 10000 // Non-standard size
-		buf := pool.Get(size)
-		if buf == nil {
-			t.Fatal("Expected buffer allocation to succeed")
-		}
-		if len(buf) != size {
-			t.Errorf("Expected buffer size %d, got %d", size, len(buf))
-		}
-
-		pool.Put(buf)
-	})
-
-	t.Run("Memory Limit Enforcement", func(t *testing.T) {
-		// Try to allocate more than the limit
-		size := 101 * 1024 * 1024 // 101MB
-		buf := pool.Get(size)
-		if buf != nil {
-			t.Error("Expected allocation to fail due to memory limit")
-		}
-	})
-}
-
-func TestBufferPoolConcurrent(t *testing.T) {
-	logger, _ := zap.NewDevelopment()
-	manager := NewManager(&LimitConfig{MaxMemoryMB: 100}, logger)
-	pool := NewBufferPool(manager)
-
-	const (
-		numGoroutines = 10
-		numIterations = 100
-	)
-
-	var wg sync.WaitGroup
-	wg.Add(numGoroutines)
-
-	for i := 0; i < numGoroutines; i++ {
-		go func() {
-			defer wg.Done()
-			for j := 0; j < numIterations; j++ {
-				buf := pool.Get(size4K)
-				if buf != nil {
-					// Simulate some work
-					time.Sleep(time.Microsecond)
-					pool.Put(buf)
-				}
-			}
-		}()
-	}
-
-	wg.Wait()
-}
-
-func TestGetClosestPoolSize(t *testing.T) {
-	logger, _ := zap.NewDevelopment()
-	manager := NewManager(nil, logger)
-	pool := NewBufferPool(manager)
-
-	tests := []struct {
-		name     string
-		size     int
-		expected int
-	}{
-		{"Exact Match", size4K, size4K},
-		{"Round Up Small", 3 * 1024, size4K},
-		{"Round Up Medium", 33 * 1024, size64K},
-		{"Too Large", 2 * 1024 * 1024, -1},
-		{"Zero Size", 0, size4K},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := pool.GetClosestPoolSize(tt.size)
-			if got != tt.expected {
-				t.Errorf("GetClosestPoolSize(%d) = %d, want %d", tt.size, got, tt.expected)
-			}
-		})
-	}
-}
-
-func TestBufferPoolCleanup(t *testing.T) {
-	logger, _ := zap.NewDevelopment()
-	manager := NewManager(&LimitConfig{MaxMemoryMB: 100}, logger)
-	pool := NewBufferPool(manager)
-
-	// Allocate some buffers
-	var buffers [][]byte
-	for i := 0; i < 10; i++ {
-		buf := pool.Get(size4K)
-		if buf == nil {
-			t.Fatal("Failed to allocate buffer")
-		}
-		buffers = append(buffers, buf)
-	}
-
-	// Return them to the pool
-	for _, buf := range buffers {
-		pool.Put(buf)
-	}
-
-	// Force cleanup
-	pool.Reset()
-
-	// Verify memory was released
-	runtime.GC()
-	var memStats runtime.MemStats
-	runtime.ReadMemStats(&memStats)
-
-	// Get new buffers to ensure pool is still functional
+	// Test Get
 	buf := pool.Get(size4K)
 	if buf == nil {
-		t.Fatal("Failed to allocate buffer after cleanup")
+		t.Fatal("Expected buffer, got nil")
 	}
+	if len(buf) != size4K {
+		t.Errorf("Expected buffer size %d, got %d", size4K, len(buf))
+	}
+
+	// Test Put
 	pool.Put(buf)
 }
 
-func TestBufferPoolStats(t *testing.T) {
+func TestBufferPool_SizeRange(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
-	manager := NewManager(&LimitConfig{MaxMemoryMB: 100}, logger)
-	pool := NewBufferPool(manager)
+	manager := NewManager(100, time.Second, logger)
+	pool := NewBufferPool(manager, logger)
 
-	stats := pool.GetStats()
-	if len(stats) == 0 {
-		t.Error("Expected non-empty stats")
+	// Test default size range
+	minSize, maxSize := pool.GetSizeRange()
+	if minSize != DefaultMinSize {
+		t.Errorf("Expected min size %d, got %d", DefaultMinSize, minSize)
+	}
+	if maxSize != DefaultMaxSize {
+		t.Errorf("Expected max size %d, got %d", DefaultMaxSize, maxSize)
 	}
 
-	// Verify stats for each pool size
-	for size, stat := range stats {
-		if stat.Size != size {
-			t.Errorf("Expected size %d, got %d", size, stat.Size)
-		}
-		if stat.Capacity != 100*1024*1024 {
-			t.Errorf("Expected capacity %d, got %d", 100*1024*1024, stat.Capacity)
-		}
+	// Test setting size range
+	err := pool.SetSizeRange(size8K, size32K)
+	if err != nil {
+		t.Fatalf("Failed to set size range: %v", err)
+	}
+
+	minSize, maxSize = pool.GetSizeRange()
+	if minSize != size8K {
+		t.Errorf("Expected min size %d, got %d", size8K, minSize)
+	}
+	if maxSize != size32K {
+		t.Errorf("Expected max size %d, got %d", size32K, maxSize)
 	}
 }
 
-func TestIsManagedSize(t *testing.T) {
+func TestBufferPool_MemoryLimit(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
-	manager := NewManager(nil, logger)
-	pool := NewBufferPool(manager)
+	manager := NewManager(1, time.Second, logger) // 1MB limit
+	pool := NewBufferPool(manager, logger)
 
-	tests := []struct {
-		name     string
-		size     int
-		expected bool
-	}{
-		{"4K", size4K, true},
-		{"8K", size8K, true},
-		{"Non-standard", 10000, false},
-		{"Zero", 0, false},
-		{"Negative", -1, false},
-		{"Very Large", 2 * 1024 * 1024, false},
+	// Test allocation within limit
+	buf := pool.Get(size4K)
+	if buf == nil {
+		t.Fatal("Expected buffer, got nil")
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := pool.IsManagedSize(tt.size)
-			if got != tt.expected {
-				t.Errorf("IsManagedSize(%d) = %v, want %v", tt.size, got, tt.expected)
-			}
-		})
+	// Test allocation exceeding limit
+	buf2 := pool.Get(2 * 1024 * 1024) // 2MB
+	if buf2 != nil {
+		t.Error("Expected nil buffer for allocation exceeding limit")
+	}
+
+	// Release memory
+	pool.Put(buf)
+}
+
+func TestBufferPool_Cleanup(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	manager := NewManager(100, time.Second, logger)
+	pool := NewBufferPool(manager, logger)
+
+	// Allocate some buffers
+	bufs := make([][]byte, 10)
+	for i := 0; i < 10; i++ {
+		bufs[i] = pool.Get(size4K)
+		if bufs[i] == nil {
+			t.Fatalf("Failed to allocate buffer %d", i)
+		}
+	}
+
+	// Return buffers to pool
+	for i := 0; i < 10; i++ {
+		pool.Put(bufs[i])
+	}
+
+	// Trigger cleanup
+	pool.cleanup()
+
+	// Verify memory is released
+	if manager.GetCurrentMemory() != 0 {
+		t.Errorf("Expected 0 current memory, got %d", manager.GetCurrentMemory())
 	}
 }
 
-func BenchmarkBufferPool(b *testing.B) {
+func TestBufferPool_Concurrent(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
-	manager := NewManager(&LimitConfig{MaxMemoryMB: 100}, logger)
-	pool := NewBufferPool(manager)
+	manager := NewManager(100, time.Second, logger)
+	pool := NewBufferPool(manager, logger)
 
-	b.Run("Get/Put 4K", func(b *testing.B) {
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			buf := pool.Get(size4K)
-			pool.Put(buf)
-		}
-	})
+	done := make(chan bool)
+	const goroutines = 10
 
-	b.Run("Get/Put Mixed Sizes", func(b *testing.B) {
-		sizes := []int{size4K, size8K, size16K, size32K}
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			size := sizes[i%len(sizes)]
-			buf := pool.Get(size)
-			pool.Put(buf)
-		}
-	})
-
-	b.Run("Concurrent Get/Put", func(b *testing.B) {
-		const numGoroutines = 4
-		var wg sync.WaitGroup
-		wg.Add(numGoroutines)
-
-		b.ResetTimer()
-		for i := 0; i < numGoroutines; i++ {
-			go func() {
-				defer wg.Done()
-				for j := 0; j < b.N/numGoroutines; j++ {
-					buf := pool.Get(size4K)
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			for j := 0; j < 100; j++ {
+				buf := pool.Get(size4K)
+				if buf != nil {
 					pool.Put(buf)
 				}
-			}()
-		}
-		wg.Wait()
-	})
+			}
+			done <- true
+		}()
+	}
+
+	// Wait for all goroutines
+	for i := 0; i < goroutines; i++ {
+		<-done
+	}
+
+	// Verify memory is released
+	if manager.GetCurrentMemory() != 0 {
+		t.Errorf("Expected 0 current memory, got %d", manager.GetCurrentMemory())
+	}
 }

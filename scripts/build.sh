@@ -1,107 +1,89 @@
 #!/bin/bash
 set -e
 
-# Build configuration
-VERSION="1.0.0"
-BINARY_NAME="sssonector"
-BINARY_CONTROL="sssonectorctl"
-PLATFORMS=("linux/amd64" "linux/arm64" "darwin/amd64" "darwin/arm64" "windows/amd64")
-OUTPUT_DIR="build"
+# Get the version from git tag or use a default
+VERSION=$(git describe --tags 2>/dev/null || echo "dev")
+COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+BUILD_TIME=$(date -u '+%Y-%m-%d_%H:%M:%S')
 
-# Ensure output directory exists
-mkdir -p "$OUTPUT_DIR"/{packages,docker}
+# Build flags
+LDFLAGS="-X main.Version=$VERSION -X main.Commit=$COMMIT -X main.BuildTime=$BUILD_TIME -s -w"
+
+# Supported platforms
+PLATFORMS=(
+    "linux/amd64"
+    "linux/arm64"
+    "linux/arm/v7"
+    "darwin/amd64"
+    "darwin/arm64"
+    "windows/amd64"
+    "windows/386"
+)
+
+# Commands to build
+COMMANDS=(
+    "cmd/admin"
+    "cmd/benchmark"
+)
+
+# Clean build directory
+rm -rf build/bin/*
 
 # Build for each platform
 for platform in "${PLATFORMS[@]}"; do
     # Split platform into OS and architecture
-    IFS="/" read -r -a parts <<< "$platform"
-    GOOS="${parts[0]}"
-    GOARCH="${parts[1]}"
+    IFS="/" read -r -a platform_split <<< "$platform"
+    GOOS="${platform_split[0]}"
+    GOARCH="${platform_split[1]}"
+    ARM=""
     
-    # Set output binary names based on platform
-    if [ "$GOOS" = "windows" ]; then
-        daemon_name="${BINARY_NAME}.exe"
-        control_name="${BINARY_CONTROL}.exe"
-    else
-        daemon_name="${BINARY_NAME}"
-        control_name="${BINARY_CONTROL}"
+    # Handle ARM version if specified
+    if [ "${#platform_split[@]}" -eq 3 ]; then
+        ARM="${platform_split[2]}"
+        GOARM="${ARM#v}"  # Remove 'v' prefix
     fi
 
-    echo "Building for $GOOS/$GOARCH..."
-    
-    # Create platform-specific directory
-    platform_dir="$OUTPUT_DIR/$GOOS/$GOARCH"
-    mkdir -p "$platform_dir"
-    
-    # Build binaries
-    GOOS=$GOOS GOARCH=$GOARCH go build -v \
-        -ldflags "-X main.Version=$VERSION" \
-        -o "$platform_dir/$daemon_name" \
-        cmd/daemon/main.go
+    # Build each command
+    for cmd in "${COMMANDS[@]}"; do
+        # Get the binary name from the command path
+        binary_name=$(basename "$cmd")
+        
+        # Add extension for Windows
+        if [ "$GOOS" = "windows" ]; then
+            binary_name="$binary_name.exe"
+        fi
 
-    GOOS=$GOOS GOARCH=$GOARCH go build -v \
-        -ldflags "-X main.Version=$VERSION" \
-        -o "$platform_dir/$control_name" \
-        cmd/sssonectorctl/main.go
-    
-    # Copy platform-specific service files
-    case $GOOS in
-        "linux")
-            cp init/systemd/sssonector.service "$platform_dir/"
-            cp scripts/install.sh "$platform_dir/"
-            ;;
-        "darwin")
-            cp init/launchd/com.o3willard.sssonector.plist "$platform_dir/"
-            cp scripts/install_macos.sh "$platform_dir/"
-            ;;
-        "windows")
-            cp scripts/install.ps1 "$platform_dir/"
-            ;;
-    esac
+        # Create platform-specific directory
+        platform_dir="build/bin/$GOOS/$GOARCH"
+        if [ -n "$ARM" ]; then
+            platform_dir="$platform_dir/$ARM"
+        fi
+        mkdir -p "$platform_dir"
 
-    # Create archive
-    echo "Creating archive for $GOOS/$GOARCH..."
-    cd "$OUTPUT_DIR"
-    if [ "$GOOS" = "windows" ]; then
-        zip -j "packages/${BINARY_NAME}-${VERSION}-$GOOS-$GOARCH.zip" "$GOOS/$GOARCH/"*
-    else
-        tar czf "packages/${BINARY_NAME}-${VERSION}-$GOOS-$GOARCH.tar.gz" -C "$GOOS/$GOARCH" .
-    fi
-    cd ..
+        # Set environment variables for cross-compilation
+        export GOOS="$GOOS"
+        export GOARCH="$GOARCH"
+        if [ -n "$GOARM" ]; then
+            export GOARM="$GOARM"
+        fi
+
+        echo "Building $binary_name for $GOOS/$GOARCH${ARM:+/$ARM}..."
+        
+        # Build the binary
+        go build -ldflags "$LDFLAGS" -o "$platform_dir/$binary_name" "./$cmd"
+
+        # Create checksum
+        (cd "$platform_dir" && sha256sum "$binary_name" > "$binary_name.sha256")
+    done
 done
 
-# Build security policies if on Linux
-if [ "$(uname)" = "Linux" ]; then
-    echo "Building security policies..."
-    if [ -d "security/selinux" ]; then
-        cd security/selinux && ./build_policy.sh
-        cp *.pp "$OUTPUT_DIR/linux/amd64/"
-        cp *.pp "$OUTPUT_DIR/linux/arm64/"
-    fi
-    if [ -d "security/apparmor" ]; then
-        cp security/apparmor/usr.local.bin.sssonector "$OUTPUT_DIR/linux/amd64/"
-        cp security/apparmor/usr.local.bin.sssonector "$OUTPUT_DIR/linux/arm64/"
-    fi
-fi
+# Create version file
+cat > build/bin/version.json << EOF
+{
+    "version": "$VERSION",
+    "commit": "$COMMIT",
+    "buildTime": "$BUILD_TIME"
+}
+EOF
 
-# Copy documentation
-echo "Copying documentation..."
-mkdir -p "$OUTPUT_DIR/docs"
-cp -r docs/deployment "$OUTPUT_DIR/docs/"
-cp -r docs/config "$OUTPUT_DIR/docs/"
-cp -r docs/implementation "$OUTPUT_DIR/docs/"
-cp README.md LICENSE CHANGELOG.md "$OUTPUT_DIR/"
-
-# Copy Kubernetes manifests
-if [ -d "deploy/kubernetes" ]; then
-    echo "Copying Kubernetes manifests..."
-    cp -r deploy/kubernetes "$OUTPUT_DIR/"
-fi
-
-# Create release bundle
-echo "Creating release bundle..."
-cd "$OUTPUT_DIR"
-tar czf "${BINARY_NAME}-${VERSION}-release.tar.gz" *
-cd ..
-
-echo "Build complete! Artifacts available in $OUTPUT_DIR"
+echo "Build complete! Binaries are in build/bin/"

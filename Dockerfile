@@ -2,10 +2,10 @@
 FROM golang:1.21-alpine AS builder
 
 # Install build dependencies
-RUN apk add --no-cache gcc musl-dev linux-headers
+RUN apk add --no-cache make git
 
 # Set working directory
-WORKDIR /build
+WORKDIR /app
 
 # Copy go mod and sum files
 COPY go.mod go.sum ./
@@ -16,44 +16,47 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build binaries
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s -X main.Version=1.0.0" -o sssonector ./cmd/daemon/main.go && \
-    CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s -X main.Version=1.0.0" -o sssonectorctl ./cmd/sssonectorctl/main.go
+# Build the application
+RUN make build
 
 # Final stage
-FROM alpine:3.19
+FROM alpine:latest
 
 # Install runtime dependencies
-RUN apk add --no-cache ca-certificates iptables ip6tables && \
-    mkdir -p /etc/sssonector /var/log/sssonector
-
-# Copy binaries from builder
-COPY --from=builder /build/sssonector /usr/local/bin/
-COPY --from=builder /build/sssonectorctl /usr/local/bin/
-
-# Make binaries executable
-RUN chmod +x /usr/local/bin/sssonector /usr/local/bin/sssonectorctl
+RUN apk add --no-cache ca-certificates tzdata
 
 # Create non-root user
-RUN adduser -D -H -s /sbin/nologin sssonector && \
-    chown -R sssonector:sssonector /etc/sssonector /var/log/sssonector
+RUN adduser -D -g '' sssonector
 
-# Set capabilities
-RUN apk add --no-cache libcap && \
-    setcap cap_net_admin,cap_net_raw+ep /usr/local/bin/sssonector && \
-    apk del libcap
+# Set working directory
+WORKDIR /app
+
+# Copy binaries from builder
+COPY --from=builder /app/bin/sssonector /app/
+COPY --from=builder /app/bin/benchmark /app/
+
+# Copy configuration files
+COPY --from=builder /app/config /app/config
+
+# Set ownership
+RUN chown -R sssonector:sssonector /app
 
 # Switch to non-root user
 USER sssonector
 
 # Expose ports
-EXPOSE 443/tcp
-EXPOSE 443/udp
+EXPOSE 8080
 
-# Set healthcheck
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD sssonectorctl status || exit 1
+# Set environment variables
+ENV GO_ENV=production
 
-# Set entrypoint
-ENTRYPOINT ["/usr/local/bin/sssonector"]
-CMD ["-config", "/etc/sssonector/config.yaml"]
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s \
+  CMD wget --quiet --tries=1 --spider http://localhost:8080/health || exit 1
+
+# Default command
+CMD ["/app/sssonector"]
+
+# Alternative commands available:
+# - Run benchmarks: /app/benchmark
+# Usage examples in README.md

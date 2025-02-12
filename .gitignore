@@ -4,15 +4,14 @@
 *.dll
 *.so
 *.dylib
+bin/
 
 # Test binary, built with `go test -c`
 *.test
 
-# Output of the go coverage tool, specifically when used with LiteIDE
+# Output of the go coverage tool
 *.out
-
-# Build directory
-build/
+coverage.html
 
 # Dependency directories
 vendor/
@@ -22,23 +21,72 @@ vendor/
 .vscode/
 *.swp
 *.swo
+*~
 
 # OS specific files
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
 
-# Distribution artifacts
+# Log files
+*.log
+logs/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Build output
 dist/
+build/
+
+# Temporary files
+tmp/
+temp/
+
+# Benchmark results
+benchmark.txt
+benchmark_results/
+
+# Debug files
+debug
+__debug_bin
+
+# Project specific
+config.local.yaml
+*.pprof
+*.cpu
+*.mem
+*.trace
+
+# Docker
+.docker/
+docker-compose.override.yml
+
+# Generated files
+*.pb.go
+*_string.go
+*_gen.go
+mock_*.go
 
 # Certificate files
-certs/
-*.crt
+*.pem
 *.key
+*.crt
+*.csr
+*.srl
 
-# Log files
-logs/
-*.log
+# Database files
+*.db
+*.sqlite
+*.sqlite3
 
-# Release artifacts
-release.json
-go*.tar.gz
+# Backup files
+*.bak
+*.backup
+*~

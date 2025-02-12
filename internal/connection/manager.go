@@ -7,21 +7,20 @@ import (
 	"sync"
 	"time"
 
+	"github.com/o3willard-AI/SSSonector/internal/breaker"
+	"github.com/o3willard-AI/SSSonector/internal/ratelimit"
 	"go.uber.org/zap"
 )
 
-// ConnectionState represents the state of a connection
-type ConnectionState string
-
-const (
-	StateConnected    ConnectionState = "Connected"
-	StateDisconnected ConnectionState = "Disconnected"
-)
+// Dialer defines the interface for creating connections
+type Dialer interface {
+	DialContext(ctx context.Context, network, address string) (net.Conn, error)
+}
 
 // ConnectionInfo holds information about a connection
 type ConnectionInfo struct {
 	RemoteAddr    string
-	State         ConnectionState
+	State         ManagerState
 	BytesSent     int64
 	BytesReceived int64
 }
@@ -34,28 +33,49 @@ type Config struct {
 	RetryAttempts  int
 	RetryInterval  time.Duration
 	ConnectTimeout time.Duration
+	RateLimit      *ratelimit.Config
+	CircuitBreaker *breaker.Config
 }
 
 // Manager handles connection management and tracking
 type Manager struct {
-	logger       *zap.Logger
-	config       *Config
-	mu           sync.RWMutex
-	conns        map[net.Conn]*ConnectionInfo
-	connCount    int
-	state        ConnectionState
-	onConnect    func(net.Conn)
-	onDisconnect func(net.Conn, error)
+	logger         *zap.Logger
+	config         *Config
+	mu             sync.RWMutex
+	conns          map[net.Conn]*ConnectionInfo
+	connCount      int
+	state          ManagerState
+	onConnect      func(net.Conn)
+	onDisconnect   func(net.Conn, error)
+	rateLimiter    *ratelimit.RateLimiter
+	circuitBreaker *breaker.CircuitBreaker
+	dialer         Dialer
 }
 
 // NewManager creates a new connection manager
 func NewManager(logger *zap.Logger, cfg *Config) *Manager {
-	return &Manager{
+	m := &Manager{
 		logger: logger,
 		config: cfg,
 		conns:  make(map[net.Conn]*ConnectionInfo),
-		state:  StateDisconnected,
+		state:  ManagerStateDisconnected,
+		dialer: &net.Dialer{},
 	}
+
+	if cfg.RateLimit != nil {
+		m.rateLimiter = ratelimit.NewRateLimiter(cfg.RateLimit, logger)
+	}
+
+	if cfg.CircuitBreaker != nil {
+		m.circuitBreaker = breaker.NewCircuitBreaker(cfg.CircuitBreaker, logger)
+	}
+
+	return m
+}
+
+// SetDialer sets a custom dialer for testing
+func (m *Manager) SetDialer(dialer Dialer) {
+	m.dialer = dialer
 }
 
 // SetCallbacks sets the connection callbacks
@@ -68,6 +88,14 @@ func (m *Manager) SetCallbacks(onConnect func(net.Conn), onDisconnect func(net.C
 
 // Accept registers a new connection
 func (m *Manager) Accept(conn net.Conn) error {
+	// Check rate limit first
+	if m.rateLimiter != nil {
+		remoteAddr := conn.RemoteAddr().String()
+		if !m.rateLimiter.Allow(remoteAddr) {
+			return fmt.Errorf("rate limit exceeded for %s", remoteAddr)
+		}
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -84,10 +112,10 @@ func (m *Manager) Accept(conn net.Conn) error {
 
 	m.conns[conn] = &ConnectionInfo{
 		RemoteAddr: conn.RemoteAddr().String(),
-		State:      StateConnected,
+		State:      ManagerStateConnected,
 	}
 	m.connCount++
-	m.state = StateConnected
+	m.state = ManagerStateConnected
 
 	m.logger.Info("Connection added",
 		zap.String("remote_addr", conn.RemoteAddr().String()),
@@ -109,7 +137,7 @@ func (m *Manager) Remove(conn net.Conn) {
 	if info, exists := m.conns[conn]; exists {
 		delete(m.conns, conn)
 		m.connCount--
-		info.State = StateDisconnected
+		info.State = ManagerStateDisconnected
 		m.logger.Info("Connection removed",
 			zap.String("remote_addr", conn.RemoteAddr().String()),
 			zap.Int("total_connections", m.connCount),
@@ -120,13 +148,35 @@ func (m *Manager) Remove(conn net.Conn) {
 		}
 
 		if m.connCount == 0 {
-			m.state = StateDisconnected
+			m.state = ManagerStateDisconnected
+		}
+
+		// Remove rate limit for this connection
+		if m.rateLimiter != nil {
+			m.rateLimiter.Remove(conn.RemoteAddr().String())
 		}
 	}
 }
 
 // Connect attempts to establish a connection with retries
 func (m *Manager) Connect(network, address string) (net.Conn, error) {
+	if m.circuitBreaker != nil {
+		var conn net.Conn
+		var err error
+		execErr := m.circuitBreaker.Execute(context.Background(), func() error {
+			conn, err = m.doConnect(network, address)
+			return err
+		})
+		if execErr != nil {
+			return nil, execErr
+		}
+		return conn, nil
+	}
+	return m.doConnect(network, address)
+}
+
+// doConnect performs the actual connection attempt
+func (m *Manager) doConnect(network, address string) (net.Conn, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), m.config.ConnectTimeout)
 	defer cancel()
 
@@ -144,8 +194,7 @@ func (m *Manager) Connect(network, address string) (net.Conn, error) {
 				}
 			}
 
-			dialer := net.Dialer{Timeout: m.config.ConnectTimeout / time.Duration(m.config.RetryAttempts+1)}
-			conn, err := dialer.DialContext(ctx, network, address)
+			conn, err := m.dialer.DialContext(ctx, network, address)
 			if err == nil {
 				resultCh <- conn
 				return
@@ -155,8 +204,7 @@ func (m *Manager) Connect(network, address string) (net.Conn, error) {
 				zap.String("network", network),
 				zap.String("address", address),
 				zap.Int("attempt", attempt+1),
-				zap.Error(err),
-			)
+				zap.Error(err))
 
 			if attempt == m.config.RetryAttempts {
 				errCh <- err
@@ -183,6 +231,19 @@ func (m *Manager) UpdateStats(remoteAddr string, bytesSent, bytesReceived int64)
 		if info.RemoteAddr == remoteAddr {
 			info.BytesSent = bytesSent
 			info.BytesReceived = bytesReceived
+
+			// Update rate limiter if bytes exceed threshold
+			if m.rateLimiter != nil && bytesSent+bytesReceived > 1024*1024 { // 1MB threshold
+				// Adjust rate limit based on usage
+				currentRate, currentBurst := m.rateLimiter.GetRate(remoteAddr)
+				if bytesSent+bytesReceived > 10*1024*1024 { // 10MB threshold
+					// Reduce rate for high usage
+					m.rateLimiter.SetRate(remoteAddr, currentRate/2, currentBurst/2)
+				} else {
+					// Increase rate for moderate usage
+					m.rateLimiter.SetRate(remoteAddr, currentRate*2, currentBurst*2)
+				}
+			}
 			break
 		}
 	}
@@ -201,7 +262,7 @@ func (m *Manager) GetConnections() []ConnectionInfo {
 }
 
 // GetState returns the current connection state
-func (m *Manager) GetState() ConnectionState {
+func (m *Manager) GetState() ManagerState {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.state
@@ -220,8 +281,29 @@ func (m *Manager) Stop() {
 		delete(m.conns, conn)
 	}
 	m.connCount = 0
-	m.state = StateDisconnected
+	m.state = ManagerStateDisconnected
+
+	if m.rateLimiter != nil {
+		m.rateLimiter.Stop()
+	}
+
 	m.logger.Info("All connections closed")
+}
+
+// GetCircuitBreakerStats returns circuit breaker statistics if enabled
+func (m *Manager) GetCircuitBreakerStats() *breaker.Stats {
+	if m.circuitBreaker != nil {
+		stats := m.circuitBreaker.GetStats()
+		return &stats
+	}
+	return nil
+}
+
+// ResetCircuitBreaker resets the circuit breaker if enabled
+func (m *Manager) ResetCircuitBreaker() {
+	if m.circuitBreaker != nil {
+		m.circuitBreaker.Reset()
+	}
 }
 
 // CanAcceptMore checks if more connections can be accepted
@@ -246,4 +328,13 @@ func (m *Manager) Add(conn net.Conn) error {
 // CloseAll is an alias for Stop for backward compatibility
 func (m *Manager) CloseAll() {
 	m.Stop()
+}
+
+// GetRateLimitMetrics returns rate limiting metrics if enabled
+func (m *Manager) GetRateLimitMetrics() *ratelimit.Metrics {
+	if m.rateLimiter != nil {
+		metrics := m.rateLimiter.GetMetrics()
+		return &metrics
+	}
+	return nil
 }
