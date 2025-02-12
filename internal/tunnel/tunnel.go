@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/o3willard-AI/SSSonector/internal/adapter"
 	"github.com/o3willard-AI/SSSonector/internal/config/interfaces"
@@ -26,6 +27,21 @@ const (
 	// StateStopping indicates the tunnel is stopping
 	StateStopping
 )
+
+func (s State) String() string {
+	switch s {
+	case StateStopped:
+		return "Stopped"
+	case StateStarting:
+		return "Starting"
+	case StateRunning:
+		return "Running"
+	case StateStopping:
+		return "Stopping"
+	default:
+		return "Unknown"
+	}
+}
 
 // Tunnel represents a network tunnel
 type Tunnel interface {
@@ -82,12 +98,58 @@ func (s *Server) Start() error {
 	s.setState(StateStarting)
 	s.logger.Info("Starting tunnel server")
 
+	// Create adapter options
+	opts := adapter.DefaultOptions()
+	opts.Name = s.config.Config.Network.Interface
+	opts.MTU = s.config.Config.Network.MTU
+	opts.Address = s.config.Config.Network.Address
+
+	// Apply adapter-specific settings if present
+	if s.config.Adapter != nil {
+		opts.RetryAttempts = s.config.Adapter.RetryAttempts
+		opts.RetryDelay = time.Duration(s.config.Adapter.RetryDelay) * time.Millisecond
+		opts.CleanupTimeout = time.Duration(s.config.Adapter.CleanupTimeout) * time.Millisecond
+	}
+
 	// Create TUN adapter
 	var err error
-	s.adapter, err = adapter.FromConfig(s.config)
+	s.adapter, err = adapter.NewTUNAdapter(opts)
 	if err != nil {
 		s.setState(StateStopped)
 		return fmt.Errorf("failed to create adapter: %w", err)
+	}
+
+	// Wait for adapter to be ready
+	s.logger.Info("Waiting for adapter to be ready",
+		zap.String("interface", opts.Name),
+		zap.String("address", opts.Address),
+	)
+
+	for i := 0; i < 10; i++ {
+		status := s.adapter.GetStatus()
+		s.logger.Info(fmt.Sprintf("State: %s", status.State.String()))
+
+		if status.State == adapter.StateReady {
+			break
+		}
+
+		if status.State == adapter.StateError {
+			s.setState(StateStopped)
+			if err := s.adapter.Cleanup(); err != nil {
+				s.logger.Error("Failed to cleanup adapter", zap.Error(err))
+			}
+			return fmt.Errorf("adapter in error state: %v", status.LastError)
+		}
+
+		time.Sleep(time.Second)
+	}
+
+	if s.adapter.GetState() != adapter.StateReady {
+		s.setState(StateStopped)
+		if err := s.adapter.Cleanup(); err != nil {
+			s.logger.Error("Failed to cleanup adapter", zap.Error(err))
+		}
+		return fmt.Errorf("adapter failed to reach ready state")
 	}
 
 	// Create TCP listener
@@ -105,9 +167,7 @@ func (s *Server) Start() error {
 	}
 
 	s.setState(StateRunning)
-	s.logger.Info("Tunnel server started",
-		zap.String("address", addr),
-	)
+	s.logger.Info(fmt.Sprintf("State: %s", s.getState().String()))
 
 	// Accept connections
 	go s.acceptConnections()
@@ -145,7 +205,7 @@ func (s *Server) Stop() error {
 	}
 
 	s.setState(StateStopped)
-	s.logger.Info("Tunnel server stopped")
+	s.logger.Info(fmt.Sprintf("State: %s", s.getState().String()))
 
 	return nil
 }
@@ -153,6 +213,7 @@ func (s *Server) Stop() error {
 // setState atomically sets the tunnel state
 func (s *Server) setState(state State) {
 	atomic.StoreInt32((*int32)(&s.state), int32(state))
+	s.logger.Info(fmt.Sprintf("State: %s", state.String()))
 }
 
 // getState atomically gets the tunnel state

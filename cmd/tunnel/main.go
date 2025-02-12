@@ -1,95 +1,136 @@
 package main
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
+	"os/signal"
+	"syscall"
 
-	"github.com/o3willard-AI/SSSonector/internal/config/store"
+	"github.com/o3willard-AI/SSSonector/internal/config"
 	"github.com/o3willard-AI/SSSonector/internal/config/types"
+	"github.com/o3willard-AI/SSSonector/internal/config/validator"
 	"github.com/o3willard-AI/SSSonector/internal/tunnel"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 var (
-	configPath string
-	logger     *zap.Logger
+	configFile string
+	debug      bool
 )
 
 func init() {
-	// Parse command line flags
-	flag.StringVar(&configPath, "config", "", "path to configuration file")
-	flag.Parse()
-
-	// Initialize logger
-	var err error
-	logger, err = zap.NewProduction()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to initialize logger: %v\n", err)
-		os.Exit(1)
-	}
+	flag.StringVar(&configFile, "config", "/etc/sssonector/config.yaml", "Path to configuration file")
+	flag.BoolVar(&debug, "debug", false, "Enable debug logging")
 }
 
 func main() {
-	// Create context
-	ctx := context.Background()
+	flag.Parse()
 
-	// Validate config path
-	if configPath == "" {
-		configPath = "/etc/sssonector/config.yaml"
+	// Initialize logger
+	var logger *zap.Logger
+	var err error
+
+	// Create custom encoder config
+	encoderConfig := zapcore.EncoderConfig{
+		TimeKey:        "",
+		LevelKey:       "",
+		NameKey:        "",
+		CallerKey:      "",
+		MessageKey:     "msg",
+		StacktraceKey:  "",
+		LineEnding:     zapcore.DefaultLineEnding,
+		EncodeLevel:    zapcore.CapitalLevelEncoder,
+		EncodeTime:     zapcore.ISO8601TimeEncoder,
+		EncodeDuration: zapcore.SecondsDurationEncoder,
+		EncodeCaller:   zapcore.ShortCallerEncoder,
 	}
 
-	// Create configuration store
-	configStore := store.NewFileStore(filepath.Dir(configPath))
+	// Create custom config
+	logConfig := zap.Config{
+		Level:            zap.NewAtomicLevelAt(zap.InfoLevel),
+		Development:      debug,
+		Encoding:         "console",
+		EncoderConfig:    encoderConfig,
+		OutputPaths:      []string{"stdout"},
+		ErrorOutputPaths: []string{"stderr"},
+		DisableCaller:    true,
+	}
+
+	if debug {
+		logConfig.Level = zap.NewAtomicLevelAt(zap.DebugLevel)
+	}
+
+	// Build logger
+	logger, err = logConfig.Build()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to create logger: %v\n", err)
+		os.Exit(1)
+	}
+	defer logger.Sync()
 
 	// Load configuration
-	appCfg, err := configStore.Load()
+	appCfg, err := config.LoadConfig(configFile)
 	if err != nil {
-		logger.Fatal("Failed to load configuration",
-			zap.String("path", configPath),
+		logger.Error("Failed to load configuration",
+			zap.String("file", configFile),
 			zap.Error(err),
 		)
+		os.Exit(1)
 	}
 
-	// Set server type if not already set
-	if appCfg.Type == "" {
-		appCfg.Type = types.TypeServer
-		if err := configStore.Store(appCfg); err != nil {
-			logger.Fatal("Failed to set configuration type", zap.Error(err))
-		}
+	// Validate configuration
+	v := validator.NewValidator()
+	if err := v.Validate(appCfg); err != nil {
+		logger.Error("Invalid configuration",
+			zap.Error(err),
+		)
+		os.Exit(1)
 	}
 
-	// Update certificate paths
-	if err := tunnel.UpdateCertificatePaths(appCfg, filepath.Dir(configPath)); err != nil {
-		logger.Fatal("Failed to update certificate paths", zap.Error(err))
-	}
+	// Log configuration
+	logger.Info("Starting tunnel",
+		zap.String("mode", appCfg.Config.Mode.String()),
+		zap.String("version", appCfg.Version),
+	)
 
-	// Create and run tunnel
-	var t interface {
-		Run(context.Context) error
-	}
-
-	if appCfg.Config == nil {
-		appCfg.Config = &types.Config{Mode: string(appCfg.Type)}
-	}
-
+	// Create tunnel based on mode
+	var t tunnel.Tunnel
 	switch appCfg.Config.Mode {
-	case string(types.TypeServer):
-		t, err = NewServer(appCfg, configStore, logger)
-	case string(types.TypeClient):
-		t, err = NewClient(appCfg, configStore, logger)
+	case types.ModeServer:
+		t = tunnel.NewServer(appCfg, nil, logger)
+	case types.ModeClient:
+		t = tunnel.NewClient(appCfg, nil, logger)
 	default:
-		logger.Fatal("Invalid mode", zap.String("mode", appCfg.Config.Mode))
+		logger.Error("Invalid mode",
+			zap.String("mode", appCfg.Config.Mode.String()),
+		)
+		os.Exit(1)
 	}
 
-	if err != nil {
-		logger.Fatal("Failed to create tunnel", zap.Error(err))
+	// Set up signal handling
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	// Start tunnel
+	if err := t.Start(); err != nil {
+		logger.Error("Failed to start tunnel",
+			zap.Error(err),
+		)
+		os.Exit(1)
 	}
 
-	// Run tunnel
-	if err := t.Run(ctx); err != nil {
-		logger.Fatal("Failed to run tunnel", zap.Error(err))
+	// Wait for signal
+	<-sigChan
+
+	// Stop tunnel
+	if err := t.Stop(); err != nil {
+		logger.Error("Failed to stop tunnel",
+			zap.Error(err),
+		)
+		os.Exit(1)
 	}
+
+	logger.Info("Tunnel stopped")
 }

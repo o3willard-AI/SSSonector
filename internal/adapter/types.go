@@ -3,6 +3,8 @@ package adapter
 import (
 	"fmt"
 	"time"
+
+	"github.com/o3willard-AI/SSSonector/internal/config/types"
 )
 
 // State represents the adapter state
@@ -22,6 +24,26 @@ const (
 	// StateError indicates the adapter is in error state
 	StateError
 )
+
+// String returns the string representation of the state
+func (s State) String() string {
+	switch s {
+	case StateUninitialized:
+		return "Uninitialized"
+	case StateInitializing:
+		return "Initializing"
+	case StateReady:
+		return "Ready"
+	case StateStopping:
+		return "Stopping"
+	case StateStopped:
+		return "Stopped"
+	case StateError:
+		return "Error"
+	default:
+		return "Unknown"
+	}
+}
 
 // Error definitions
 var (
@@ -85,29 +107,25 @@ type AdapterInterface interface {
 
 // FromConfig creates a new adapter from configuration
 func FromConfig(cfg interface{}) (AdapterInterface, error) {
-	// Extract network configuration
-	type networkConfig struct {
-		Name      string `yaml:"name"`
-		Interface string `yaml:"interface"`
-		MTU       int    `yaml:"mtu"`
-		Address   string `yaml:"address"`
-	}
-
-	type config struct {
-		Config struct {
-			Network networkConfig `yaml:"network"`
-		} `yaml:"config"`
-	}
-
-	c, ok := cfg.(*config)
+	appConfig, ok := cfg.(*types.AppConfig)
 	if !ok {
 		return nil, fmt.Errorf("invalid configuration type")
 	}
 
-	opts := DefaultOptions()
-	opts.Name = c.Config.Network.Name
-	opts.MTU = c.Config.Network.MTU
-	opts.Address = c.Config.Network.Address
+	if appConfig.Config == nil || appConfig.Config.Network == nil {
+		return nil, fmt.Errorf("missing network configuration")
+	}
 
-	return newTUNAdapter(opts)
+	opts := DefaultOptions()
+	opts.Name = appConfig.Config.Network.Interface
+	opts.MTU = appConfig.Config.Network.MTU
+	opts.Address = appConfig.Config.Network.Address
+
+	if appConfig.Adapter != nil {
+		opts.RetryAttempts = appConfig.Adapter.RetryAttempts
+		opts.RetryDelay = time.Duration(appConfig.Adapter.RetryDelay) * time.Millisecond
+		opts.CleanupTimeout = time.Duration(appConfig.Adapter.CleanupTimeout) * time.Millisecond
+	}
+
+	return NewTUNAdapter(opts)
 }

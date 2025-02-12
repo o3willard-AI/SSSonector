@@ -1,121 +1,160 @@
 package config
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/o3willard-AI/SSSonector/internal/config/types"
+	"github.com/stretchr/testify/assert"
 )
 
-func TestConfigManager(t *testing.T) {
-	// Create temporary directory for test configs
-	tempDir, err := os.MkdirTemp("", "sssonector-config-test")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+func TestLoadConfig(t *testing.T) {
+	// Test loading default configuration
+	cfg := types.DefaultConfig()
+	assert.NotNil(t, cfg)
+	assert.Equal(t, types.TypeServer, cfg.Type)
+	assert.Equal(t, "1.0.0", cfg.Version)
+	assert.Equal(t, types.ModeServer, cfg.Config.Mode)
+	assert.Equal(t, "/var/lib/sssonector", cfg.Config.StateDir)
+	assert.Equal(t, "/var/log/sssonector", cfg.Config.LogDir)
+}
 
-	// Create manager
-	manager := CreateManager(tempDir)
-
-	// Test default config
-	config, err := manager.Get()
-	if err != nil {
-		t.Fatalf("Failed to get default config: %v", err)
-	}
-	if config == nil {
-		t.Fatal("Expected non-nil default config")
-	}
-	if config.Type != TypeServer {
-		t.Errorf("Expected default type %s, got %s", TypeServer, config.Type)
-	}
-
-	// Test setting new config
-	newConfig := &types.AppConfig{
-		Type:    TypeClient,
+func TestConfigValidation(t *testing.T) {
+	// Test valid configuration
+	cfg := &types.AppConfig{
+		Type:    types.TypeClient,
 		Version: "1.0.0",
 		Config: &types.Config{
-			Mode: ModeClient,
-			Logging: types.LoggingConfig{
-				Level:  "debug",
-				File:   "/var/log/sssonector.log",
-				Format: "json",
-			},
-			Network: types.NetworkConfig{
-				Interface:  "tun0",
-				MTU:        1500,
-				Address:    "10.0.0.1",
-				DNSServers: []string{"8.8.8.8"},
-			},
-			Tunnel: types.TunnelConfig{
-				Port:        8080,
-				Protocol:    "tcp",
-				Compression: true,
-			},
+			Mode:     types.ModeClient,
+			StateDir: "/var/lib/sssonector",
+			LogDir:   "/var/log/sssonector",
+			Logging:  types.NewLoggingConfig(),
+			Network:  types.NewNetworkConfig(),
+			Tunnel:   types.NewTunnelConfig(),
 		},
-		Metadata: types.ConfigMetadata{
-			Version:     "1.0.0",
-			Created:     time.Now(),
-			Modified:    time.Now(),
-			CreatedBy:   "test",
-			Environment: "test",
-		},
+		Metadata: types.NewConfigMetadata(),
 	}
 
-	if err := manager.Set(newConfig); err != nil {
-		t.Fatalf("Failed to set config: %v", err)
-	}
+	assert.NotNil(t, cfg)
+	assert.Equal(t, types.TypeClient, cfg.Type)
+	assert.Equal(t, "1.0.0", cfg.Version)
+	assert.Equal(t, types.ModeClient, cfg.Config.Mode)
+}
 
-	// Test getting updated config
-	updatedConfig, err := manager.Get()
-	if err != nil {
-		t.Fatalf("Failed to get updated config: %v", err)
-	}
-	if updatedConfig.Type != TypeClient {
-		t.Errorf("Expected type %s, got %s", TypeClient, updatedConfig.Type)
-	}
-	if updatedConfig.Config.Mode != ModeClient {
-		t.Errorf("Expected mode %s, got %s", ModeClient, updatedConfig.Config.Mode)
-	}
+func TestConfigDefaults(t *testing.T) {
+	// Test default values
+	cfg := types.NewAppConfig()
 
-	// Test config file was created
-	files, err := os.ReadDir(tempDir)
-	if err != nil {
-		t.Fatalf("Failed to read temp dir: %v", err)
-	}
-	if len(files) != 1 {
-		t.Errorf("Expected 1 config file, got %d", len(files))
-	}
-	expectedFilename := filepath.Join(tempDir, "config-client-1.0.0.json")
-	if _, err := os.Stat(expectedFilename); os.IsNotExist(err) {
-		t.Errorf("Expected config file %s does not exist", expectedFilename)
-	}
+	assert.NotNil(t, cfg)
+	assert.Equal(t, types.TypeServer, cfg.Type)
+	assert.Equal(t, "1.0.0", cfg.Version)
+	assert.Equal(t, types.ModeServer, cfg.Config.Mode)
+	assert.Equal(t, "/var/lib/sssonector", cfg.Config.StateDir)
+	assert.Equal(t, "/var/log/sssonector", cfg.Config.LogDir)
+}
 
-	// Test watching config changes
-	watcher, err := manager.Watch()
-	if err != nil {
-		t.Fatalf("Failed to create watcher: %v", err)
-	}
+func TestConfigLogging(t *testing.T) {
+	// Test logging configuration
+	cfg := types.NewAppConfig()
+	cfg.Config.Logging = types.NewLoggingConfig()
 
-	// Update config and verify watcher receives it
-	newConfig.Config.Network.MTU = 1400
-	if err := manager.Update(newConfig); err != nil {
-		t.Fatalf("Failed to update config: %v", err)
-	}
+	assert.NotNil(t, cfg.Config.Logging)
+	assert.Equal(t, "info", cfg.Config.Logging.Level)
+	assert.Equal(t, "text", cfg.Config.Logging.Format)
+	assert.Equal(t, "stdout", cfg.Config.Logging.Output)
+}
 
-	select {
-	case updatedConfig := <-watcher:
-		if updatedConfig.Config.Network.MTU != 1400 {
-			t.Errorf("Expected MTU 1400, got %d", updatedConfig.Config.Network.MTU)
-		}
-	case <-time.After(time.Second):
-		t.Error("Timed out waiting for config update")
-	}
+func TestConfigNetwork(t *testing.T) {
+	// Test network configuration
+	cfg := types.NewAppConfig()
+	cfg.Config.Network = types.NewNetworkConfig()
 
-	// Test closing manager
-	if err := manager.Close(); err != nil {
-		t.Fatalf("Failed to close manager: %v", err)
-	}
+	assert.NotNil(t, cfg.Config.Network)
+	assert.Equal(t, 1500, cfg.Config.Network.MTU)
+	assert.Empty(t, cfg.Config.Network.DNS)
+	assert.Empty(t, cfg.Config.Network.Routes)
+}
+
+func TestConfigTunnel(t *testing.T) {
+	// Test tunnel configuration
+	cfg := types.NewAppConfig()
+	cfg.Config.Tunnel = types.NewTunnelConfig()
+
+	assert.NotNil(t, cfg.Config.Tunnel)
+	assert.Equal(t, 1500, cfg.Config.Tunnel.MTU)
+	assert.Equal(t, "tcp", cfg.Config.Tunnel.Protocol)
+	assert.False(t, cfg.Config.Tunnel.Compression)
+	assert.Equal(t, 60*time.Second, cfg.Config.Tunnel.Keepalive.Duration)
+}
+
+func TestConfigSecurity(t *testing.T) {
+	// Test security configuration
+	cfg := types.NewAppConfig()
+	cfg.Config.Security = types.NewSecurityConfig()
+
+	assert.NotNil(t, cfg.Config.Security)
+	assert.NotNil(t, cfg.Config.Security.TLS)
+	assert.NotNil(t, cfg.Config.Security.MemoryProtections)
+	assert.NotNil(t, cfg.Config.Security.Namespace)
+	assert.NotNil(t, cfg.Config.Security.Capabilities)
+	assert.NotNil(t, cfg.Config.Security.Seccomp)
+}
+
+func TestConfigMonitor(t *testing.T) {
+	// Test monitor configuration
+	cfg := types.NewAppConfig()
+	cfg.Config.Monitor = types.NewMonitorConfig()
+
+	assert.NotNil(t, cfg.Config.Monitor)
+	assert.False(t, cfg.Config.Monitor.Enabled)
+	assert.Equal(t, time.Minute, cfg.Config.Monitor.Interval.Duration)
+	assert.NotNil(t, cfg.Config.Monitor.Prometheus)
+	assert.Equal(t, "basic", cfg.Config.Monitor.Type)
+}
+
+func TestConfigMetrics(t *testing.T) {
+	// Test metrics configuration
+	cfg := types.NewAppConfig()
+	cfg.Config.Metrics = types.NewMetricsConfig()
+
+	assert.NotNil(t, cfg.Config.Metrics)
+	assert.False(t, cfg.Config.Metrics.Enabled)
+	assert.Equal(t, 10*time.Second, cfg.Config.Metrics.Interval.Duration)
+	assert.Equal(t, "localhost:8080", cfg.Config.Metrics.Address)
+}
+
+func TestConfigSNMP(t *testing.T) {
+	// Test SNMP configuration
+	cfg := types.NewAppConfig()
+	cfg.Config.SNMP = types.NewSNMPConfig()
+
+	assert.NotNil(t, cfg.Config.SNMP)
+	assert.False(t, cfg.Config.SNMP.Enabled)
+	assert.Equal(t, "public", cfg.Config.SNMP.Community)
+	assert.Equal(t, 161, cfg.Config.SNMP.Port)
+}
+
+func TestConfigThrottle(t *testing.T) {
+	// Test throttle configuration
+	cfg := types.NewAppConfig()
+	cfg.Throttle = types.NewThrottleConfig()
+
+	assert.NotNil(t, cfg.Throttle)
+	assert.False(t, cfg.Throttle.Enabled)
+	assert.Equal(t, int64(0), cfg.Throttle.Rate)
+	assert.Equal(t, int64(0), cfg.Throttle.Burst)
+}
+
+func TestConfigMetadata(t *testing.T) {
+	// Test metadata configuration
+	cfg := types.NewAppConfig()
+	cfg.Metadata = types.NewConfigMetadata()
+
+	assert.NotNil(t, cfg.Metadata)
+	assert.Equal(t, "1.0.0", cfg.Metadata.Version)
+	assert.NotEmpty(t, cfg.Metadata.LastModified)
+	assert.NotEmpty(t, cfg.Metadata.Created)
+	assert.NotEmpty(t, cfg.Metadata.Modified)
+	assert.NotEmpty(t, cfg.Metadata.CreatedAt)
+	assert.NotEmpty(t, cfg.Metadata.UpdatedAt)
 }

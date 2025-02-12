@@ -9,21 +9,21 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/o3willard-AI/SSSonector/internal/config"
+	"github.com/o3willard-AI/SSSonector/internal/config/types"
 	"github.com/o3willard-AI/SSSonector/internal/service"
 	"go.uber.org/zap"
 )
 
 // Client represents a control client
 type Client struct {
-	cfg        *config.AppConfig
+	cfg        *types.AppConfig
 	logger     *zap.Logger
 	conn       net.Conn
 	socketPath string
 }
 
 // NewClient creates a new control client
-func NewClient(cfg *config.AppConfig, logger *zap.Logger) (*Client, error) {
+func NewClient(cfg *types.AppConfig, logger *zap.Logger) (*Client, error) {
 	return &Client{
 		cfg:        cfg,
 		logger:     logger,
