@@ -248,7 +248,130 @@ done
 # - Connection tracking
 ```
 
-### 7. Reliability Testing
+### 7. Startup Logging Tests
+
+#### Configuration Verification
+```bash
+# Check startup logging configuration
+grep -A 5 "logging:" /etc/sssonector/config.yaml
+# Should show:
+#   startup_logs: true
+#   level: info
+#   format: json
+
+# Verify log file permissions
+ls -l /var/log/sssonector/sssonector.log
+# Should be readable by sssonector user
+```
+
+#### Startup Phase Logging
+```bash
+# Start service with clean log
+sudo rm /var/log/sssonector/sssonector.log
+sudo systemctl restart sssonector
+
+# Check startup phase sequence
+grep "Entering.*phase" /var/log/sssonector/sssonector.log
+# Should show in order:
+# 1. PreStartup phase
+# 2. Initialization phase
+# 3. Connection phase
+# 4. Listen phase (server only)
+
+# Verify phase timing
+grep "duration" /var/log/sssonector/sssonector.log
+# Check reasonable durations for each phase
+```
+
+#### Operation Logging
+```bash
+# Check operation details
+grep "startup_log" /var/log/sssonector/sssonector.log | jq .
+# Verify for each operation:
+# - Correct phase
+# - Component identification
+# - Operation description
+# - Timing information
+# - Success/failure status
+# - Error details if any
+
+# Verify critical operations
+grep -A 2 "Create TUN adapter" /var/log/sssonector/sssonector.log
+grep -A 2 "Create TCP listener" /var/log/sssonector/sssonector.log
+grep -A 2 "Connect to server" /var/log/sssonector/sssonector.log
+```
+
+#### Resource State Tracking
+```bash
+# Check adapter state tracking
+grep "Resource state: adapter" /var/log/sssonector/sssonector.log
+# Verify:
+# - State transitions
+# - Interface details
+# - Address configuration
+# - Error conditions
+
+# Monitor state changes
+sudo systemctl restart sssonector
+watch -n 1 'tail -n 50 /var/log/sssonector/sssonector.log | grep "state"'
+# Verify clean state progression
+```
+
+#### Error Handling
+```bash
+# Test invalid configuration
+sudo sed -i 's/startup_logs: true/startup_logs: invalid/' /etc/sssonector/config.yaml
+sudo systemctl restart sssonector
+grep "error" /var/log/sssonector/sssonector.log
+# Should show validation error
+
+# Test missing permissions
+sudo chmod 000 /dev/net/tun
+sudo systemctl restart sssonector
+grep "error" /var/log/sssonector/sssonector.log
+# Should show detailed error with context
+sudo chmod 666 /dev/net/tun
+
+# Test network failure
+sudo ip link set enp0s3 down
+sudo systemctl restart sssonector
+grep "error" /var/log/sssonector/sssonector.log
+# Should show network error details
+sudo ip link set enp0s3 up
+```
+
+#### Performance Impact
+```bash
+# Measure startup time with logging enabled
+time sudo systemctl restart sssonector
+grep "duration" /var/log/sssonector/sssonector.log | jq -s 'add'
+
+# Measure startup time with logging disabled
+sudo sed -i 's/startup_logs: true/startup_logs: false/' /etc/sssonector/config.yaml
+time sudo systemctl restart sssonector
+
+# Compare resource usage
+ps -p $(pidof sssonector) -o %cpu,%mem,rss,vsz --no-headers
+```
+
+#### Log Format Validation
+```bash
+# Verify JSON formatting
+cat /var/log/sssonector/sssonector.log | while read line; do
+    echo "$line" | jq . >/dev/null 2>&1 || echo "Invalid JSON: $line"
+done
+
+# Check required fields
+jq -r 'select(.startup_log != null) | .startup_log | [.phase, .component, .operation, .timestamp] | @csv' /var/log/sssonector/sssonector.log
+# Verify all fields present and valid
+
+# Validate timestamps
+jq -r 'select(.startup_log != null) | .startup_log.timestamp' /var/log/sssonector/sssonector.log | while read ts; do
+    date -d "$ts" >/dev/null 2>&1 || echo "Invalid timestamp: $ts"
+done
+```
+
+### 8. Reliability Testing
 
 #### State Transition Verification
 ```bash

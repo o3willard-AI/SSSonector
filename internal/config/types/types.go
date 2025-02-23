@@ -276,9 +276,10 @@ func NewMetricsConfig() *MetricsConfig {
 
 func NewLoggingConfig() *LoggingConfig {
 	return &LoggingConfig{
-		Level:  "info",
-		Format: "text",
-		Output: "stdout",
+		Level:       "info",
+		Format:      "text",
+		Output:      "stdout",
+		StartupLogs: true,
 	}
 }
 
@@ -318,12 +319,47 @@ func DefaultConfig() *AppConfig {
 	}
 }
 
-// Remaining type definitions (unchanged)
+// StartupPhase represents a startup phase
+type StartupPhase string
+
+const (
+	StartupPhasePreStartup     StartupPhase = "PreStartup"
+	StartupPhaseInitialization StartupPhase = "Initialization"
+	StartupPhaseConnection     StartupPhase = "Connection"
+	StartupPhaseListen         StartupPhase = "Listen"
+)
+
+// StartupComponent represents a startup component
+type StartupComponent string
+
+const (
+	StartupComponentConfig     StartupComponent = "Config"
+	StartupComponentSecurity   StartupComponent = "Security"
+	StartupComponentNetwork    StartupComponent = "Network"
+	StartupComponentTLS        StartupComponent = "TLS"
+	StartupComponentAdapter    StartupComponent = "Adapter"
+	StartupComponentConnection StartupComponent = "Connection"
+)
+
+// StartupLog represents a detailed startup log entry
+type StartupLog struct {
+	Phase     StartupPhase           `json:"phase" yaml:"phase"`
+	Component StartupComponent       `json:"component" yaml:"component"`
+	Operation string                 `json:"operation" yaml:"operation"`
+	Details   map[string]interface{} `json:"details,omitempty" yaml:"details,omitempty"`
+	Duration  Duration               `json:"duration,omitempty" yaml:"duration,omitempty"`
+	Status    string                 `json:"status" yaml:"status"`
+	Error     string                 `json:"error,omitempty" yaml:"error,omitempty"`
+	Timestamp time.Time              `json:"timestamp" yaml:"timestamp"`
+}
+
+// LoggingConfig represents logging configuration
 type LoggingConfig struct {
-	Level  string `yaml:"level"`
-	Format string `yaml:"format"`
-	Output string `yaml:"output"`
-	File   string `yaml:"file,omitempty"`
+	Level       string `yaml:"level"`
+	Format      string `yaml:"format"`
+	Output      string `yaml:"output"`
+	File        string `yaml:"file,omitempty"`
+	StartupLogs bool   `yaml:"startup_logs"`
 }
 
 type NetworkConfig struct {
