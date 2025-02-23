@@ -171,41 +171,75 @@
    - Common issues and troubleshooting guide
    - Bug reporting guidelines and requirements
 
-2. `docs/qa/connection_pool_testing.md`
+2. `docs/qa_automation_plan.md`
+   - Comprehensive test automation strategy
+   - Docker-based testing infrastructure
+   - Security testing enhancements
+   - Performance testing suite
+   - CI/CD integration
+   - Test result processing
+   - Monitoring integration
+
+3. `test/qa_scripts/README.md`
+   - Setup scripts documentation
+   - Environment preparation procedures
+   - Test execution guidelines
+   - Log management
+   - Support and maintenance
+
+4. `test/qa_scripts/CORE_TEST.md`
+   - Core functionality test specifications
+   - Test scenarios and validation criteria
+   - Environment requirements
+   - Troubleshooting procedures
+
+5. `test/qa_docs/ai_qa_automation_guide.md`
+   - AI-driven test automation guidelines
+   - Test case generation
+   - Result validation
+   - Continuous improvement procedures
+
+6. `test/interface_tests/README.md`
+   - Interface testing methodology
+   - Test coverage requirements
+   - Platform-specific considerations
+   - Validation procedures
+
+7. `docs/qa/connection_pool_testing.md`
    - Connection pool test scenarios
    - Performance benchmarking procedures
    - Error handling verification
    - Resource management validation
 
-3. `docs/deployment/connection_pool_deployment.md`
+8. `docs/deployment/connection_pool_deployment.md`
    - Deployment configuration guidelines
    - Production environment setup
    - Monitoring and maintenance procedures
    - Troubleshooting and support
 
-4. `docs/qa_environment_state.md`
+9. `docs/qa_environment_state.md`
    - QA environment configuration
    - Test data management
    - Environment maintenance
    - State restoration procedures
 
-5. `docs/QA_SYSTEM_EVALUATION.md`
-   - System evaluation criteria
-   - Performance benchmarks
-   - Security assessment guidelines
-   - Compliance requirements
+10. `docs/QA_SYSTEM_EVALUATION.md`
+    - System evaluation criteria
+    - Performance benchmarks
+    - Security assessment guidelines
+    - Compliance requirements
 
-6. `docs/rate_limit_qa_certification.md`
-   - Rate limiting certification process
-   - Test scenarios and validation
-   - Performance requirements
-   - Compliance verification
+11. `docs/rate_limit_qa_certification.md`
+    - Rate limiting certification process
+    - Test scenarios and validation
+    - Performance requirements
+    - Compliance verification
 
-7. `docs/virtualbox_testing.md`
-   - VirtualBox test environment setup
-   - Network configuration
-   - Performance considerations
-   - Test automation
+12. `docs/virtualbox_testing.md`
+    - VirtualBox test environment setup
+    - Network configuration
+    - Performance considerations
+    - Test automation
 
 ## Security Documentation
 
