@@ -1,0 +1,61 @@
+#!/usr/bin/expect -f
+
+exp_internal 1
+set timeout 20
+set password "101abn"
+
+proc test_vm {ip} {
+    puts "\nTesting connection to $ip..."
+    spawn ssh -o StrictHostKeyChecking=accept-new -i /home/sblanken/.ssh/qa_key sblanken@$ip "echo 'Connection test'"
+    
+    expect {
+        "continue connecting (yes/no" {
+            send "yes\r"
+            exp_continue
+        }
+        "password:" {
+            send "$::password\r"
+            exp_continue
+        }
+        "Connection refused" {
+            puts "❌ Connection refused to $ip"
+            return 1
+        }
+        "Connection timed out" {
+            puts "❌ Connection timed out to $ip"
+            return 1
+        }
+        "No route to host" {
+            puts "❌ No route to host $ip"
+            return 1
+        }
+        "Permission denied" {
+            puts "❌ Permission denied for $ip"
+            return 1
+        }
+        "Connection test" {
+            puts "✅ Successfully connected to $ip"
+            expect eof
+            return 0
+        }
+        timeout {
+            puts "❌ Timeout waiting for response from $ip"
+            return 1
+        }
+        eof {
+            puts "❌ Connection closed unexpectedly for $ip"
+            return 1
+        }
+    }
+}
+
+foreach ip {192.168.50.210 192.168.50.211 192.168.50.212} {
+    if {[test_vm $ip] != 0} {
+        puts "\n❌ Failed to connect to $ip. Please verify the VM is running and network is configured correctly."
+        exit 1
+    }
+    after 1000
+}
+
+puts "\n✅ All VMs are accessible"
+exit 0

@@ -1,0 +1,22 @@
+#!/usr/bin/expect -f
+
+set timeout 20
+set password "101abn"
+
+puts "=== Checking NTOPNG Logs ==="
+spawn ssh sblanken@192.168.50.212 "echo '$password' | sudo -S bash -c 'echo === CHECKING JOURNALCTL === && journalctl -u ntopng --no-pager -n 50 && echo === CHECKING PERMISSIONS === && ls -l /var/lib/ntopng && echo === CHECKING INTERFACE === && ip link show enp0s3 && echo === CHECKING REDIS === && systemctl status redis-server'"
+
+expect {
+    "password:" {
+        send "$password\r"
+        exp_continue
+    }
+    timeout {
+        puts "\n❌ Operation timed out"
+        exit 1
+    }
+    eof {
+        puts "\n✅ Operation complete"
+        exit 0
+    }
+}

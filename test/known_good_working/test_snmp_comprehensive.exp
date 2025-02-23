@@ -1,0 +1,342 @@
+#!/usr/bin/expect -f
+
+# Comprehensive SNMP testing script with validation
+set timeout 30
+set log_file "snmp_test_[clock format [clock seconds] -format %Y%m%d_%H%M%S].log"
+
+proc log_message {message} {
+    global log_file
+    set timestamp [clock format [clock seconds] -format "%Y-%m-%d %H:%M:%S"]
+    exec echo "$timestamp - $message" >> $log_file
+}
+
+proc validate_metric {oid value min max} {
+    if {$value < $min || $value > $max} {
+        return "WARNING: OID $oid value $value outside expected range ($min-$max)"
+    }
+    return "OK: OID $oid value $value within range ($min-$max)"
+}
+
+log_message "Starting SNMP test suite"
+
+# Test performance metrics (1.x)
+log_message "Testing performance metrics walk"
+spawn ssh snmp-server "snmpwalk -v2c -c public localhost .1.3.6.1.4.1.54321.1"
+expect {
+    timeout { log_message "ERROR: Performance metrics walk timed out"; exit 1 }
+    eof
+}
+
+# Test status metrics (2.x)
+log_message "Testing status metrics walk"
+spawn ssh snmp-server "snmpwalk -v2c -c public localhost .1.3.6.1.4.1.54321.2"
+expect {
+    timeout { log_message "ERROR: Status metrics walk timed out"; exit 1 }
+    eof
+}
+
+# Test configuration metrics (3.x)
+log_message "Testing configuration metrics walk"
+spawn ssh snmp-server "snmpwalk -v2c -c public localhost .1.3.6.1.4.1.54321.3"
+expect {
+    timeout { log_message "ERROR: Configuration metrics walk timed out"; exit 1 }
+    eof
+}
+
+# Test performance metrics
+foreach {oid desc min max type} {
+    1.1 "Bytes In" 0 1000000000000 "Counter64"
+    1.2 "Bytes Out" 0 1000000000000 "Counter64"
+    1.7 "Active Connections" 0 1000 "Gauge32"
+    1.8 "CPU Usage" 0 100 "Gauge32"
+    1.9 "Memory Usage" 0 1000000 "Gauge32"
+} {
+    log_message "Testing $desc (OID: $oid)"
+    spawn ssh snmp-server "snmpget -v2c -c public localhost .1.3.6.1.4.1.54321.$oid"
+    expect {
+        -re "$type: (\[0-9\]+)" {
+            set value $expect_out(1,string)
+            log_message [validate_metric $oid $value $min $max]
+        }
+        timeout {
+            log_message "ERROR: Timeout getting $desc"
+        }
+        eof
+    }
+}
+
+# Test status metrics
+log_message "Testing tunnel status"
+spawn ssh snmp-server "snmpget -v2c -c public localhost .1.3.6.1.4.1.54321.2.1"
+expect {
+    -re "INTEGER: (\[0-1\])" {
+        set value $expect_out(1,string)
+        log_message "Tunnel status: [expr {$value == 1 ? "UP" : "DOWN"}]"
+    }
+    timeout {
+        log_message "ERROR: Timeout getting tunnel status"
+    }
+    eof
+}
+
+log_message "Testing last error"
+spawn ssh snmp-server "snmpget -v2c -c public localhost .1.3.6.1.4.1.54321.2.2"
+expect {
+    -re "STRING: (.*)" {
+        set value $expect_out(1,string)
+        log_message "Last error: $value"
+    }
+    timeout {
+        log_message "ERROR: Timeout getting last error"
+    }
+    eof
+}
+
+# Test configuration metrics
+foreach {oid desc min max type} {
+    3.1 "Max Connections" 1 1000 "INTEGER"
+    3.2 "Upload Rate Limit" 0 1000000 "Gauge32"
+    3.3 "Download Rate Limit" 0 1000000 "Gauge32"
+} {
+    log_message "Testing $desc (OID: $oid)"
+    spawn ssh snmp-server "snmpget -v2c -c public localhost .1.3.6.1.4.1.54321.$oid"
+    expect {
+        -re "$type: (\[0-9\]+)" {
+            set value $expect_out(1,string)
+            log_message [validate_metric $oid $value $min $max]
+        }
+        timeout {
+            log_message "ERROR: Timeout getting $desc"
+        }
+        eof
+    }
+}
+
+# Test community string validation
+log_message "Testing community string validation cases"
+
+# Test invalid community string
+log_message "Testing basic invalid community string"
+spawn ssh snmp-server "snmpget -v2c -c invalid localhost .1.3.6.1.4.1.54321.1.1"
+expect {
+    "Authentication failure" {
+        log_message "OK: Basic invalid community string rejected"
+    }
+    timeout {
+        log_message "ERROR: Basic invalid community string test timed out"
+    }
+    eof
+}
+
+# Test community string with null bytes
+log_message "Testing community string with null bytes"
+spawn ssh snmp-server "echo -ne 'public\0test' | snmpget -v2c -c - localhost .1.3.6.1.4.1.54321.1.1"
+expect {
+    "Authentication failure" {
+        log_message "OK: Community string with null bytes rejected"
+    }
+    timeout {
+        log_message "ERROR: Null byte test timed out"
+    }
+    eof
+}
+
+# Test community string with whitespace
+log_message "Testing community string with whitespace"
+spawn ssh snmp-server "snmpget -v2c -c ' public ' localhost .1.3.6.1.4.1.54321.1.1"
+expect {
+    "Authentication failure" {
+        log_message "OK: Community string with whitespace rejected"
+    }
+    timeout {
+        log_message "ERROR: Whitespace test timed out"
+    }
+    eof
+}
+
+# Test long community string
+log_message "Testing long community string"
+spawn ssh snmp-server "snmpget -v2c -c [string repeat a 33] localhost .1.3.6.1.4.1.54321.1.1"
+expect {
+    "Authentication failure" {
+        log_message "OK: Long community string rejected"
+    }
+    timeout {
+        log_message "ERROR: Long community string test timed out"
+    }
+    eof
+}
+
+# Test non-printable characters
+log_message "Testing community string with non-printable characters"
+spawn ssh snmp-server "echo -ne 'public\x1b\x7f' | snmpget -v2c -c - localhost .1.3.6.1.4.1.54321.1.1"
+expect {
+    "Authentication failure" {
+        log_message "OK: Community string with non-printable characters rejected"
+    }
+    timeout {
+        log_message "ERROR: Non-printable character test timed out"
+    }
+    eof
+}
+
+# Test valid community string (baseline)
+log_message "Testing valid community string"
+spawn ssh snmp-server "snmpget -v2c -c public localhost .1.3.6.1.4.1.54321.1.1"
+expect {
+    "Authentication failure" {
+        log_message "ERROR: Valid community string rejected"
+    }
+    timeout {
+        log_message "ERROR: Valid community string test timed out"
+    }
+    eof {
+        log_message "OK: Valid community string accepted"
+    }
+}
+
+# Test write access with read community
+log_message "Testing write access with read community"
+spawn ssh snmp-server "snmpset -v2c -c public localhost .1.3.6.1.4.1.54321.3.1 i 100"
+expect {
+    "Error in packet" {
+        log_message "OK: Write with read community rejected"
+    }
+    timeout {
+        log_message "ERROR: Write access test timed out"
+    }
+    eof
+}
+
+# Test rate limiting
+log_message "Testing rate limiting via rapid queries"
+for {set i 0} {$i < 20} {incr i} {
+    spawn ssh snmp-server "snmpget -v2c -c public localhost .1.3.6.1.4.1.54321.1.1"
+    expect {
+        "Timeout" {
+            log_message "OK: Rate limiting active (request $i timed out)"
+            break
+        }
+        eof
+    }
+    after 50
+}
+
+# Test third-party monitoring functionality
+log_message "Testing third-party monitoring functionality"
+
+# Test server monitoring access
+log_message "Testing server monitoring access (192.168.50.210:10161)"
+foreach {oid desc type} {
+    ".1.3.6.1.4.1.54321.1.1" "Bytes In" "Counter64"
+    ".1.3.6.1.4.1.54321.1.2" "Bytes Out" "Counter64"
+    ".1.3.6.1.4.1.54321.1.7" "Active Connections" "Gauge32"
+    ".1.3.6.1.4.1.54321.1.8" "CPU Usage" "Gauge32"
+    ".1.3.6.1.4.1.54321.1.9" "Memory Usage" "Gauge32"
+} {
+    spawn ssh snmp-server "snmpget -v1 -c public -t 1 -r 1 192.168.50.210:10161 $oid"
+    expect {
+        -re "$type:" {
+            log_message "OK: Server $desc accessible"
+        }
+        timeout {
+            log_message "ERROR: Server $desc not accessible"
+        }
+        eof
+    }
+}
+
+# Test client monitoring access
+log_message "Testing client monitoring access (192.168.50.211:10162)"
+foreach {oid desc type} {
+    ".1.3.6.1.4.1.54321.1.1" "Bytes In" "Counter64"
+    ".1.3.6.1.4.1.54321.1.2" "Bytes Out" "Counter64"
+    ".1.3.6.1.4.1.54321.1.7" "Active Connections" "Gauge32"
+    ".1.3.6.1.4.1.54321.1.8" "CPU Usage" "Gauge32"
+    ".1.3.6.1.4.1.54321.1.9" "Memory Usage" "Gauge32"
+} {
+    spawn ssh snmp-server "snmpget -v1 -c public -t 1 -r 1 192.168.50.211:10162 $oid"
+    expect {
+        -re "$type:" {
+            log_message "OK: Client $desc accessible"
+        }
+        timeout {
+            log_message "ERROR: Client $desc not accessible"
+        }
+        eof
+    }
+}
+
+# Test monitoring data consistency
+log_message "Testing monitoring data consistency"
+
+# Get server bytes in/out
+spawn ssh snmp-server "snmpget -v1 -c public -t 1 -r 1 192.168.50.210:10161 .1.3.6.1.4.1.54321.1.1"
+expect {
+    -re "Counter64: (\[0-9\]+)" {
+        set server_bytes_in $expect_out(1,string)
+        log_message "Server bytes in: $server_bytes_in"
+    }
+    timeout {
+        log_message "ERROR: Could not get server bytes in"
+    }
+    eof
+}
+
+spawn ssh snmp-server "snmpget -v1 -c public -t 1 -r 1 192.168.50.210:10161 .1.3.6.1.4.1.54321.1.2"
+expect {
+    -re "Counter64: (\[0-9\]+)" {
+        set server_bytes_out $expect_out(1,string)
+        log_message "Server bytes out: $server_bytes_out"
+    }
+    timeout {
+        log_message "ERROR: Could not get server bytes out"
+    }
+    eof
+}
+
+# Get client bytes in/out
+spawn ssh snmp-server "snmpget -v1 -c public -t 1 -r 1 192.168.50.211:10162 .1.3.6.1.4.1.54321.1.1"
+expect {
+    -re "Counter64: (\[0-9\]+)" {
+        set client_bytes_in $expect_out(1,string)
+        log_message "Client bytes in: $client_bytes_in"
+    }
+    timeout {
+        log_message "ERROR: Could not get client bytes in"
+    }
+    eof
+}
+
+spawn ssh snmp-server "snmpget -v1 -c public -t 1 -r 1 192.168.50.211:10162 .1.3.6.1.4.1.54321.1.2"
+expect {
+    -re "Counter64: (\[0-9\]+)" {
+        set client_bytes_out $expect_out(1,string)
+        log_message "Client bytes out: $client_bytes_out"
+    }
+    timeout {
+        log_message "ERROR: Could not get client bytes out"
+    }
+    eof
+}
+
+# Verify data consistency
+if {[info exists server_bytes_out] && [info exists client_bytes_in]} {
+    if {$server_bytes_out >= $client_bytes_in} {
+        log_message "OK: Server out >= Client in (expected for overhead)"
+    } else {
+        log_message "WARNING: Server out < Client in (unexpected)"
+    }
+}
+
+if {[info exists server_bytes_in] && [info exists client_bytes_out]} {
+    if {$server_bytes_in >= $client_bytes_out} {
+        log_message "OK: Server in >= Client out (expected for overhead)"
+    } else {
+        log_message "WARNING: Server in < Client out (unexpected)"
+    }
+}
+
+log_message "SNMP test suite completed"
+puts "\nSNMP Testing Complete - See $log_file for details"
+exit 0

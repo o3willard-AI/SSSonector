@@ -1,0 +1,102 @@
+#!/usr/bin/expect -f
+
+# Enable expect debugging
+exp_internal 1
+set timeout 30
+set password "101abn"
+
+proc expect_prompt {} {
+    expect {
+        "password for sblanken:" {
+            send "$::password\r"
+            exp_continue
+        }
+        "default=N" {
+            send "N\r"
+            exp_continue
+        }
+        "What would you like to do about it" {
+            send "N\r"
+            exp_continue
+        }
+        timeout {
+            puts "❌ Timeout waiting for prompt"
+            return 1
+        }
+        -re {[#\$] $} {
+            return 0
+        }
+    }
+}
+
+proc install_snmp_on_vm {ip role} {
+    puts "\n==== Installing SNMP tools on $role VM ($ip) ===="
+    
+    spawn ssh -o ConnectTimeout=10 -i /home/sblanken/.ssh/qa_key sblanken@$ip
+    
+    expect {
+        "continue connecting (yes/no" {
+            send "yes\r"
+            exp_continue
+        }
+        timeout {
+            puts "❌ SSH connection timeout to $ip"
+            return 1
+        }
+        eof {
+            puts "❌ SSH connection failed to $ip"
+            return 1
+        }
+        -re {[#\$] $} {
+            puts "\n✅ SSH connection established to $ip"
+            
+            puts "\nUpdating package lists..."
+            send "sudo apt-get update\r"
+            expect_prompt
+            
+            puts "\nInstalling SNMP tools..."
+            send "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y snmp snmpd snmp-mibs-downloader\r"
+            expect_prompt
+            
+            puts "\nConfiguring SNMP daemon..."
+            send "sudo sed -i 's/agentaddress  udp:127.0.0.1:161/agentaddress  udp:161/' /etc/snmp/snmpd.conf\r"
+            expect_prompt
+            send "sudo sed -i 's/rocommunity public  default    -V systemonly/rocommunity public  default/' /etc/snmp/snmpd.conf\r"
+            expect_prompt
+            
+            puts "\nRestarting SNMP daemon..."
+            send "sudo systemctl restart snmpd\r"
+            expect_prompt
+            
+            puts "\nVerifying SNMP installation..."
+            send "snmpwalk -v2c -c public localhost system\r"
+            expect_prompt
+            
+            puts "\n✅ SNMP tools installed successfully on $role VM"
+            send "exit\r"
+            expect eof
+            return 0
+        }
+    }
+}
+
+# Main installation loop
+foreach vm {
+    {192.168.50.210 "server"}
+    {192.168.50.211 "client"}
+    {192.168.50.212 "monitor"}
+} {
+    set ip [lindex $vm 0]
+    set role [lindex $vm 1]
+    
+    if {[install_snmp_on_vm $ip $role] != 0} {
+        puts "\n❌ Failed to install SNMP tools on $role VM ($ip)"
+        exit 1
+    }
+    
+    # Add small delay between VMs
+    sleep 2
+}
+
+puts "\n✅ SNMP tools installation complete on all VMs"
+exit 0

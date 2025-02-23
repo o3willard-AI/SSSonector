@@ -1,0 +1,60 @@
+#!/usr/bin/expect -f
+
+set timeout 30
+set password "101abn"
+
+puts "=== Setting up Simple SNMP Script ==="
+spawn ssh sblanken@192.168.50.212 "echo '$password' | sudo -S bash -c 'cat > /usr/local/bin/sssonector-snmp << \"EOL\"
+#!/bin/bash
+
+OID=\"\$1\"
+TYPE=\"\$2\"
+
+case \"\$OID\" in
+    .1.3.6.1.4.1.54321.1.1)
+        echo \"INTEGER 1234\"
+        ;;
+    .1.3.6.1.4.1.54321.1.2)
+        echo \"INTEGER 5678\"
+        ;;
+    .1.3.6.1.4.1.54321.1.3)
+        echo \"INTEGER 10\"
+        ;;
+    .1.3.6.1.4.1.54321.1.4)
+        echo \"INTEGER 25\"
+        ;;
+    .1.3.6.1.4.1.54321.1.5)
+        echo \"INTEGER 50\"
+        ;;
+    *)
+        echo \"No such object available on this agent at this OID\"
+        exit 1
+        ;;
+esac
+EOL
+
+chmod +x /usr/local/bin/sssonector-snmp
+
+echo === RESTARTING SNMPD ===
+systemctl restart snmpd
+
+echo === TESTING SCRIPT ===
+/usr/local/bin/sssonector-snmp .1.3.6.1.4.1.54321.1.1
+
+echo === TESTING SNMPWALK ===
+snmpwalk -v2c -c public localhost .1.3.6.1.4.1.54321.1'"
+
+expect {
+    "password:" {
+        send "$password\r"
+        exp_continue
+    }
+    timeout {
+        puts "\n❌ Operation timed out"
+        exit 1
+    }
+    eof {
+        puts "\n✅ Operation complete"
+        exit 0
+    }
+}
