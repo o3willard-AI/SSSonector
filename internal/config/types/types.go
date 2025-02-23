@@ -84,6 +84,24 @@ func ParseType(s string) (Type, error) {
 	}
 }
 
+// CLIFlags represents command-line interface flags
+type CLIFlags struct {
+	ConfigFile string
+	Debug      bool
+	Version    bool
+	Help       bool
+}
+
+// NewCLIFlags creates a new CLIFlags with default values
+func NewCLIFlags() *CLIFlags {
+	return &CLIFlags{
+		ConfigFile: "/etc/sssonector/config.yaml",
+		Debug:      false,
+		Version:    false,
+		Help:       false,
+	}
+}
+
 // Common timeout durations
 var (
 	DefaultTimeout = NewDuration(30 * time.Second)

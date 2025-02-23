@@ -28,24 +28,12 @@ build() {
         -ldflags="-X main.Version=${VERSION}" \
         -o "${OUTPUT}" \
         ./cmd/tunnel
-
-    # Build benchmark binary
-    BENCHMARK_OUTPUT="${RELEASE_DIR}/benchmark_${VERSION}_${OS}_${ARCH}"
-    if [ "$OS" = "windows" ]; then
-        BENCHMARK_OUTPUT="${BENCHMARK_OUTPUT}.exe"
-    fi
-    GOOS=$OS GOARCH=$ARCH CGO_ENABLED=0 go build \
-        -ldflags="-X main.Version=${VERSION}" \
-        -o "${BENCHMARK_OUTPUT}" \
-        ./cmd/benchmark
     
     # Create checksums
     if [ "$OS" = "windows" ]; then
         sha256sum "${OUTPUT}" > "${OUTPUT}.sha256"
-        sha256sum "${BENCHMARK_OUTPUT}" > "${BENCHMARK_OUTPUT}.sha256"
     else
         shasum -a 256 "${OUTPUT}" > "${OUTPUT}.sha256"
-        shasum -a 256 "${BENCHMARK_OUTPUT}" > "${BENCHMARK_OUTPUT}.sha256"
     fi
     
     echo "Done building ${OS}/${ARCH}"

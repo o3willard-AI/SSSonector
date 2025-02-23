@@ -2,8 +2,8 @@ type: "server"
 version: "2.0.0"
 config:
   mode: "server"
-  state_dir: "/var/lib/sssonector"
-  log_dir: "/var/log/sssonector"
+  state_dir: "/home/sblanken/sssonector/state"
+  log_dir: "/home/sblanken/sssonector/log"
   network:
     name: "tun0"
     interface: "tun0"
@@ -13,10 +13,10 @@ config:
     listen_port: 8080
     server_port: 8080
     protocol: "tcp"
-    cert_file: "/etc/sssonector/certs/server.crt"
-    key_file: "/etc/sssonector/certs/server.key"
-    ca_file: "/etc/sssonector/certs/ca.crt"
-    listen_address: "192.168.50.210"  # Changed from 0.0.0.0 to specific IP
+    cert_file: "/home/sblanken/sssonector/certs/server.crt"
+    key_file: "/home/sblanken/sssonector/certs/server.key"
+    ca_file: "/home/sblanken/sssonector/certs/ca.crt"
+    listen_address: "192.168.50.210"
     max_clients: 1000
   security:
     memory_protections:
@@ -45,9 +45,9 @@ config:
     format: "json"
     output: "stdout"
   auth:
-    cert_file: "/etc/sssonector/certs/server.crt"
-    key_file: "/etc/sssonector/certs/server.key"
-    ca_file: "/etc/sssonector/certs/ca.crt"
+    cert_file: "/home/sblanken/sssonector/certs/server.crt"
+    key_file: "/home/sblanken/sssonector/certs/server.key"
+    ca_file: "/home/sblanken/sssonector/certs/ca.crt"
 metadata:
   version: "2.0.0"
   environment: "development"

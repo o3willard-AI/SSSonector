@@ -16,17 +16,35 @@ import (
 )
 
 var (
-	configFile string
-	debug      bool
+	flags   = types.NewCLIFlags()
+	Version string // Set by build flag
 )
 
 func init() {
-	flag.StringVar(&configFile, "config", "/etc/sssonector/config.yaml", "Path to configuration file")
-	flag.BoolVar(&debug, "debug", false, "Enable debug logging")
+	flag.StringVar(&flags.ConfigFile, "config", flags.ConfigFile, "Path to configuration file")
+	flag.BoolVar(&flags.Debug, "debug", flags.Debug, "Enable debug logging")
+	flag.BoolVar(&flags.Version, "version", flags.Version, "Show version information")
+	flag.BoolVar(&flags.Help, "help", flags.Help, "Show help information")
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: %s [options]\n\nOptions:\n", os.Args[0])
+		flag.PrintDefaults()
+	}
 }
 
 func main() {
 	flag.Parse()
+
+	// Show help and exit if requested
+	if flags.Help {
+		flag.Usage()
+		os.Exit(0)
+	}
+
+	// Show version and exit if requested
+	if flags.Version {
+		fmt.Printf("SSSonector %s\n", Version)
+		os.Exit(0)
+	}
 
 	// Initialize logger
 	var logger *zap.Logger
@@ -50,7 +68,7 @@ func main() {
 	// Create custom config
 	logConfig := zap.Config{
 		Level:            zap.NewAtomicLevelAt(zap.InfoLevel),
-		Development:      debug,
+		Development:      flags.Debug,
 		Encoding:         "console",
 		EncoderConfig:    encoderConfig,
 		OutputPaths:      []string{"stdout"},
@@ -58,7 +76,7 @@ func main() {
 		DisableCaller:    true,
 	}
 
-	if debug {
+	if flags.Debug {
 		logConfig.Level = zap.NewAtomicLevelAt(zap.DebugLevel)
 	}
 
@@ -71,10 +89,10 @@ func main() {
 	defer logger.Sync()
 
 	// Load configuration
-	appCfg, err := config.LoadConfig(configFile)
+	appCfg, err := config.LoadConfig(flags.ConfigFile)
 	if err != nil {
 		logger.Error("Failed to load configuration",
-			zap.String("file", configFile),
+			zap.String("file", flags.ConfigFile),
 			zap.Error(err),
 		)
 		os.Exit(1)
