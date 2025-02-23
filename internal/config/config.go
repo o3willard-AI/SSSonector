@@ -18,7 +18,7 @@ func LoadConfig(path string) (*types.AppConfig, error) {
 	}
 
 	// Parse configuration
-	cfg := types.NewAppConfig()
+	cfg := types.DefaultConfig()
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}

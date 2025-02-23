@@ -28,46 +28,90 @@ This document outlines the certification process for SSSonector's rate limiting 
 
 ## Test Cases
 
-### 1. Server-to-Client Rate Limiting
-- **Test Points**: 5, 25, 50, 75, 100 Mbps
-- **Validation Method**: 
-  * Direct file transfer timing
-  * SNMP metrics validation
-  * Bandwidth utilization monitoring
-- **Script**: test_rate_limit_server_to_client.exp
+### 1. Token Bucket Rate Limiting
+- **Base Rate Tests**:
+  * Test Points: 1, 10, 50, 100, 500 MB/s
+  * Validation Method:
+    - Token accumulation accuracy
+    - Rate enforcement precision
+    - Burst control effectiveness
+  * Script: test_token_bucket_base.exp
 
-### 2. Client-to-Server Rate Limiting
-- **Test Points**: 5, 25, 50, 75, 100 Mbps
-- **Validation Method**:
-  * Direct file transfer timing
-  * SNMP metrics validation
-  * Bandwidth utilization monitoring
-- **Script**: test_rate_limit_client_to_server.exp
+- **Burst Handling Tests**:
+  * Test Points: 10%, 25%, 50%, 100% of base rate
+  * Validation Method:
+    - Burst size enforcement
+    - Token replenishment timing
+    - Concurrent request handling
+  * Script: test_token_bucket_burst.exp
 
-### 3. SNMP Monitoring Integration
+### 2. Dynamic Rate Adjustment
+- **Rate Increase Tests**:
+  * Test Points: 10%, 25%, 50%, 100% increase
+  * Validation Method:
+    - Adjustment accuracy
+    - Cooldown enforcement
+    - Maximum rate bounds
+  * Script: test_dynamic_rate_increase.exp
+
+- **Rate Decrease Tests**:
+  * Test Points: 10%, 25%, 50%, 75% decrease
+  * Validation Method:
+    - Adjustment accuracy
+    - Cooldown enforcement
+    - Minimum rate bounds
+  * Script: test_dynamic_rate_decrease.exp
+
+- **Cooldown Tests**:
+  * Test Points: 100ms, 500ms, 1s, 5s cooldown
+  * Validation Method:
+    - Cooldown timing accuracy
+    - Adjustment blocking
+    - State consistency
+  * Script: test_rate_cooldown.exp
+
+### 3. TCP Overhead Compensation
+- **Overhead Tests**:
+  * Test Points: Various packet sizes
+  * Validation Method:
+    - Actual vs configured rate
+    - Header overhead handling
+    - Throughput consistency
+  * Script: test_tcp_overhead.exp
+
+### 4. SNMP Monitoring Integration
 - **Metrics to Monitor**:
-  * Bytes In/Out (.1.3.6.1.4.1.54321.1.1-2)
-  * Active Connections (.1.3.6.1.4.1.54321.1.7)
-  * CPU Usage (.1.3.6.1.4.1.54321.1.8)
-  * Memory Usage (.1.3.6.1.4.1.54321.1.9)
-  * Rate Limits (.1.3.6.1.4.1.54321.3.2-3)
+  * Base Rates (.1.3.6.1.4.1.54321.1.1-2)
+  * Adjusted Rates (.1.3.6.1.4.1.54321.1.3-4)
+  * Token Counts (.1.3.6.1.4.1.54321.1.5-6)
+  * Adjustment Counts (.1.3.6.1.4.1.54321.1.7)
+  * Cooldown Status (.1.3.6.1.4.1.54321.1.8)
 
 ## Validation Criteria
 
-### 1. Rate Accuracy
-- Actual transfer rate within ±5% of configured limit
-- Consistent rate over transfer duration
-- No sudden spikes or drops in throughput
+### 1. Token Bucket Accuracy
+- Token accumulation within ±1% of expected
+- Rate limiting precision within ±2%
+- Burst control within configured limits
+- Thread safety under load
 
-### 2. System Impact
-- CPU usage remains below 80%
-- Memory usage remains stable
+### 2. Dynamic Rate Adjustment
+- Adjustment accuracy within ±5%
+- Proper cooldown enforcement
+- Correct min/max rate bounds
+- Thread-safe state changes
+
+### 3. System Performance
+- CPU usage below 80%
+- Memory usage stable
 - No resource exhaustion
+- Consistent throughput
 
-### 3. SNMP Metrics
-- All metrics properly exposed via SNMP
-- Metrics update frequency: 1 second
-- Accurate reflection of system state
+### 4. SNMP Metrics
+- All metrics properly exposed
+- Update frequency: 1 second
+- Accurate state reflection
+- Proper error handling
 
 ## Test Procedure
 
@@ -82,64 +126,137 @@ This document outlines the certification process for SSSonector's rate limiting 
 ./verify_snmp.exp
 ```
 
-### 2. Rate Limit Testing
+### 2. Token Bucket Testing
 ```bash
-# Server to Client tests
-./test_rate_limit_server_to_client.exp
+# Base rate tests
+./test_token_bucket_base.exp
 
-# Client to Server tests
-./test_rate_limit_client_to_server.exp
+# Burst handling tests
+./test_token_bucket_burst.exp
 
 # Monitor metrics
-./monitor_snmp_metrics.exp
+./monitor_token_bucket.exp
 ```
 
-### 3. Validation
+### 3. Dynamic Rate Testing
 ```bash
-# Verify SNMP metrics
-./verify_snmp_query.exp
-./verify_snmp_remote.exp
+# Rate adjustment tests
+./test_dynamic_rate_increase.exp
+./test_dynamic_rate_decrease.exp
 
-# Check system status
-./check_qa_env.exp
+# Cooldown tests
+./test_rate_cooldown.exp
+
+# Monitor adjustments
+./monitor_rate_changes.exp
+```
+
+### 4. Integration Testing
+```bash
+# TCP overhead tests
+./test_tcp_overhead.exp
+
+# SNMP verification
+./verify_snmp_metrics.exp
+
+# System monitoring
+./monitor_system_resources.exp
 ```
 
 ## Implementation Details
 
-### Rate Limiting
-- Token bucket algorithm implementation
-- Configurable upload/download limits
-- Burst handling: 1 second worth of tokens
-- Thread-safe implementation
+### Token Bucket Algorithm
+- Precise token accumulation
+- Thread-safe operations
+- Accurate timing control
+- Burst size management
+
+### Dynamic Rate Adjustment
+- Smooth rate transitions
+- Cooldown enforcement
+- Min/max rate bounds
+- Thread-safe updates
 
 ### SNMP Integration
 - Enterprise MIB (.1.3.6.1.4.1.54321)
-- Performance metrics (1.x)
-- Status metrics (2.x)
-- Configuration metrics (3.x)
+- Rate metrics (1.x)
+- Token metrics (2.x)
+- Adjustment metrics (3.x)
 
 ## Known Issues
 
 ### Current Limitations
-- Community string validation needs improvement
-- Enterprise MIB not fully implemented
-- Rate limiting certification incomplete
+- Rate precision at extreme values
+- Cooldown granularity limits
+- SNMP metric latency
 
 ### Workarounds
-- Use basic SNMP monitoring until MIB implementation
-- Manual rate limiting verification
-- Platform-specific adaptations
+- Use recommended rate ranges
+- Configure appropriate cooldowns
+- Account for metric delays
 
 ## Next Steps
 
 ### Immediate Actions
-1. Complete rate limiting certification tests
-2. Document test results
-3. Implement enterprise MIB
-4. Integrate ntopng metrics
+1. Complete token bucket certification
+2. Validate dynamic adjustment
+3. Verify SNMP integration
+4. Document test results
 
 ### Future Improvements
-1. Automated performance benchmarking
-2. Enhanced monitoring capabilities
-3. Cross-platform testing
-4. Long-term stability validation
+1. Enhanced precision testing
+2. Extended performance validation
+3. Automated stress testing
+4. Cross-platform verification
+
+## Test Scripts
+
+### Token Bucket Tests
+```bash
+#!/bin/bash
+# test_token_bucket_base.exp
+# Tests token bucket base rate accuracy
+
+# Configure test parameters
+RATES=(1048576 10485760 52428800 104857600 524288000)
+DURATION=300  # 5 minutes per test
+
+for rate in "${RATES[@]}"; do
+  # Configure rate
+  ./set_rate.exp $rate
+  
+  # Run transfer test
+  ./transfer_test.exp $DURATION
+  
+  # Collect metrics
+  ./collect_metrics.exp
+  
+  # Validate results
+  ./validate_rate.exp $rate
+done
+```
+
+### Dynamic Rate Tests
+```bash
+#!/bin/bash
+# test_dynamic_rate_increase.exp
+# Tests dynamic rate adjustment accuracy
+
+# Configure test parameters
+BASE_RATE=1048576
+ADJUSTMENTS=(10 25 50 100)
+COOLDOWN=1000  # 1 second
+
+for adj in "${ADJUSTMENTS[@]}"; do
+  # Configure base rate
+  ./set_rate.exp $BASE_RATE
+  
+  # Trigger adjustment
+  ./adjust_rate.exp $adj
+  
+  # Monitor changes
+  ./monitor_adjustment.exp
+  
+  # Validate results
+  ./validate_adjustment.exp $adj
+done

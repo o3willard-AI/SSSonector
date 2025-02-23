@@ -23,7 +23,7 @@ func NewConnectivityChecker(cfg *types.AppConfig) *ConnectivityChecker {
 
 // CheckServerConnectivity verifies connectivity to the server
 func (c *ConnectivityChecker) CheckServerConnectivity(ctx context.Context) error {
-	if c.cfg.Config.Tunnel == nil {
+	if c.cfg.Config == nil || c.cfg.Config.Tunnel == nil {
 		return fmt.Errorf("tunnel configuration is missing")
 	}
 
@@ -67,7 +67,7 @@ func (c *ConnectivityChecker) CheckServerConnectivity(ctx context.Context) error
 
 // CheckTunnelInterface verifies the tunnel interface is up and configured
 func (c *ConnectivityChecker) CheckTunnelInterface(ctx context.Context) error {
-	if c.cfg.Config.Network == nil {
+	if c.cfg.Config == nil || c.cfg.Config.Network == nil {
 		return fmt.Errorf("network configuration is missing")
 	}
 
@@ -104,13 +104,17 @@ func (c *ConnectivityChecker) CheckTunnelInterface(ctx context.Context) error {
 
 // CheckNetworkConnectivity performs comprehensive network connectivity checks
 func (c *ConnectivityChecker) CheckNetworkConnectivity(ctx context.Context) error {
+	if c.cfg.Config == nil {
+		return fmt.Errorf("service configuration is missing")
+	}
+
 	// Check tunnel interface first
 	if err := c.CheckTunnelInterface(ctx); err != nil {
 		return fmt.Errorf("tunnel interface check failed: %w", err)
 	}
 
 	// For client mode check server connectivity
-	if c.cfg.Config.Mode == string(types.ModeClient) {
+	if c.cfg.Config.Mode == types.ModeClient {
 		if err := c.CheckServerConnectivity(ctx); err != nil {
 			return fmt.Errorf("server connectivity check failed: %w", err)
 		}

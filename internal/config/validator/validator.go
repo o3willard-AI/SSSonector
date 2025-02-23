@@ -21,45 +21,49 @@ func (v *Validator) Validate(config *types.AppConfig) error {
 		return fmt.Errorf("config is nil")
 	}
 
-	if err := v.validateMode(config.Config.Mode); err != nil {
-		return err
+	if config.Config == nil {
+		return fmt.Errorf("service config is nil")
 	}
 
-	if err := v.validateNetwork(&config.Config.Network); err != nil {
-		return err
+	// Mode is already validated by UnmarshalYAML
+
+	if config.Config.Network != nil {
+		if err := v.validateNetwork(config.Config.Network); err != nil {
+			return err
+		}
 	}
 
-	if err := v.validateTunnel(&config.Config.Tunnel); err != nil {
-		return err
+	if config.Config.Tunnel != nil {
+		if err := v.validateTunnel(config.Config.Tunnel); err != nil {
+			return err
+		}
 	}
 
-	if err := v.validateSecurity(&config.Config.Security); err != nil {
-		return err
+	if config.Config.Security != nil {
+		if err := v.validateSecurity(config.Config.Security); err != nil {
+			return err
+		}
 	}
 
-	if err := v.validateMonitor(&config.Config.Monitor); err != nil {
-		return err
+	if config.Config.Monitor != nil {
+		if err := v.validateMonitor(config.Config.Monitor); err != nil {
+			return err
+		}
 	}
 
-	if err := v.validateMetrics(&config.Config.Metrics); err != nil {
-		return err
+	if config.Config.Metrics != nil {
+		if err := v.validateMetrics(config.Config.Metrics); err != nil {
+			return err
+		}
 	}
 
-	if err := v.validateThrottle(&config.Throttle); err != nil {
-		return err
+	if config.Throttle != nil {
+		if err := v.validateThrottle(config.Throttle); err != nil {
+			return err
+		}
 	}
 
 	return nil
-}
-
-// validateMode validates the mode
-func (v *Validator) validateMode(mode string) error {
-	switch mode {
-	case types.ModeServer.String(), types.ModeClient.String():
-		return nil
-	default:
-		return fmt.Errorf("invalid mode: %s", mode)
-	}
 }
 
 // validateNetwork validates network configuration

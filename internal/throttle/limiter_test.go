@@ -68,12 +68,12 @@ func TestNewLimiter(t *testing.T) {
 	assert.NotNil(t, limiter)
 	assert.True(t, limiter.enabled)
 
-	// Get metrics to check rate and burst
+	// Get metrics to check rate and burst (should be base values)
 	inMetrics, outMetrics = limiter.GetMetrics()
-	assert.Equal(t, float64(1000)*tcpOverheadFactor, inMetrics.Rate)
-	assert.Equal(t, float64(100)*tcpOverheadFactor, inMetrics.Burst)
-	assert.Equal(t, float64(1000)*tcpOverheadFactor, outMetrics.Rate)
-	assert.Equal(t, float64(100)*tcpOverheadFactor, outMetrics.Burst)
+	assert.Equal(t, float64(1000), inMetrics.Rate)
+	assert.Equal(t, float64(100), inMetrics.Burst)
+	assert.Equal(t, float64(1000), outMetrics.Rate)
+	assert.Equal(t, float64(100), outMetrics.Burst)
 }
 
 func TestLimiterUpdate(t *testing.T) {
@@ -100,12 +100,12 @@ func TestLimiterUpdate(t *testing.T) {
 	limiter.Update(cfg)
 	assert.True(t, limiter.enabled)
 
-	// Get updated metrics
+	// Get updated metrics (should be base values)
 	inMetrics, outMetrics = limiter.GetMetrics()
-	assert.Equal(t, float64(1000)*tcpOverheadFactor, inMetrics.Rate)
-	assert.Equal(t, float64(100)*tcpOverheadFactor, inMetrics.Burst)
-	assert.Equal(t, float64(1000)*tcpOverheadFactor, outMetrics.Rate)
-	assert.Equal(t, float64(100)*tcpOverheadFactor, outMetrics.Burst)
+	assert.Equal(t, float64(1000), inMetrics.Rate)
+	assert.Equal(t, float64(100), inMetrics.Burst)
+	assert.Equal(t, float64(1000), outMetrics.Rate)
+	assert.Equal(t, float64(100), outMetrics.Burst)
 
 	// Update with disabled config
 	cfg = &types.AppConfig{
@@ -118,12 +118,12 @@ func TestLimiterUpdate(t *testing.T) {
 	limiter.Update(cfg)
 	assert.False(t, limiter.enabled)
 
-	// Get updated metrics
+	// Get updated metrics (should be base values)
 	inMetrics, outMetrics = limiter.GetMetrics()
-	assert.Equal(t, float64(2000)*tcpOverheadFactor, inMetrics.Rate)
-	assert.Equal(t, float64(200)*tcpOverheadFactor, inMetrics.Burst)
-	assert.Equal(t, float64(2000)*tcpOverheadFactor, outMetrics.Rate)
-	assert.Equal(t, float64(200)*tcpOverheadFactor, outMetrics.Burst)
+	assert.Equal(t, float64(1000), inMetrics.Rate)
+	assert.Equal(t, float64(100), inMetrics.Burst)
+	assert.Equal(t, float64(1000), outMetrics.Rate)
+	assert.Equal(t, float64(100), outMetrics.Burst)
 }
 
 func TestLimiterWait(t *testing.T) {

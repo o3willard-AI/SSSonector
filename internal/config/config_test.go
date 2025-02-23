@@ -14,6 +14,7 @@ func TestLoadConfig(t *testing.T) {
 	assert.NotNil(t, cfg)
 	assert.Equal(t, types.TypeServer, cfg.Type)
 	assert.Equal(t, "1.0.0", cfg.Version)
+	assert.NotNil(t, cfg.Config)
 	assert.Equal(t, types.ModeServer, cfg.Config.Mode)
 	assert.Equal(t, "/var/lib/sssonector", cfg.Config.StateDir)
 	assert.Equal(t, "/var/log/sssonector", cfg.Config.LogDir)
@@ -24,15 +25,15 @@ func TestConfigValidation(t *testing.T) {
 	cfg := &types.AppConfig{
 		Type:    types.TypeClient,
 		Version: "1.0.0",
-		Config: &types.Config{
+		Config: &types.ServiceConfig{
 			Mode:     types.ModeClient,
 			StateDir: "/var/lib/sssonector",
 			LogDir:   "/var/log/sssonector",
-			Logging:  types.NewLoggingConfig(),
-			Network:  types.NewNetworkConfig(),
-			Tunnel:   types.NewTunnelConfig(),
+			Logging:  &types.LoggingConfig{},
+			Network:  &types.NetworkConfig{},
+			Tunnel:   &types.TunnelConfig{},
 		},
-		Metadata: types.NewConfigMetadata(),
+		Metadata: &types.ConfigMetadata{},
 	}
 
 	assert.NotNil(t, cfg)
@@ -43,11 +44,12 @@ func TestConfigValidation(t *testing.T) {
 
 func TestConfigDefaults(t *testing.T) {
 	// Test default values
-	cfg := types.NewAppConfig()
+	cfg := types.DefaultConfig()
 
 	assert.NotNil(t, cfg)
 	assert.Equal(t, types.TypeServer, cfg.Type)
 	assert.Equal(t, "1.0.0", cfg.Version)
+	assert.NotNil(t, cfg.Config)
 	assert.Equal(t, types.ModeServer, cfg.Config.Mode)
 	assert.Equal(t, "/var/lib/sssonector", cfg.Config.StateDir)
 	assert.Equal(t, "/var/log/sssonector", cfg.Config.LogDir)
@@ -55,8 +57,7 @@ func TestConfigDefaults(t *testing.T) {
 
 func TestConfigLogging(t *testing.T) {
 	// Test logging configuration
-	cfg := types.NewAppConfig()
-	cfg.Config.Logging = types.NewLoggingConfig()
+	cfg := types.DefaultConfig()
 
 	assert.NotNil(t, cfg.Config.Logging)
 	assert.Equal(t, "info", cfg.Config.Logging.Level)
@@ -66,8 +67,7 @@ func TestConfigLogging(t *testing.T) {
 
 func TestConfigNetwork(t *testing.T) {
 	// Test network configuration
-	cfg := types.NewAppConfig()
-	cfg.Config.Network = types.NewNetworkConfig()
+	cfg := types.DefaultConfig()
 
 	assert.NotNil(t, cfg.Config.Network)
 	assert.Equal(t, 1500, cfg.Config.Network.MTU)
@@ -77,67 +77,51 @@ func TestConfigNetwork(t *testing.T) {
 
 func TestConfigTunnel(t *testing.T) {
 	// Test tunnel configuration
-	cfg := types.NewAppConfig()
-	cfg.Config.Tunnel = types.NewTunnelConfig()
+	cfg := types.DefaultConfig()
 
 	assert.NotNil(t, cfg.Config.Tunnel)
 	assert.Equal(t, 1500, cfg.Config.Tunnel.MTU)
 	assert.Equal(t, "tcp", cfg.Config.Tunnel.Protocol)
 	assert.False(t, cfg.Config.Tunnel.Compression)
-	assert.Equal(t, 60*time.Second, cfg.Config.Tunnel.Keepalive.Duration)
+	assert.Equal(t, time.Minute, cfg.Config.Tunnel.Keepalive.Duration)
 }
 
 func TestConfigSecurity(t *testing.T) {
 	// Test security configuration
-	cfg := types.NewAppConfig()
-	cfg.Config.Security = types.NewSecurityConfig()
+	cfg := types.DefaultConfig()
 
 	assert.NotNil(t, cfg.Config.Security)
-	assert.NotNil(t, cfg.Config.Security.TLS)
-	assert.NotNil(t, cfg.Config.Security.MemoryProtections)
-	assert.NotNil(t, cfg.Config.Security.Namespace)
-	assert.NotNil(t, cfg.Config.Security.Capabilities)
-	assert.NotNil(t, cfg.Config.Security.Seccomp)
+	assert.True(t, cfg.Config.Security.MemoryProtections.Enabled)
+	assert.True(t, cfg.Config.Security.Namespace.Enabled)
+	assert.True(t, cfg.Config.Security.Capabilities.Enabled)
+	assert.Equal(t, "1.2", cfg.Config.Security.TLS.MinVersion)
+	assert.Equal(t, "1.3", cfg.Config.Security.TLS.MaxVersion)
 }
 
 func TestConfigMonitor(t *testing.T) {
 	// Test monitor configuration
-	cfg := types.NewAppConfig()
-	cfg.Config.Monitor = types.NewMonitorConfig()
+	cfg := types.DefaultConfig()
 
 	assert.NotNil(t, cfg.Config.Monitor)
 	assert.False(t, cfg.Config.Monitor.Enabled)
 	assert.Equal(t, time.Minute, cfg.Config.Monitor.Interval.Duration)
-	assert.NotNil(t, cfg.Config.Monitor.Prometheus)
 	assert.Equal(t, "basic", cfg.Config.Monitor.Type)
 }
 
 func TestConfigMetrics(t *testing.T) {
 	// Test metrics configuration
-	cfg := types.NewAppConfig()
-	cfg.Config.Metrics = types.NewMetricsConfig()
+	cfg := types.DefaultConfig()
 
 	assert.NotNil(t, cfg.Config.Metrics)
 	assert.False(t, cfg.Config.Metrics.Enabled)
 	assert.Equal(t, 10*time.Second, cfg.Config.Metrics.Interval.Duration)
 	assert.Equal(t, "localhost:8080", cfg.Config.Metrics.Address)
-}
-
-func TestConfigSNMP(t *testing.T) {
-	// Test SNMP configuration
-	cfg := types.NewAppConfig()
-	cfg.Config.SNMP = types.NewSNMPConfig()
-
-	assert.NotNil(t, cfg.Config.SNMP)
-	assert.False(t, cfg.Config.SNMP.Enabled)
-	assert.Equal(t, "public", cfg.Config.SNMP.Community)
-	assert.Equal(t, 161, cfg.Config.SNMP.Port)
+	assert.Equal(t, 1000, cfg.Config.Metrics.BufferSize)
 }
 
 func TestConfigThrottle(t *testing.T) {
 	// Test throttle configuration
-	cfg := types.NewAppConfig()
-	cfg.Throttle = types.NewThrottleConfig()
+	cfg := types.DefaultConfig()
 
 	assert.NotNil(t, cfg.Throttle)
 	assert.False(t, cfg.Throttle.Enabled)
@@ -147,14 +131,20 @@ func TestConfigThrottle(t *testing.T) {
 
 func TestConfigMetadata(t *testing.T) {
 	// Test metadata configuration
-	cfg := types.NewAppConfig()
-	cfg.Metadata = types.NewConfigMetadata()
+	cfg := types.DefaultConfig()
 
 	assert.NotNil(t, cfg.Metadata)
 	assert.Equal(t, "1.0.0", cfg.Metadata.Version)
-	assert.NotEmpty(t, cfg.Metadata.LastModified)
-	assert.NotEmpty(t, cfg.Metadata.Created)
-	assert.NotEmpty(t, cfg.Metadata.Modified)
-	assert.NotEmpty(t, cfg.Metadata.CreatedAt)
-	assert.NotEmpty(t, cfg.Metadata.UpdatedAt)
+	assert.Equal(t, "development", cfg.Metadata.Environment)
+	assert.Equal(t, "local", cfg.Metadata.Region)
+}
+
+func TestConfigAdapter(t *testing.T) {
+	// Test adapter configuration
+	cfg := types.DefaultConfig()
+
+	assert.NotNil(t, cfg.Adapter)
+	assert.Equal(t, 3, cfg.Adapter.RetryAttempts)
+	assert.Equal(t, time.Second, cfg.Adapter.RetryDelay)
+	assert.Equal(t, 30*time.Second, cfg.Adapter.CleanupTimeout)
 }

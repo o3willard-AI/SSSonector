@@ -6,202 +6,228 @@ import (
 	"testing"
 	"time"
 
-	"github.com/o3willard-AI/SSSonector/internal/config"
-	"github.com/stretchr/testify/assert"
+	"github.com/o3willard-AI/SSSonector/internal/config/types"
 	"go.uber.org/zap"
 )
 
-func setupTestLogger() *zap.Logger {
-	logger, _ := zap.NewDevelopment()
-	return logger
-}
-
 func TestThrottledReader(t *testing.T) {
-	logger := setupTestLogger()
+	logger, _ := zap.NewDevelopment()
 
-	// Test with small buffer (no pooling)
 	t.Run("small buffer", func(t *testing.T) {
-		data := []byte("test data")
-		reader := bytes.NewReader(data)
-		limiter := NewLimiter(&config.AppConfig{
-			Throttle: config.ThrottleConfig{
+		cfg := &types.AppConfig{
+			Throttle: &types.ThrottleConfig{
 				Enabled: true,
 				Rate:    1024 * 1024, // 1MB/s
-				Burst:   64 * 1024,   // 64KB
+				Burst:   1024 * 100,  // 100KB burst
 			},
-		}, reader, nil, logger)
+		}
 
-		tr := NewThrottledReader(reader, limiter, logger)
-		buf := make([]byte, 4) // Below minBufferSize
-		n, err := tr.Read(buf)
-		assert.NoError(t, err)
-		assert.Equal(t, 4, n)
-		assert.Equal(t, data[:4], buf)
+		data := []byte("Hello, World!")
+		reader := bytes.NewBuffer(data)
+		limiter := NewLimiter(cfg, reader, nil, logger)
+
+		buf := make([]byte, len(data))
+		n, err := limiter.Read(buf)
+
+		if err != nil {
+			t.Errorf("Expected no error, got %v", err)
+		}
+		if n != len(data) {
+			t.Errorf("Expected to read %d bytes, got %d", len(data), n)
+		}
+		if !bytes.Equal(buf[:n], data) {
+			t.Errorf("Expected %q, got %q", data, buf[:n])
+		}
 	})
 
-	// Test with large buffer (uses pool)
 	t.Run("large buffer", func(t *testing.T) {
-		data := make([]byte, 8*1024) // 8KB
+		cfg := &types.AppConfig{
+			Throttle: &types.ThrottleConfig{
+				Enabled: true,
+				Rate:    1024 * 1024, // 1MB/s
+				Burst:   1024 * 100,  // 100KB burst
+			},
+		}
+
+		data := make([]byte, 1024*1024) // 1MB
 		for i := range data {
 			data[i] = byte(i % 256)
 		}
-		reader := bytes.NewReader(data)
-		limiter := NewLimiter(&config.AppConfig{
-			Throttle: config.ThrottleConfig{
-				Enabled: true,
-				Rate:    1024 * 1024, // 1MB/s
-				Burst:   64 * 1024,   // 64KB
-			},
-		}, reader, nil, logger)
 
-		tr := NewThrottledReader(reader, limiter, logger)
+		reader := bytes.NewBuffer(data)
+		limiter := NewLimiter(cfg, reader, nil, logger)
+
 		buf := make([]byte, len(data))
-		n, err := tr.Read(buf)
-		assert.NoError(t, err)
-		assert.Equal(t, len(data), n)
-		assert.Equal(t, data, buf)
+		n, err := limiter.Read(buf)
+
+		if err != nil {
+			t.Errorf("Expected no error, got %v", err)
+		}
+		if n != len(data) {
+			t.Errorf("Expected to read %d bytes, got %d", len(data), n)
+		}
+		if !bytes.Equal(buf[:n], data) {
+			t.Error("Data mismatch")
+		}
 	})
 
-	// Test rate limiting
 	t.Run("rate limiting", func(t *testing.T) {
-		data := make([]byte, 4*1024) // 4KB
-		reader := bytes.NewReader(data)
-		limiter := NewLimiter(&config.AppConfig{
-			Throttle: config.ThrottleConfig{
+		cfg := &types.AppConfig{
+			Throttle: &types.ThrottleConfig{
 				Enabled: true,
-				Rate:    2 * 1024, // 2KB/s
-				Burst:   1024,     // 1KB burst
+				Rate:    2048, // 2KB/s
+				Burst:   1024, // 1KB burst
 			},
-		}, reader, nil, logger)
+		}
 
-		tr := NewThrottledReader(reader, limiter, logger)
-		buf := make([]byte, len(data))
+		data := make([]byte, 4096) // 4KB
+		for i := range data {
+			data[i] = byte(i % 256)
+		}
 
+		reader := bytes.NewBuffer(data)
+		limiter := NewLimiter(cfg, reader, nil, logger)
+
+		// Read should take at least 1.5s (4KB at 2KB/s + 10% buffer)
 		start := time.Now()
-		n, err := tr.Read(buf)
-		duration := time.Since(start)
+		buf := make([]byte, len(data))
+		n, err := limiter.Read(buf)
 
-		assert.NoError(t, err)
-		assert.Equal(t, len(data), n)
-
-		// Should take at least 1.5 seconds to read 4KB at 2KB/s
-		minExpectedDuration := 1500 * time.Millisecond
-		assert.True(t, duration >= minExpectedDuration,
-			"Should take at least %v to read %d bytes at 2KB/s, took %v",
-			minExpectedDuration, len(data), duration)
+		elapsed := time.Since(start)
+		if err != nil {
+			t.Errorf("Expected no error, got %v", err)
+		}
+		if n != len(data) {
+			t.Errorf("Expected to read %d bytes, got %d", len(data), n)
+		}
+		if elapsed < 1500*time.Millisecond {
+			t.Errorf("Should take at least 1.5s to read 4096 bytes at 2KB/s took %v", elapsed)
+		}
 	})
 }
 
 func TestThrottledWriter(t *testing.T) {
-	logger := setupTestLogger()
+	logger, _ := zap.NewDevelopment()
 
-	// Test with small buffer (no pooling)
 	t.Run("small buffer", func(t *testing.T) {
-		var buf bytes.Buffer
-		limiter := NewLimiter(&config.AppConfig{
-			Throttle: config.ThrottleConfig{
+		cfg := &types.AppConfig{
+			Throttle: &types.ThrottleConfig{
 				Enabled: true,
 				Rate:    1024 * 1024, // 1MB/s
-				Burst:   64 * 1024,   // 64KB
+				Burst:   1024 * 100,  // 100KB burst
 			},
-		}, nil, &buf, logger)
+		}
 
-		tw := NewThrottledWriter(&buf, limiter, logger)
-		data := []byte("test data")
-		n, err := tw.Write(data)
-		assert.NoError(t, err)
-		assert.Equal(t, len(data), n)
-		assert.Equal(t, data, buf.Bytes())
+		data := []byte("Hello, World!")
+		writer := &bytes.Buffer{}
+		limiter := NewLimiter(cfg, nil, writer, logger)
+
+		n, err := limiter.Write(data)
+
+		if err != nil {
+			t.Errorf("Expected no error, got %v", err)
+		}
+		if n != len(data) {
+			t.Errorf("Expected to write %d bytes, got %d", len(data), n)
+		}
+		if !bytes.Equal(writer.Bytes(), data) {
+			t.Errorf("Expected %q, got %q", data, writer.Bytes())
+		}
 	})
 
-	// Test with large buffer (uses pool)
 	t.Run("large buffer", func(t *testing.T) {
-		var buf bytes.Buffer
-		limiter := NewLimiter(&config.AppConfig{
-			Throttle: config.ThrottleConfig{
+		cfg := &types.AppConfig{
+			Throttle: &types.ThrottleConfig{
 				Enabled: true,
 				Rate:    1024 * 1024, // 1MB/s
-				Burst:   64 * 1024,   // 64KB
+				Burst:   1024 * 100,  // 100KB burst
 			},
-		}, nil, &buf, logger)
+		}
 
-		tw := NewThrottledWriter(&buf, limiter, logger)
-		data := make([]byte, 8*1024) // 8KB
+		data := make([]byte, 1024*1024) // 1MB
 		for i := range data {
 			data[i] = byte(i % 256)
 		}
-		n, err := tw.Write(data)
-		assert.NoError(t, err)
-		assert.Equal(t, len(data), n)
-		assert.Equal(t, data, buf.Bytes())
+
+		writer := &bytes.Buffer{}
+		limiter := NewLimiter(cfg, nil, writer, logger)
+
+		n, err := limiter.Write(data)
+
+		if err != nil {
+			t.Errorf("Expected no error, got %v", err)
+		}
+		if n != len(data) {
+			t.Errorf("Expected to write %d bytes, got %d", len(data), n)
+		}
+		if !bytes.Equal(writer.Bytes(), data) {
+			t.Error("Data mismatch")
+		}
 	})
 
-	// Test rate limiting
 	t.Run("rate limiting", func(t *testing.T) {
-		var buf bytes.Buffer
-		limiter := NewLimiter(&config.AppConfig{
-			Throttle: config.ThrottleConfig{
+		cfg := &types.AppConfig{
+			Throttle: &types.ThrottleConfig{
 				Enabled: true,
-				Rate:    2 * 1024, // 2KB/s
-				Burst:   1024,     // 1KB burst
+				Rate:    2048, // 2KB/s
+				Burst:   1024, // 1KB burst
 			},
-		}, nil, &buf, logger)
+		}
 
-		tw := NewThrottledWriter(&buf, limiter, logger)
-		data := make([]byte, 4*1024) // 4KB
+		data := make([]byte, 4096) // 4KB
+		for i := range data {
+			data[i] = byte(i % 256)
+		}
 
+		writer := &bytes.Buffer{}
+		limiter := NewLimiter(cfg, nil, writer, logger)
+
+		// Write should take at least 1.5s (4KB at 2KB/s + 10% buffer)
 		start := time.Now()
-		n, err := tw.Write(data)
-		duration := time.Since(start)
+		n, err := limiter.Write(data)
 
-		assert.NoError(t, err)
-		assert.Equal(t, len(data), n)
-
-		// Should take at least 1.5 seconds to write 4KB at 2KB/s
-		minExpectedDuration := 1500 * time.Millisecond
-		assert.True(t, duration >= minExpectedDuration,
-			"Should take at least %v to write %d bytes at 2KB/s, took %v",
-			minExpectedDuration, len(data), duration)
+		elapsed := time.Since(start)
+		if err != nil {
+			t.Errorf("Expected no error, got %v", err)
+		}
+		if n != len(data) {
+			t.Errorf("Expected to write %d bytes, got %d", len(data), n)
+		}
+		if elapsed < 1500*time.Millisecond {
+			t.Errorf("Should take at least 1.5s to write 4096 bytes at 2KB/s took %v", elapsed)
+		}
 	})
 }
 
 func TestThrottledReadWriter(t *testing.T) {
-	logger := setupTestLogger()
+	logger, _ := zap.NewDevelopment()
 
 	t.Run("read and write", func(t *testing.T) {
-		data := make([]byte, 8*1024) // 8KB
-		for i := range data {
-			data[i] = byte(i % 256)
-		}
-
-		// Create a ReadWriter that reads from data and writes to buf
-		reader := bytes.NewReader(data)
-		var writer bytes.Buffer
-		rw := struct {
-			io.Reader
-			io.Writer
-		}{reader, &writer}
-
-		limiter := NewLimiter(&config.AppConfig{
-			Throttle: config.ThrottleConfig{
+		cfg := &types.AppConfig{
+			Throttle: &types.ThrottleConfig{
 				Enabled: true,
 				Rate:    1024 * 1024, // 1MB/s
-				Burst:   64 * 1024,   // 64KB
+				Burst:   1024 * 100,  // 100KB burst
 			},
-		}, reader, &writer, logger)
+		}
 
-		trw := NewThrottledReadWriter(rw, limiter, logger)
+		data := []byte("Hello, World!")
+		reader := bytes.NewBuffer(data)
+		writer := &bytes.Buffer{}
 
-		// Read and write the data
-		buf := make([]byte, len(data))
-		n, err := trw.Read(buf)
-		assert.NoError(t, err)
-		assert.Equal(t, len(data), n)
-		assert.Equal(t, data, buf)
+		limiter := NewLimiter(cfg, reader, writer, logger)
 
-		n, err = trw.Write(buf)
-		assert.NoError(t, err)
-		assert.Equal(t, len(data), n)
-		assert.Equal(t, data, writer.Bytes())
+		// Copy data through the limiter
+		n, err := io.Copy(limiter, limiter)
+
+		if err != nil {
+			t.Errorf("Expected no error, got %v", err)
+		}
+		if n != int64(len(data)) {
+			t.Errorf("Expected to copy %d bytes, got %d", len(data), n)
+		}
+		if !bytes.Equal(writer.Bytes(), data) {
+			t.Errorf("Expected %q, got %q", data, writer.Bytes())
+		}
 	})
 }

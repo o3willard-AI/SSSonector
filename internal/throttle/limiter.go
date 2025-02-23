@@ -22,6 +22,7 @@ type Limiter struct {
 	inMetrics  LimiterMetrics
 	outMetrics LimiterMetrics
 	bufferPool *BufferPool
+	timeout    types.Duration
 }
 
 // LimiterMetrics tracks rate limiting statistics
@@ -38,16 +39,28 @@ func NewLimiter(cfg *types.AppConfig, reader io.Reader, writer io.Writer, logger
 		reader:  reader,
 		writer:  writer,
 		logger:  logger,
+		timeout: types.DefaultTimeout,
 	}
 
-	// Initialize token buckets with TCP overhead adjustment
-	rate := float64(cfg.Throttle.Rate) * tcpOverheadFactor
-	burst := float64(cfg.Throttle.Burst) * tcpOverheadFactor
+	// Initialize buffer pool
+	l.bufferPool = NewBufferPool(logger)
 
-	l.inBucket = NewTokenBucket(rate, burst)
-	l.outBucket = NewTokenBucket(rate, burst)
+	if !cfg.Throttle.Enabled {
+		return l
+	}
 
-	// Initialize metrics
+	// Get base rates from config
+	rate := float64(cfg.Throttle.Rate)
+	burst := float64(cfg.Throttle.Burst)
+
+	// Apply TCP overhead factor for token buckets
+	adjustedRate := rate * tcpOverheadFactor
+	adjustedBurst := burst * tcpOverheadFactor
+
+	l.inBucket = NewTokenBucket(adjustedRate, adjustedBurst)
+	l.outBucket = NewTokenBucket(adjustedRate, adjustedBurst)
+
+	// Initialize metrics with base values
 	l.inMetrics = LimiterMetrics{
 		Rate:  rate,
 		Burst: burst,
@@ -56,9 +69,6 @@ func NewLimiter(cfg *types.AppConfig, reader io.Reader, writer io.Writer, logger
 		Rate:  rate,
 		Burst: burst,
 	}
-
-	// Initialize buffer pool
-	l.bufferPool = NewBufferPool(logger)
 
 	return l
 }
@@ -115,7 +125,7 @@ func (l *Limiter) Wait(isRead bool, size int) error {
 		bucket = l.outBucket
 	}
 
-	timeout := time.After(defaultTimeout)
+	timeout := time.After(l.timeout.Duration)
 	done := make(chan struct{})
 
 	go func() {
@@ -127,7 +137,7 @@ func (l *Limiter) Wait(isRead bool, size int) error {
 	case <-done:
 		return nil
 	case <-timeout:
-		err := fmt.Errorf("timeout waiting for %d tokens after %v", size, defaultTimeout)
+		err := fmt.Errorf("timeout waiting for %d tokens after %v", size, l.timeout)
 		l.logger.Warn("Rate limit wait timeout",
 			zap.Bool("read", isRead),
 			zap.Int("size", size),
@@ -142,13 +152,32 @@ func (l *Limiter) Update(cfg *types.AppConfig) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
+	wasEnabled := l.enabled
 	l.enabled = cfg.Throttle.Enabled
-	rate := float64(cfg.Throttle.Rate) * tcpOverheadFactor
-	burst := float64(cfg.Throttle.Burst) * tcpOverheadFactor
 
-	l.inBucket.Update(rate, burst)
-	l.outBucket.Update(rate, burst)
+	// Get base rates from config
+	rate := float64(cfg.Throttle.Rate)
+	burst := float64(cfg.Throttle.Burst)
 
+	// Apply TCP overhead factor for token buckets
+	adjustedRate := rate * tcpOverheadFactor
+	adjustedBurst := burst * tcpOverheadFactor
+
+	if !l.enabled {
+		// If disabling, keep the current metrics but disable operation
+		return
+	}
+
+	// Initialize or update token buckets
+	if !wasEnabled {
+		l.inBucket = NewTokenBucket(adjustedRate, adjustedBurst)
+		l.outBucket = NewTokenBucket(adjustedRate, adjustedBurst)
+	} else {
+		l.inBucket.Update(adjustedRate, adjustedBurst)
+		l.outBucket.Update(adjustedRate, adjustedBurst)
+	}
+
+	// Store base values in metrics
 	l.inMetrics.Rate = rate
 	l.inMetrics.Burst = burst
 	l.outMetrics.Rate = rate
@@ -156,8 +185,10 @@ func (l *Limiter) Update(cfg *types.AppConfig) {
 
 	l.logger.Info("Updated rate limiter configuration",
 		zap.Bool("enabled", l.enabled),
-		zap.Float64("rate", rate),
-		zap.Float64("burst", burst),
+		zap.Float64("base_rate", rate),
+		zap.Float64("base_burst", burst),
+		zap.Float64("adjusted_rate", adjustedRate),
+		zap.Float64("adjusted_burst", adjustedBurst),
 	)
 }
 
@@ -176,4 +207,18 @@ func (l *Limiter) GetBuffer(size int) []byte {
 // PutBuffer returns a buffer to the pool
 func (l *Limiter) PutBuffer(buf []byte) {
 	l.bufferPool.Put(buf)
+}
+
+// SetTimeout sets the timeout duration for rate limiting operations
+func (l *Limiter) SetTimeout(timeout types.Duration) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.timeout = timeout
+}
+
+// GetTimeout returns the current timeout duration
+func (l *Limiter) GetTimeout() types.Duration {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return l.timeout
 }
