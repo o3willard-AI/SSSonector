@@ -2,6 +2,16 @@
 
 [Previous Core Documentation through Disaster Recovery Documentation sections remain exactly the same]
 
+## QA Testing Documentation
+
+1. `test/qa_scripts/README.md`
+   - Enhanced QA testing infrastructure
+   - Setup script documentation
+   - Test scenario details
+   - Result analysis guide
+   - Troubleshooting procedures
+   - Best practices
+
 ## Build and Deployment Documentation
 
 1. `build/DEPLOYMENT.md`
