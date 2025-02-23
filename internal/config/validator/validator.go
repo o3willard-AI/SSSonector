@@ -57,10 +57,53 @@ func (v *Validator) Validate(config *types.AppConfig) error {
 		}
 	}
 
+	if config.Config.Logging != nil {
+		if err := v.validateLogging(config.Config.Logging); err != nil {
+			return err
+		}
+	}
+
 	if config.Throttle != nil {
 		if err := v.validateThrottle(config.Throttle); err != nil {
 			return err
 		}
+	}
+
+	return nil
+}
+
+// validateLogging validates logging configuration
+func (v *Validator) validateLogging(config *types.LoggingConfig) error {
+	if config.Level == "" {
+		config.Level = "info"
+	}
+
+	if config.Format == "" {
+		config.Format = "text"
+	}
+
+	if config.Output == "" {
+		config.Output = "stdout"
+	}
+
+	// Validate log level
+	validLevels := map[string]bool{
+		"debug": true,
+		"info":  true,
+		"warn":  true,
+		"error": true,
+	}
+	if !validLevels[config.Level] {
+		return fmt.Errorf("invalid log level: %s", config.Level)
+	}
+
+	// Validate format
+	validFormats := map[string]bool{
+		"text": true,
+		"json": true,
+	}
+	if !validFormats[config.Format] {
+		return fmt.Errorf("invalid log format: %s", config.Format)
 	}
 
 	return nil

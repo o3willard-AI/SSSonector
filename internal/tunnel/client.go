@@ -9,6 +9,7 @@ import (
 	"github.com/o3willard-AI/SSSonector/internal/adapter"
 	"github.com/o3willard-AI/SSSonector/internal/config/interfaces"
 	"github.com/o3willard-AI/SSSonector/internal/config/types"
+	"github.com/o3willard-AI/SSSonector/internal/startup"
 	"go.uber.org/zap"
 )
 
@@ -44,35 +45,64 @@ func (c *Client) Start() error {
 		return fmt.Errorf("tunnel is not in stopped state")
 	}
 
+	// Create startup logger
+	startupLogger := startup.NewStartupLogger(c.logger, c.config.Config.Logging)
+
+	// Pre-startup phase
+	startupLogger.SetPhase(types.StartupPhasePreStartup)
+	startupLogger.LogCheckpoint("Starting tunnel client", map[string]interface{}{
+		"mode": c.config.Config.Mode,
+	})
+
 	c.setState(StateStarting)
-	c.logger.Info("Starting tunnel client")
+
+	// Initialization phase
+	startupLogger.SetPhase(types.StartupPhaseInitialization)
 
 	// Create TUN adapter
 	var err error
-	c.adapter, err = adapter.FromConfig(c.config)
+	err = startupLogger.LogOperation(types.StartupComponentAdapter, "Create TUN adapter", func() error {
+		c.adapter, err = adapter.FromConfig(c.config)
+		return err
+	}, map[string]interface{}{
+		"config": c.config.Adapter,
+	})
 	if err != nil {
 		c.setState(StateStopped)
 		return fmt.Errorf("failed to create adapter: %w", err)
 	}
+
+	// Connection phase
+	startupLogger.SetPhase(types.StartupPhaseConnection)
 
 	// Connect to server
 	addr := fmt.Sprintf("%s:%d",
 		c.config.Config.Tunnel.ServerAddress,
 		c.config.Config.Tunnel.ServerPort,
 	)
-	c.conn, err = net.Dial("tcp", addr)
+
+	err = startupLogger.LogOperation(types.StartupComponentConnection, "Connect to server", func() error {
+		c.conn, err = net.Dial("tcp", addr)
+		if err != nil {
+			if cleanupErr := c.adapter.Cleanup(); cleanupErr != nil {
+				c.logger.Error("Failed to cleanup adapter", zap.Error(cleanupErr))
+			}
+			return fmt.Errorf("failed to connect to server: %w", err)
+		}
+		return nil
+	}, map[string]interface{}{
+		"address": addr,
+	})
 	if err != nil {
 		c.setState(StateStopped)
-		if err := c.adapter.Cleanup(); err != nil {
-			c.logger.Error("Failed to cleanup adapter", zap.Error(err))
-		}
-		return fmt.Errorf("failed to connect to server: %w", err)
+		return err
 	}
 
 	c.setState(StateRunning)
-	c.logger.Info("Tunnel client started",
-		zap.String("server", addr),
-	)
+	startupLogger.LogCheckpoint("Tunnel client started", map[string]interface{}{
+		"server": addr,
+		"state":  StateRunning,
+	})
 
 	// Start transfer
 	c.transfers.Add(1)
@@ -103,28 +133,46 @@ func (c *Client) Stop() error {
 		return fmt.Errorf("tunnel is not in running state")
 	}
 
+	// Create startup logger
+	startupLogger := startup.NewStartupLogger(c.logger, c.config.Config.Logging)
+
+	startupLogger.SetPhase(types.StartupPhasePreStartup)
+	startupLogger.LogCheckpoint("Stopping tunnel client", map[string]interface{}{
+		"state": c.getState(),
+	})
+
 	c.setState(StateStopping)
-	c.logger.Info("Stopping tunnel client")
 
 	// Close connection
 	if c.conn != nil {
-		if err := c.conn.Close(); err != nil {
+		err := startupLogger.LogOperation(types.StartupComponentConnection, "Close connection", func() error {
+			return c.conn.Close()
+		}, nil)
+		if err != nil {
 			c.logger.Error("Failed to close connection", zap.Error(err))
 		}
 	}
 
 	// Wait for transfers to complete
-	c.transfers.Wait()
+	startupLogger.LogOperation(types.StartupComponentConnection, "Wait for transfers", func() error {
+		c.transfers.Wait()
+		return nil
+	}, nil)
 
 	// Cleanup adapter
 	if c.adapter != nil {
-		if err := c.adapter.Cleanup(); err != nil {
+		err := startupLogger.LogOperation(types.StartupComponentAdapter, "Cleanup adapter", func() error {
+			return c.adapter.Cleanup()
+		}, nil)
+		if err != nil {
 			c.logger.Error("Failed to cleanup adapter", zap.Error(err))
 		}
 	}
 
 	c.setState(StateStopped)
-	c.logger.Info("Tunnel client stopped")
+	startupLogger.LogCheckpoint("Tunnel client stopped", map[string]interface{}{
+		"state": StateStopped,
+	})
 
 	return nil
 }

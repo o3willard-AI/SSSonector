@@ -64,6 +64,13 @@ config:
     interval: 5s
     buffer_size: 1000
 
+  logging:
+    level: info
+    format: json
+    output: stdout
+    file: /var/log/sssonector/sssonector.log
+    startup_logs: true  # Enable detailed startup logging
+
 version: 1.0.0
 metadata:
   version: 1.0.0
@@ -169,6 +176,20 @@ throttle:
 - `interval`: Collection interval
 - `buffer_size`: Metrics buffer size
 
+### Logging Configuration
+- `level`: Log level (debug/info/warn/error)
+- `format`: Log format (text/json)
+- `output`: Log output (stdout/stderr/file)
+- `file`: Log file path when output is file
+- `startup_logs`: Enable/disable detailed startup logging
+  * When enabled, provides:
+    - Startup phase tracking
+    - Operation timing
+    - Resource state monitoring
+    - Structured JSON logging
+  * Default: true
+  * Recommended for production environments
+
 ### Throttle Configuration
 - `enabled`: Enable/disable rate limiting
 - `rate`: Sustained rate limit in bytes/sec
@@ -227,7 +248,15 @@ Before deploying, validate your configuration:
 
 ## Best Practices
 
-1. Security
+1. Startup Logging
+   - Enable startup_logs in production for better diagnostics
+   - Use JSON format for structured analysis
+   - Configure appropriate log levels
+   - Monitor startup performance metrics
+   - Analyze startup patterns for optimization
+   - Retain startup logs for troubleshooting
+
+2. Security
    - Use absolute paths for certificates
    - Set restrictive file permissions (600 for keys)
    - Configure TLS versions and ciphers explicitly

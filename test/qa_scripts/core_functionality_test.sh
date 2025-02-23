@@ -134,6 +134,53 @@ test_client_state() {
     run_test "Client State Directory Check" "ssh $CLIENT_HOST 'test -w ~/sssonector/state'"
 }
 
+# Test: Server startup logging phases
+test_server_startup_logs() {
+    run_test "Server Startup Logging Phases" "ssh $SERVER_HOST 'grep -q \"Entering PreStartup phase\" ~/sssonector/log/sssonector.log && \
+        grep -q \"Entering Initialization phase\" ~/sssonector/log/sssonector.log && \
+        grep -q \"Entering Connection phase\" ~/sssonector/log/sssonector.log && \
+        grep -q \"Entering Listen phase\" ~/sssonector/log/sssonector.log'"
+}
+
+# Test: Client startup logging phases
+test_client_startup_logs() {
+    run_test "Client Startup Logging Phases" "ssh $CLIENT_HOST 'grep -q \"Entering PreStartup phase\" ~/sssonector/log/sssonector.log && \
+        grep -q \"Entering Initialization phase\" ~/sssonector/log/sssonector.log && \
+        grep -q \"Entering Connection phase\" ~/sssonector/log/sssonector.log'"
+}
+
+# Test: Server startup operation timing
+test_server_operation_timing() {
+    run_test "Server Operation Timing" "ssh $SERVER_HOST 'grep -q \"duration\" ~/sssonector/log/sssonector.log'"
+}
+
+# Test: Client startup operation timing
+test_client_operation_timing() {
+    run_test "Client Operation Timing" "ssh $CLIENT_HOST 'grep -q \"duration\" ~/sssonector/log/sssonector.log'"
+}
+
+# Test: Server resource state tracking
+test_server_resource_state() {
+    run_test "Server Resource State Tracking" "ssh $SERVER_HOST 'grep -q \"Resource state: adapter\" ~/sssonector/log/sssonector.log'"
+}
+
+# Test: Client resource state tracking
+test_client_resource_state() {
+    run_test "Client Resource State Tracking" "ssh $CLIENT_HOST 'grep -q \"Resource state: adapter\" ~/sssonector/log/sssonector.log'"
+}
+
+# Test: Server startup log format
+test_server_log_format() {
+    run_test "Server Log Format" "ssh $SERVER_HOST 'grep -q \"startup_log\" ~/sssonector/log/sssonector.log && \
+        jq -e . <<< \"$(ssh $SERVER_HOST \"grep startup_log ~/sssonector/log/sssonector.log | head -1 | jq -r .startup_log\")\" >/dev/null'"
+}
+
+# Test: Client startup log format
+test_client_log_format() {
+    run_test "Client Log Format" "ssh $CLIENT_HOST 'grep -q \"startup_log\" ~/sssonector/log/sssonector.log && \
+        jq -e . <<< \"$(ssh $CLIENT_HOST \"grep startup_log ~/sssonector/log/sssonector.log | head -1 | jq -r .startup_log\")\" >/dev/null'"
+}
+
 # Run all tests
 run_all_tests() {
     log_info "Starting core functionality tests..."
@@ -161,6 +208,16 @@ run_all_tests() {
     test_client_log
     test_server_state
     test_client_state
+    
+    # Startup logging tests
+    test_server_startup_logs
+    test_client_startup_logs
+    test_server_operation_timing
+    test_client_operation_timing
+    test_server_resource_state
+    test_client_resource_state
+    test_server_log_format
+    test_client_log_format
     
     # Print summary
     echo -e "\n${YELLOW}Test Summary:${NC}"
