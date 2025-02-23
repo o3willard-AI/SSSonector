@@ -15,10 +15,10 @@ func TestInitializingHandler(t *testing.T) {
 
 	t.Run("missing auth config", func(t *testing.T) {
 		cfg := &types.AppConfig{
-			Type:    types.TypeServer.String(),
+			Type:    types.TypeServer,
 			Version: "1.0.0",
-			Config: types.ServiceConfig{
-				Mode: string(types.ModeServer),
+			Config: &types.ServiceConfig{
+				Mode: types.ModeServer,
 			},
 		}
 		handler := NewInitializingHandler(logger, cfg)
@@ -29,11 +29,11 @@ func TestInitializingHandler(t *testing.T) {
 
 	t.Run("missing files", func(t *testing.T) {
 		cfg := &types.AppConfig{
-			Type:    types.TypeServer.String(),
+			Type:    types.TypeServer,
 			Version: "1.0.0",
-			Config: types.ServiceConfig{
-				Mode: string(types.ModeServer),
-				Auth: types.AuthConfig{
+			Config: &types.ServiceConfig{
+				Mode: types.ModeServer,
+				Auth: &types.AuthConfig{
 					CertFile: "testdata/cert.pem",
 					KeyFile:  "testdata/key.pem",
 					CAFile:   "testdata/ca.pem",
@@ -48,10 +48,10 @@ func TestInitializingHandler(t *testing.T) {
 
 	t.Run("system resources", func(t *testing.T) {
 		cfg := &types.AppConfig{
-			Type:    types.TypeServer.String(),
+			Type:    types.TypeServer,
 			Version: "1.0.0",
-			Config: types.ServiceConfig{
-				Mode: string(types.ModeServer),
+			Config: &types.ServiceConfig{
+				Mode: types.ModeServer,
 			},
 		}
 		handler := NewInitializingHandler(logger, cfg)
@@ -61,10 +61,10 @@ func TestInitializingHandler(t *testing.T) {
 
 	t.Run("network availability", func(t *testing.T) {
 		cfg := &types.AppConfig{
-			Type:    types.TypeServer.String(),
+			Type:    types.TypeServer,
 			Version: "1.0.0",
-			Config: types.ServiceConfig{
-				Mode: string(types.ModeServer),
+			Config: &types.ServiceConfig{
+				Mode: types.ModeServer,
 			},
 		}
 		handler := NewInitializingHandler(logger, cfg)
@@ -77,15 +77,15 @@ func TestRunningHandler(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 
 	cfg := &types.AppConfig{
-		Type:    types.TypeServer.String(),
+		Type:    types.TypeServer,
 		Version: "1.0.0",
-		Config: types.ServiceConfig{
-			Mode: string(types.ModeClient),
-			Network: types.NetworkConfig{
+		Config: &types.ServiceConfig{
+			Mode: types.ModeClient,
+			Network: &types.NetworkConfig{
 				Interface: "lo",
 				Address:   "127.0.0.1/8",
 			},
-			Tunnel: types.TunnelConfig{
+			Tunnel: &types.TunnelConfig{
 				ServerAddress: "localhost",
 				ServerPort:    8080,
 			},
@@ -168,10 +168,10 @@ func TestRunningHandler(t *testing.T) {
 func TestStoppingHandler(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	cfg := &types.AppConfig{
-		Type:    types.TypeServer.String(),
+		Type:    types.TypeServer,
 		Version: "1.0.0",
-		Config: types.ServiceConfig{
-			Mode: string(types.ModeServer),
+		Config: &types.ServiceConfig{
+			Mode: types.ModeServer,
 		},
 	}
 

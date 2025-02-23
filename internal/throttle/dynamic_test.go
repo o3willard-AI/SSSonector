@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/o3willard-AI/SSSonector/internal/config"
+	"github.com/o3willard-AI/SSSonector/internal/config/types"
 	"go.uber.org/zap"
 )
 
@@ -13,8 +13,8 @@ func TestDynamicLimiter(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 
 	// Create a base config
-	baseConfig := &config.AppConfig{
-		Throttle: config.ThrottleConfig{
+	baseConfig := &types.AppConfig{
+		Throttle: &types.ThrottleConfig{
 			Enabled: true,
 			Rate:    1024 * 1024, // 1MB/s
 			Burst:   1024 * 100,  // 100KB burst
@@ -45,7 +45,9 @@ func TestDynamicLimiter(t *testing.T) {
 		initialRate := float64(baseConfig.Throttle.Rate)
 
 		// Increase by 50%
-		dl.IncreaseRate(50)
+		if !dl.IncreaseRate(50) {
+			t.Error("Rate increase should have succeeded")
+		}
 
 		inMetrics, _ := dl.GetMetrics()
 		newRate := inMetrics.Rate
@@ -65,7 +67,9 @@ func TestDynamicLimiter(t *testing.T) {
 		initialRate := float64(baseConfig.Throttle.Rate)
 
 		// Decrease by 50%
-		dl.DecreaseRate(50)
+		if !dl.DecreaseRate(50) {
+			t.Error("Rate decrease should have succeeded")
+		}
 
 		inMetrics, _ := dl.GetMetrics()
 		newRate := inMetrics.Rate
@@ -108,12 +112,22 @@ func TestDynamicLimiter(t *testing.T) {
 			t.Errorf("Expected initial adjust count 0, got %d", count)
 		}
 
-		dl.IncreaseRate(10)
+		// Set a very short cooldown for testing
+		dl.SetCooldown(types.NewDuration(1 * time.Millisecond))
+
+		if !dl.IncreaseRate(10) {
+			t.Error("First increase should have succeeded")
+		}
 		if count := dl.GetAdjustCount(); count != 1 {
 			t.Errorf("Expected adjust count 1, got %d", count)
 		}
 
-		dl.DecreaseRate(10)
+		// Wait for cooldown
+		time.Sleep(2 * time.Millisecond)
+
+		if !dl.DecreaseRate(10) {
+			t.Error("First decrease should have succeeded")
+		}
 		if count := dl.GetAdjustCount(); count != 2 {
 			t.Errorf("Expected adjust count 2, got %d", count)
 		}
@@ -128,36 +142,47 @@ func TestDynamicLimiter(t *testing.T) {
 		dl := NewDynamicLimiter(baseConfig, baseLimiter, logger)
 		initialRate := float64(baseConfig.Throttle.Rate)
 
+		// Set cooldown before first adjustment
+		cooldown := types.NewDuration(200 * time.Millisecond)
+		dl.SetCooldown(cooldown)
+
 		// First adjustment should work
-		dl.IncreaseRate(50)
+		if !dl.IncreaseRate(50) {
+			t.Error("First adjustment should have succeeded")
+		}
 		inMetrics, _ := dl.GetMetrics()
 		firstAdjustRate := inMetrics.Rate
+
+		if firstAdjustRate == initialRate {
+			t.Error("First adjustment had no effect")
+		}
 
 		// Wait a bit but not enough for cooldown
 		time.Sleep(100 * time.Millisecond)
 
 		// Immediate second adjustment should be ignored
-		dl.IncreaseRate(50)
+		if dl.IncreaseRate(50) {
+			t.Error("Second adjustment should have been blocked by cooldown")
+		}
 		inMetrics, _ = dl.GetMetrics()
 		secondAdjustRate := inMetrics.Rate
 
-		if firstAdjustRate == initialRate {
-			t.Error("First adjustment had no effect")
-		}
 		if secondAdjustRate != firstAdjustRate {
 			t.Error("Second adjustment should have been ignored due to cooldown")
 		}
 
 		// Wait for cooldown
-		time.Sleep(time.Second)
+		time.Sleep(200 * time.Millisecond)
 
 		// Third adjustment should work
-		dl.IncreaseRate(50)
+		if !dl.IncreaseRate(50) {
+			t.Error("Third adjustment should have succeeded after cooldown")
+		}
 		inMetrics, _ = dl.GetMetrics()
 		thirdAdjustRate := inMetrics.Rate
 
-		if thirdAdjustRate == secondAdjustRate {
-			t.Error("Third adjustment should have worked after cooldown")
+		if thirdAdjustRate <= secondAdjustRate {
+			t.Error("Third adjustment should have increased the rate after cooldown")
 		}
 	})
 }

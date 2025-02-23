@@ -51,15 +51,15 @@ func TestConnectivityChecker(t *testing.T) {
 	assert.NoError(t, err)
 
 	cfg := &types.AppConfig{
-		Type:    types.TypeServer.String(),
+		Type:    types.TypeServer,
 		Version: "1.0.0",
-		Config: types.ServiceConfig{
-			Mode: string(types.ModeClient),
-			Network: types.NetworkConfig{
+		Config: &types.ServiceConfig{
+			Mode: types.ModeClient,
+			Network: &types.NetworkConfig{
 				Interface: "lo", // Use loopback for testing
 				Address:   "127.0.0.1/8",
 			},
-			Tunnel: types.TunnelConfig{
+			Tunnel: &types.TunnelConfig{
 				ServerAddress: host,
 				ServerPort:    atoi(port),
 			},
@@ -103,10 +103,10 @@ func TestConnectivityChecker(t *testing.T) {
 func TestConnectivityCheckerErrors(t *testing.T) {
 	t.Run("missing tunnel config", func(t *testing.T) {
 		cfg := &types.AppConfig{
-			Type:    types.TypeServer.String(),
+			Type:    types.TypeServer,
 			Version: "1.0.0",
-			Config: types.ServiceConfig{
-				Mode: string(types.ModeClient),
+			Config: &types.ServiceConfig{
+				Mode: types.ModeClient,
 			},
 		}
 		checker := NewConnectivityChecker(cfg)
@@ -117,10 +117,10 @@ func TestConnectivityCheckerErrors(t *testing.T) {
 
 	t.Run("missing network config", func(t *testing.T) {
 		cfg := &types.AppConfig{
-			Type:    types.TypeServer.String(),
+			Type:    types.TypeServer,
 			Version: "1.0.0",
-			Config: types.ServiceConfig{
-				Mode: string(types.ModeClient),
+			Config: &types.ServiceConfig{
+				Mode: types.ModeClient,
 			},
 		}
 		checker := NewConnectivityChecker(cfg)
@@ -131,11 +131,11 @@ func TestConnectivityCheckerErrors(t *testing.T) {
 
 	t.Run("invalid interface", func(t *testing.T) {
 		cfg := &types.AppConfig{
-			Type:    types.TypeServer.String(),
+			Type:    types.TypeServer,
 			Version: "1.0.0",
-			Config: types.ServiceConfig{
-				Mode: string(types.ModeClient),
-				Network: types.NetworkConfig{
+			Config: &types.ServiceConfig{
+				Mode: types.ModeClient,
+				Network: &types.NetworkConfig{
 					Interface: "invalid0",
 					Address:   "192.168.1.1/24",
 				},
@@ -149,11 +149,11 @@ func TestConnectivityCheckerErrors(t *testing.T) {
 
 	t.Run("server connection failure", func(t *testing.T) {
 		cfg := &types.AppConfig{
-			Type:    types.TypeServer.String(),
+			Type:    types.TypeServer,
 			Version: "1.0.0",
-			Config: types.ServiceConfig{
-				Mode: string(types.ModeClient),
-				Tunnel: types.TunnelConfig{
+			Config: &types.ServiceConfig{
+				Mode: types.ModeClient,
+				Tunnel: &types.TunnelConfig{
 					ServerAddress: "invalid.host",
 					ServerPort:    12345,
 				},
