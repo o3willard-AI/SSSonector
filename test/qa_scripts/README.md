@@ -1,197 +1,171 @@
-# QA Test Scripts
+# SSSonector QA Testing Scripts
 
-This directory contains automated test and setup scripts for validating SSSonector's functionality.
+This directory contains scripts for testing and managing the SSSonector tunnel service in a QA environment.
 
-## Setup Scripts
+## Environment Setup
 
-### setup_ssh_auth.sh
-Configures SSH authentication between test machines:
-- Generates SSH keys if needed
-- Distributes public keys
-- Verifies SSH connectivity
-- Sets up passwordless sudo access for test automation
+The test environment consists of:
+- Server: 192.168.50.210
+- Client: 192.168.50.211
 
-### setup_sudo_access.sh
-Configures sudo access for test automation:
-- Creates sudoers entries for test user
-- Sets up NOPASSWD access for specific commands
-- Validates sudo configuration
-- Ensures proper permissions
+Each machine should have:
+- SSSonector binary in `~/sssonector/bin/`
+- Configuration in `~/sssonector/config/`
+- Certificates in `~/sssonector/certs/`
+- Log directory at `~/sssonector/log/`
+- State directory at `~/sssonector/state/`
 
-### setup_certificates.sh
-Manages TLS certificates for secure communication:
-- Generates CA, server, and client certificates
-- Sets up certificate chains
-- Configures certificate locations
-- Validates certificate setup
+## Scripts
+
+### tunnel_control.sh
+
+A control script for managing the SSSonector tunnel service. It provides commands for starting, stopping, and monitoring the tunnel.
+
+```bash
+# Start both server and client
+./tunnel_control.sh start
+
+# Stop both server and client
+./tunnel_control.sh stop
+
+# Show tunnel status
+./tunnel_control.sh status
+
+# Restart both server and client
+./tunnel_control.sh restart
+```
+
+The script handles:
+- Process management
+- Interface cleanup
+- Connectivity testing
+- Status monitoring
 
 ### setup_configs.sh
-Handles configuration file management:
-- Creates server and client configurations
-- Sets up rate limiting parameters
-- Configures monitoring settings
-- Validates configuration syntax
 
-### setup_systemd.sh
-Sets up systemd service integration:
-- Creates service unit files
-- Configures service dependencies
-- Sets up logging
-- Validates service operation
+Sets up configuration files on both server and client machines.
+
+```bash
+./setup_configs.sh
+```
+
+### setup_certificates.sh
+
+Generates and distributes TLS certificates for secure communication.
+
+```bash
+./setup_certificates.sh
+```
 
 ### setup_binary.sh
-Manages binary installation and updates:
-- Installs SSSonector binaries
-- Sets up proper permissions
-- Creates necessary directories
-- Validates binary installation
 
-## Core Functionality Test Script
+Copies the SSSonector binary to both machines and sets appropriate permissions.
 
-### core_functionality_test.sh
-
-This script performs sanity checks of core SSSonector functionality across three deployment scenarios:
-
-1. Foreground Client / Foreground Server
-2. Background Client / Foreground Server
-3. Background Client / Background Server
-
-### Prerequisites
-
-1. Two Linux machines with:
-   - SSH access configured between them
-   - SSSonector installed
-   - Proper configuration files in `/etc/sssonector/`
-   - Systemd service configured for background operation
-   - Sudo access for network interface management
-
-2. Network connectivity between the machines
-
-### Usage
-
-1. Set environment variables (optional):
-   ```bash
-   export SERVER_IP="192.168.50.210"  # Default server IP
-   export CLIENT_IP="192.168.50.211"  # Default client IP
-   ```
-
-2. Run the test script:
-   ```bash
-   ./core_functionality_test.sh
-   ```
-
-### Test Scenarios
-
-For each scenario, the script:
-1. Verifies SSSonector installation
-2. Starts server and client in specified modes
-3. Verifies tunnel establishment
-4. Sends 20 test packets in each direction
-5. Performs clean shutdown
-6. Collects and saves logs
-
-### Test Artifacts
-
-The script creates a timestamped directory under `test_logs/` containing:
-- Packet transmission logs
-- Server and client application logs
-- System journal entries
-- Test execution logs
-
-### Exit Codes
-
-- 0: All tests passed
-- 1: One or more tests failed
-
-### Troubleshooting
-
-1. If the script fails to connect to hosts:
-   - Verify SSH connectivity
-   - Check IP addresses
-   - Ensure proper SSH key configuration
-
-2. If packet tests fail:
-   - Check network connectivity
-   - Verify SSSonector configuration
-   - Review logs in test_logs directory
-
-3. If services fail to start/stop:
-   - Check systemd service configuration
-   - Verify permissions
-   - Review system logs
-
-### Log Collection
-
-Logs are collected in:
-```
-test_logs/
-└── YYYYMMDD_HHMMSS/
-    ├── fg_client_fg_server_TIMESTAMP/
-    │   ├── server/
-    │   ├── client/
-    │   ├── server_journal.log
-    │   └── client_journal.log
-    ├── bg_client_fg_server_TIMESTAMP/
-    │   └── ...
-    └── bg_client_bg_server_TIMESTAMP/
-        └── ...
-```
-
-## Test Environment Setup
-
-To set up a complete test environment:
-
-1. Run setup scripts in order:
 ```bash
-./setup_ssh_auth.sh
-./setup_sudo_access.sh
-./setup_certificates.sh
-./setup_configs.sh
-./setup_systemd.sh
 ./setup_binary.sh
 ```
 
-2. Verify setup:
+### setup_sudo_access.sh
+
+Configures necessary sudo permissions for the tunnel service.
+
 ```bash
-# Check SSH connectivity
-ssh $SERVER_IP "echo 'SSH access working'"
-ssh $CLIENT_IP "echo 'SSH access working'"
-
-# Verify sudo access
-ssh $SERVER_IP "sudo -n true"
-ssh $CLIENT_IP "sudo -n true"
-
-# Check systemd service
-systemctl status sssonector
+./setup_sudo_access.sh
 ```
 
-3. Run core functionality test:
+### core_functionality_test.sh
+
+Runs a series of tests to verify core tunnel functionality.
+
 ```bash
 ./core_functionality_test.sh
 ```
 
-## Automated Test Execution
+## Testing Process
 
-For CI/CD environments, all scripts support non-interactive execution:
+1. Ensure all setup scripts have been run:
+   ```bash
+   ./setup_binary.sh
+   ./setup_certificates.sh
+   ./setup_configs.sh
+   ./setup_sudo_access.sh
+   ```
+
+2. Start the tunnel:
+   ```bash
+   ./tunnel_control.sh start
+   ```
+
+3. Verify tunnel status:
+   ```bash
+   ./tunnel_control.sh status
+   ```
+
+4. Run functionality tests:
+   ```bash
+   ./core_functionality_test.sh
+   ```
+
+5. Stop the tunnel when done:
+   ```bash
+   ./tunnel_control.sh stop
+   ```
+
+## Troubleshooting
+
+### Common Issues
+
+1. Permission denied errors:
+   - Check file permissions in ~/sssonector directories
+   - Verify sudo access is properly configured
+   - Ensure TUN device permissions are correct
+
+2. Connection failures:
+   - Verify both processes are running (use status command)
+   - Check firewall settings for port 8080
+   - Ensure TUN interfaces are properly configured
+
+3. Certificate errors:
+   - Verify certificate files exist and have correct permissions
+   - Check certificate paths in config files
+   - Regenerate certificates if needed
+
+### Logs
+
+- Server logs: `~/sssonector/log/sssonector.log` on server
+- Client logs: `~/sssonector/log/sssonector.log` on client
+- System logs: `journalctl -u sssonector` on both machines
+
+### Debug Mode
+
+Add `-debug` flag when running SSSonector for additional logging:
+
 ```bash
-# Set up complete test environment
-for script in setup_*.sh; do
-  ./$script -y
-done
-
-# Run tests with automatic cleanup
-./core_functionality_test.sh --ci
+sudo ~/sssonector/bin/sssonector -config ~/sssonector/config/config.yaml -debug
 ```
 
-## Log Management
+## Network Configuration
 
-Test logs are automatically rotated and compressed after 7 days:
-```bash
-find test_logs/ -type f -name "*.log" -mtime +7 -exec gzip {} \;
-```
+### Server
+- TUN Interface: tun0
+- IP Address: 10.0.0.1/24
+- Listen Port: 8080
 
-## Support and Maintenance
+### Client
+- TUN Interface: tun0
+- IP Address: 10.0.0.2/24
+- Server Port: 8080
 
-- Documentation: https://docs.sssonector.io/qa
-- Issue Tracker: https://github.com/o3willard-AI/SSSonector/issues
-- QA Team Contact: qa@sssonector.io
+## Security Notes
+
+1. The tunnel service requires root privileges for:
+   - Creating and configuring TUN interfaces
+   - Binding to privileged ports
+   - Managing network routes
+
+2. Security measures in place:
+   - TLS encryption for all tunnel traffic
+   - Certificate-based authentication
+   - Restricted file permissions
+   - Limited sudo access
+   - Network namespace isolation

@@ -1,0 +1,21 @@
+#!/usr/bin/expect -f
+
+set timeout 10
+set password "101abn"
+
+spawn ssh sblanken@192.168.50.210 "echo '$password' | sudo -S bash -c 'cat /etc/ssh/sshd_config && echo === PAM CONFIG === && cat /etc/pam.d/sshd && echo === AUTH LOG === && tail -n 50 /var/log/auth.log'"
+
+expect {
+    "password:" {
+        send "$password\r"
+        exp_continue
+    }
+    timeout {
+        puts "\n❌ Connection timed out"
+        exit 1
+    }
+    eof {
+        puts "\n✅ Check complete"
+        exit 0
+    }
+}

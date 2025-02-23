@@ -1,0 +1,31 @@
+#!/usr/bin/expect -f
+
+set timeout 30
+
+foreach ip {192.168.50.210 192.168.50.211 192.168.50.212} {
+    puts "\nVerifying SSH access to $ip..."
+    
+    spawn ssh -i /home/sblanken/.ssh/qa_key sblanken@$ip "echo 'SSH access successful'"
+    
+    expect {
+        "continue connecting (yes/no" {
+            send "yes\r"
+            exp_continue
+        }
+        "SSH access successful" {
+            puts "✅ SSH connection successful to $ip"
+        }
+        timeout {
+            puts "❌ SSH connection timed out for $ip"
+            exit 1
+        }
+        eof {
+            puts "❌ SSH connection failed for $ip"
+            exit 1
+        }
+    }
+    expect eof
+}
+
+puts "\n✅ SSH access verified for all VMs"
+exit 0

@@ -1,0 +1,33 @@
+#!/usr/bin/expect -f
+
+set timeout 60
+set password "101abn"
+
+puts "=== Installing NTOPNG in Steps ==="
+spawn ssh sblanken@192.168.50.212 "echo '$password' | sudo -S bash -c 'echo === STEP 1: CLEANUP === && apt-get remove -y ntopng ntopng-data apt-ntop && apt-get autoremove -y && apt-get clean && echo === STEP 2: INSTALL REDIS === && apt-get install -y redis-server && systemctl start redis-server && echo === STEP 3: INSTALL DEPENDENCIES === && apt-get install -y libcairo2 libpango-1.0-0 libpangocairo-1.0-0 libhiredis1.1.0 libmariadb3 libzmq5 libcurl4 && echo === STEP 4: ADD NTOP REPO === && wget -q https://packages.ntop.org/apt-stable/24.04/all/apt-ntop-stable.deb && dpkg -i apt-ntop-stable.deb && apt-get update && echo === STEP 5: INSTALL NTOPNG === && apt-get install -y ntopng && echo === STEP 6: CONFIGURE NTOPNG === && mkdir -p /etc/ntopng && cat > /etc/ntopng/ntopng.conf << \"EOL\"
+-i=enp0s3
+-w=3000
+-d=/var/lib/ntopng
+--local-networks=\"192.168.50.0/24\"
+--community
+EOL
+&& echo === STEP 7: START NTOPNG === && systemctl restart ntopng && systemctl status ntopng'"
+
+expect {
+    "password:" {
+        send "$password\r"
+        exp_continue
+    }
+    "Do you want to continue?" {
+        send "Y\r"
+        exp_continue
+    }
+    timeout {
+        puts "\n❌ Operation timed out"
+        exit 1
+    }
+    eof {
+        puts "\n✅ Operation complete"
+        exit 0
+    }
+}

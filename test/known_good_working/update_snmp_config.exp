@@ -1,0 +1,64 @@
+#!/usr/bin/expect -f
+
+set timeout 30
+set password "101abn"
+
+puts "=== Updating SNMP Config ==="
+spawn ssh sblanken@192.168.50.212 "echo '$password' | sudo -S bash -c 'cat > /etc/snmp/snmpd.conf << \"EOL\"
+agentAddress udp:0.0.0.0:161
+
+# Map the community name \"public\" into a \"security name\"
+com2sec notConfigUser  192.168.50.211  public
+com2sec notConfigUser  localhost       public
+
+# Map the security name into a group name:
+group   notConfigGroup v1           notConfigUser
+group   notConfigGroup v2c           notConfigUser
+
+# Define a view for allowing MIB access:
+view    systemview    included   .1.3.6.1.2.1.1
+view    systemview    included   .1.3.6.1.2.1.2
+view    systemview    included   .1.3.6.1.2.1.25.1.1
+view    systemview    included   .1.3.6.1.4.1.54321
+
+# Grant the group read-only access to the systemview view:
+access  notConfigGroup \"\"      any       noauth    exact  systemview none none
+
+# System contact information
+syslocation \"QA Lab\"
+syscontact Admin <admin@example.com>
+
+# Interface monitoring
+interface enp0s3 6 1000000000    # Type 6 = ethernetCsmacd Speed 1Gbps
+
+# Enable interface statistics
+includeAllDisks 10%
+load 12 14 14
+
+# SSSonector Enterprise MIB
+pass .1.3.6.1.4.1.54321.1 /usr/local/bin/sssonector-snmp
+EOL
+
+echo === RESTARTING SNMPD ===
+systemctl restart snmpd
+
+echo === CHECKING STATUS ===
+systemctl status snmpd
+
+echo === TESTING LOCAL SNMP ===
+snmpwalk -v2c -c public localhost .1.3.6.1.4.1.54321.1.1'"
+
+expect {
+    "password:" {
+        send "$password\r"
+        exp_continue
+    }
+    timeout {
+        puts "\n❌ Operation timed out"
+        exit 1
+    }
+    eof {
+        puts "\n✅ Operation complete"
+        exit 0
+    }
+}
