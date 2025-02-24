@@ -1,0 +1,90 @@
+# SSSonector Client Configuration Template
+# Part of Project SENTINEL - Configuration Management
+
+type: "client"
+
+# Logging configuration
+logging:
+  level: "info"              # debug, info, warn, error
+  output: "file"            # file or stdout
+  file_path: "/opt/sssonector/log/client.log"
+  max_size: 100             # Maximum log file size in MB
+  max_backups: 5            # Number of old log files to keep
+  max_age: 30              # Maximum age of old log files in days
+  compress: true           # Compress old log files
+
+# Client configuration
+client:
+  server_address: "server.example.com"
+  server_port: 8443
+  retry_interval: 5        # Connection retry interval in seconds
+  max_retries: 10         # Maximum number of connection retries
+  connection_timeout: 30   # Connection timeout in seconds
+  keepalive_interval: 60  # Keepalive interval in seconds
+  max_message_size: 1048576 # Maximum message size in bytes (1MB)
+
+# TLS/Certificate configuration
+certs:
+  ca_cert: "/opt/sssonector/certs/ca.crt"
+  cert: "/opt/sssonector/certs/client.crt"
+  key: "/opt/sssonector/certs/client.key"
+  verify_server: true
+  min_version: "TLS1.2"
+  cipher_suites:
+    - "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384"
+    - "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384"
+
+# Performance tuning
+performance:
+  read_buffer_size: 4096
+  write_buffer_size: 4096
+  tcp_keepalive: true
+  tcp_nodelay: true
+  compression_enabled: true
+  compression_level: 6     # 1-9, higher = better compression but more CPU
+
+# Monitoring configuration
+monitoring:
+  enabled: true
+  metrics_port: 9091
+  health_check_interval: 60
+  export_metrics:
+    prometheus: true
+    statsd: false
+
+# Rate limiting
+rate_limit:
+  enabled: true
+  requests_per_second: 100
+  burst_size: 50
+
+# Security settings
+security:
+  server_auth_timeout: 10
+  max_auth_retries: 3
+  blocked_server_timeout: 300
+  allowed_server_fingerprints:
+    - "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
+# State management
+state:
+  persistence_enabled: true
+  state_dir: "/opt/sssonector/state"
+  backup_interval: 3600
+  max_state_size: 50       # Maximum state file size in MB
+
+# Connection recovery
+recovery:
+  enabled: true
+  max_backoff: 300        # Maximum backoff time in seconds
+  initial_backoff: 1      # Initial backoff time in seconds
+  backoff_multiplier: 2   # Backoff time multiplier
+  jitter: 0.1            # Random jitter factor (0-1)
+
+# Debug options (development only)
+debug:
+  enabled: false
+  verbose_logging: false
+  dump_packets: false
+  profile_cpu: false
+  trace_connections: false
