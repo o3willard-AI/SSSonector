@@ -1,8 +1,0 @@
-#!/usr/bin/expect -f
-set timeout 20
-set password "101abn"
-
-spawn sudo apt-get install -y expect jq sshpass
-expect "*?assword:*"
-send "$password\r"
-expect eof
