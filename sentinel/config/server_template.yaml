@@ -1,0 +1,82 @@
+# SSSonector Server Configuration Template
+# Part of Project SENTINEL - Configuration Management
+
+type: "server"
+
+# Logging configuration
+logging:
+  level: "info"              # debug, info, warn, error
+  output: "file"            # file or stdout
+  file_path: "/opt/sssonector/log/server.log"
+  max_size: 100             # Maximum log file size in MB
+  max_backups: 5            # Number of old log files to keep
+  max_age: 30              # Maximum age of old log files in days
+  compress: true           # Compress old log files
+
+# Server configuration
+server:
+  listen_address: "0.0.0.0"
+  listen_port: 8443
+  max_connections: 1000
+  connection_timeout: 30    # Connection timeout in seconds
+  keepalive_interval: 60   # Keepalive interval in seconds
+  max_message_size: 1048576 # Maximum message size in bytes (1MB)
+
+# TLS/Certificate configuration
+certs:
+  ca_cert: "/opt/sssonector/certs/ca.crt"
+  cert: "/opt/sssonector/certs/server.crt"
+  key: "/opt/sssonector/certs/server.key"
+  verify_client: true
+  min_version: "TLS1.2"
+  cipher_suites:
+    - "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384"
+    - "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384"
+
+# Performance tuning
+performance:
+  worker_pool_size: 100
+  read_buffer_size: 4096
+  write_buffer_size: 4096
+  tcp_keepalive: true
+  tcp_nodelay: true
+
+# Monitoring configuration
+monitoring:
+  enabled: true
+  metrics_port: 9090
+  health_check_interval: 60
+  export_metrics:
+    prometheus: true
+    statsd: false
+
+# Rate limiting
+rate_limit:
+  enabled: true
+  requests_per_second: 1000
+  burst_size: 100
+
+# Security settings
+security:
+  client_auth_timeout: 10
+  max_auth_retries: 3
+  blocked_ip_timeout: 300
+  allowed_networks:
+    - "10.0.0.0/8"
+    - "172.16.0.0/12"
+    - "192.168.0.0/16"
+
+# State management
+state:
+  persistence_enabled: true
+  state_dir: "/opt/sssonector/state"
+  backup_interval: 3600
+  max_state_size: 100      # Maximum state file size in MB
+
+# Debug options (development only)
+debug:
+  enabled: false
+  verbose_logging: false
+  dump_packets: false
+  profile_cpu: false
+  trace_connections: false
