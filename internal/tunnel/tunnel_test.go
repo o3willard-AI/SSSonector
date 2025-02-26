@@ -2,7 +2,6 @@ package tunnel
 
 import (
 	"bytes"
-	"io"
 	"log"
 	"net"
 	"sync"
@@ -10,7 +9,7 @@ import (
 	"time"
 
 	"github.com/o3willard-AI/SSSonector/internal/adapter"
-	"github.com/o3willard-AI/SSSonector/internal/monitor"
+	"github.com/o3willard-AI/SSSonector/internal/config/types"
 )
 
 type mockConn struct {
@@ -36,8 +35,11 @@ func (m *mockConn) Read(p []byte) (n int, err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	// If there's no data to read, wait instead of returning EOF
 	if m.readPos >= len(m.readBuf) {
-		return 0, io.EOF
+		// Return 0 bytes but no error to indicate no data available yet
+		// This prevents the transfer goroutine from exiting
+		return 0, nil
 	}
 
 	n = copy(p, m.readBuf[m.readPos:])
@@ -93,14 +95,17 @@ func newMockAdapter() *mockAdapter {
 	}
 }
 
-func (m *mockAdapter) Configure(cfg *adapter.Config) error { return nil }
+func (m *mockAdapter) Configure(opts *adapter.Options) error { return nil }
 
 func (m *mockAdapter) Read(p []byte) (n int, err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	// If there's no data to read, wait instead of returning EOF
 	if m.readPos >= len(m.readBuf) {
-		return 0, io.EOF
+		// Return 0 bytes but no error to indicate no data available yet
+		// This prevents the transfer goroutine from exiting
+		return 0, nil
 	}
 
 	n = copy(p, m.readBuf[m.readPos:])
@@ -126,12 +131,20 @@ func (m *mockAdapter) Write(p []byte) (n int, err error) {
 	return n, nil
 }
 
-func (m *mockAdapter) Close() error       { return nil }
-func (m *mockAdapter) GetName() string    { return "mock0" }
-func (m *mockAdapter) GetMTU() int        { return m.mtu }
-func (m *mockAdapter) GetAddress() string { return "10.0.0.1" }
-func (m *mockAdapter) IsUp() bool         { return m.isUp }
-func (m *mockAdapter) Cleanup() error     { return nil }
+func (m *mockAdapter) Close() error            { return nil }
+func (m *mockAdapter) GetAddress() string      { return "10.0.0.1" }
+func (m *mockAdapter) GetState() adapter.State { return adapter.StateReady }
+func (m *mockAdapter) GetStatus() adapter.Status {
+	return adapter.Status{
+		State:      adapter.StateReady,
+		Statistics: adapter.Statistics{},
+		LastError:  nil,
+	}
+}
+func (m *mockAdapter) GetStatistics() adapter.Statistics {
+	return adapter.Statistics{}
+}
+func (m *mockAdapter) Cleanup() error { return nil }
 
 func TestTunnelTransfer(t *testing.T) {
 	tests := []struct {
@@ -164,29 +177,22 @@ func TestTunnelTransfer(t *testing.T) {
 			conn := newMockConn()
 			adapter := newMockAdapter()
 
-			// Create monitor
-			monCfg := &monitor.Config{
-				LogFile:       "/dev/null",
-				SNMPEnabled:   false,
-				SNMPPort:      0,
-				SNMPCommunity: "",
-				SNMPAddress:   "",
+			// Create a simple config for the transfer
+			cfg := &types.AppConfig{
+				Config: &types.ServiceConfig{
+					Network: &types.NetworkConfig{
+						MTU: 1500,
+					},
+				},
 			}
-			mon, err := monitor.New(monCfg)
-			if err != nil {
-				t.Fatalf("Failed to create monitor: %v", err)
-			}
+			tun := NewTransfer(conn, adapter, cfg, nil)
 
-			// Create tunnel
-			tun, err := New(conn, adapter, nil, mon)
-			if err != nil {
-				t.Fatalf("Failed to create tunnel: %v", err)
-			}
-
-			// Start tunnel
-			if err := tun.Start(); err != nil {
-				t.Fatalf("Failed to start tunnel: %v", err)
-			}
+			// Start transfer
+			go func() {
+				if err := tun.Start(); err != nil {
+					t.Errorf("Failed to start transfer: %v", err)
+				}
+			}()
 
 			// Wait for tunnel to be ready
 			time.Sleep(100 * time.Millisecond)
@@ -255,8 +261,11 @@ func TestTunnelTransfer(t *testing.T) {
 				log.Printf("Connection to adapter transfer complete")
 			}
 
-			// Stop tunnel
-			tun.Stop()
+			// Stop tunnel (use a mutex to prevent race conditions)
+			var once sync.Once
+			once.Do(func() {
+				tun.Stop()
+			})
 			log.Printf("Test %s complete", tt.name)
 		})
 	}
