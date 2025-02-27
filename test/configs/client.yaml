@@ -1,0 +1,39 @@
+mode: client
+server: ${SSSONECTOR_SERVER_IP}:443
+interface: tun0
+address: 10.0.0.2/24
+log_level: info
+
+security:
+  tls:
+    enabled: true
+    min_version: "1.2"
+    cert_file: certs/client.crt
+    key_file: certs/client.key
+    ca_file: certs/ca.crt
+  memory_protections:
+    enabled: true
+    no_exec: true
+    aslr: true
+  namespace:
+    enabled: true
+    network: true
+    mount: true
+
+metrics:
+  enabled: true
+  port: 9091
+  prometheus:
+    enabled: true
+    path: /metrics
+
+logging:
+  file: logs/client.log
+  level: info
+  format: json
+
+keepalive:
+  enabled: true
+  interval: 10s
+  timeout: 30s
+  retries: 3

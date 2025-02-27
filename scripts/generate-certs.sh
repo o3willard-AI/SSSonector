@@ -1,107 +1,188 @@
 #!/bin/bash
-set -e
 
-# Configuration
+# generate-certs.sh
+# Generates certificates for SSSonector
+set -euo pipefail
+
+# Default settings
 CERT_DIR="certs"
+SERVER_CN="${SERVER_CN:-localhost}"
+CLIENT_CN="${CLIENT_CN:-sssonector-client}"
 DAYS=365
-KEY_SIZE=4096
+KEY_SIZE=2048
 COUNTRY="EU"
 STATE="Europe"
 LOCALITY="European Union"
 ORGANIZATION="SSSonector"
-SERVER_CN="sssonector-server"
-CLIENT_CN="sssonector-client"
+CA_CN="SSSonector CA"
 
-# Create certificates directory
-mkdir -p "$CERT_DIR"
-cd "$CERT_DIR"
+# Create OpenSSL config files
+create_ca_config() {
+    cat > "${CERT_DIR}/ca.cnf" << EOF
+[req]
+distinguished_name = req_distinguished_name
+x509_extensions = v3_ca
+prompt = no
 
-echo "Generating certificates in $CERT_DIR..."
+[req_distinguished_name]
+C = ${COUNTRY}
+ST = ${STATE}
+L = ${LOCALITY}
+O = ${ORGANIZATION}
+CN = ${CA_CN}
 
-# Generate CA key and certificate
-echo "Generating CA certificate..."
-openssl genrsa -out ca.key $KEY_SIZE
-openssl req -new -x509 -days $DAYS -key ca.key -out ca.crt -subj "/C=$COUNTRY/ST=$STATE/L=$LOCALITY/O=$ORGANIZATION/CN=SSSonector CA"
-
-# Generate server key and CSR
-echo "Generating server certificate..."
-openssl genrsa -out server.key $KEY_SIZE
-openssl req -new -key server.key -out server.csr -subj "/C=$COUNTRY/ST=$STATE/L=$LOCALITY/O=$ORGANIZATION/CN=$SERVER_CN"
-
-# Generate client key and CSR
-echo "Generating client certificate..."
-openssl genrsa -out client.key $KEY_SIZE
-openssl req -new -key client.key -out client.csr -subj "/C=$COUNTRY/ST=$STATE/L=$LOCALITY/O=$ORGANIZATION/CN=$CLIENT_CN"
-
-# Create config file for certificate extensions
-cat > openssl.cnf << EOF
-[ v3_server ]
-basicConstraints = CA:FALSE
-keyUsage = digitalSignature, keyEncipherment
-extendedKeyUsage = serverAuth
-subjectAltName = DNS:$SERVER_CN,DNS:localhost,IP:127.0.0.1
-
-[ v3_client ]
-basicConstraints = CA:FALSE
-keyUsage = digitalSignature, keyEncipherment
-extendedKeyUsage = clientAuth
-subjectAltName = DNS:$CLIENT_CN
+[v3_ca]
+basicConstraints = critical,CA:TRUE
+keyUsage = critical,keyCertSign,cRLSign
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid:always,issuer
 EOF
+}
 
-# Sign server certificate
-echo "Signing server certificate..."
-openssl x509 -req -days $DAYS -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
-    -out server.crt -extfile openssl.cnf -extensions v3_server
+create_server_config() {
+    cat > "${CERT_DIR}/server.cnf" << EOF
+[req]
+distinguished_name = req_distinguished_name
+req_extensions = v3_req
+prompt = no
 
-# Sign client certificate
-echo "Signing client certificate..."
-openssl x509 -req -days $DAYS -in client.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
-    -out client.crt -extfile openssl.cnf -extensions v3_client
+[req_distinguished_name]
+C = ${COUNTRY}
+ST = ${STATE}
+L = ${LOCALITY}
+O = ${ORGANIZATION}
+CN = ${SERVER_CN}
 
-# Clean up CSRs and config
-rm -f *.csr openssl.cnf
+[v3_req]
+basicConstraints = critical,CA:FALSE
+keyUsage = critical,digitalSignature,keyEncipherment
+extendedKeyUsage = serverAuth
+subjectAltName = @alt_names
 
-# Set permissions
-chmod 600 *.key
-chmod 644 *.crt
+[alt_names]
+DNS.1 = ${SERVER_CN}
+DNS.2 = localhost
+IP.1 = 127.0.0.1
+EOF
+}
 
-echo "Certificate generation complete!"
-echo
-echo "Generated files:"
-ls -l
+create_client_config() {
+    cat > "${CERT_DIR}/client.cnf" << EOF
+[req]
+distinguished_name = req_distinguished_name
+req_extensions = v3_req
+prompt = no
 
-echo
-echo "Certificate details:"
-echo "==================="
-echo
-echo "CA Certificate:"
-openssl x509 -in ca.crt -text -noout | grep "Subject:"
-echo
-echo "Server Certificate:"
-openssl x509 -in server.crt -text -noout | grep -E "Subject:|DNS:|IP Address:"
-echo
-echo "Client Certificate:"
-openssl x509 -in client.crt -text -noout | grep -E "Subject:|DNS:"
+[req_distinguished_name]
+C = ${COUNTRY}
+ST = ${STATE}
+L = ${LOCALITY}
+O = ${ORGANIZATION}
+CN = ${CLIENT_CN}
 
-echo
-echo "Verifying certificate chain..."
-echo "=============================="
-echo
-echo "Server certificate:"
-openssl verify -CAfile ca.crt server.crt
-echo
-echo "Client certificate:"
-openssl verify -CAfile ca.crt client.crt
+[v3_req]
+basicConstraints = critical,CA:FALSE
+keyUsage = critical,digitalSignature,keyEncipherment
+extendedKeyUsage = clientAuth
+subjectAltName = DNS:${CLIENT_CN}
+EOF
+}
 
-echo
-echo "Testing TLS 1.3 compatibility..."
-echo "==============================="
-openssl ciphers -v 'TLSv1.3' | grep TLS_
+# Generate CA certificate
+generate_ca() {
+    echo "Generating CA certificate..."
+    openssl genrsa -out "${CERT_DIR}/ca.key" ${KEY_SIZE}
+    chmod 600 "${CERT_DIR}/ca.key"
+    openssl req -new -x509 -days ${DAYS} -key "${CERT_DIR}/ca.key" -out "${CERT_DIR}/ca.crt" -config "${CERT_DIR}/ca.cnf"
+    chmod 644 "${CERT_DIR}/ca.crt"
+}
 
-echo
-echo "Next steps:"
-echo "1. Copy certificates to /etc/sssonector/certs/"
-echo "2. Set correct permissions:"
-echo "   sudo chown -R root:root /etc/sssonector/certs/"
-echo "   sudo chmod 600 /etc/sssonector/certs/*.key"
-echo "   sudo chmod 644 /etc/sssonector/certs/*.crt"
+# Generate server certificate
+generate_server_cert() {
+    echo "Generating server certificate..."
+    openssl genrsa -out "${CERT_DIR}/server.key" ${KEY_SIZE}
+    chmod 600 "${CERT_DIR}/server.key"
+    openssl req -new -key "${CERT_DIR}/server.key" -out "${CERT_DIR}/server.csr" -config "${CERT_DIR}/server.cnf"
+    openssl x509 -req -days ${DAYS} -in "${CERT_DIR}/server.csr" -CA "${CERT_DIR}/ca.crt" -CAkey "${CERT_DIR}/ca.key" \
+        -CAcreateserial -out "${CERT_DIR}/server.crt" -extfile "${CERT_DIR}/server.cnf" -extensions v3_req
+    chmod 644 "${CERT_DIR}/server.crt"
+    rm -f "${CERT_DIR}/server.csr"
+}
+
+# Generate client certificate
+generate_client_cert() {
+    echo "Generating client certificate..."
+    openssl genrsa -out "${CERT_DIR}/client.key" ${KEY_SIZE}
+    chmod 600 "${CERT_DIR}/client.key"
+    openssl req -new -key "${CERT_DIR}/client.key" -out "${CERT_DIR}/client.csr" -config "${CERT_DIR}/client.cnf"
+    openssl x509 -req -days ${DAYS} -in "${CERT_DIR}/client.csr" -CA "${CERT_DIR}/ca.crt" -CAkey "${CERT_DIR}/ca.key" \
+        -CAcreateserial -out "${CERT_DIR}/client.crt" -extfile "${CERT_DIR}/client.cnf" -extensions v3_req
+    chmod 644 "${CERT_DIR}/client.crt"
+    rm -f "${CERT_DIR}/client.csr"
+}
+
+# Verify certificates
+verify_certs() {
+    echo "Verifying certificate chain..."
+    echo "==============================="
+    echo
+    echo "Server certificate:"
+    openssl verify -CAfile "${CERT_DIR}/ca.crt" "${CERT_DIR}/server.crt"
+    echo
+    echo "Client certificate:"
+    openssl verify -CAfile "${CERT_DIR}/ca.crt" "${CERT_DIR}/client.crt"
+}
+
+# Display certificate details
+show_cert_details() {
+    echo
+    echo "Certificate details:"
+    echo "==================="
+    echo
+    echo "CA Certificate:"
+    openssl x509 -in "${CERT_DIR}/ca.crt" -noout -text | grep -E "Subject:|Issuer:|Validity|Key Usage|Basic Constraints"
+    echo
+    echo "Server Certificate:"
+    openssl x509 -in "${CERT_DIR}/server.crt" -noout -text | grep -E "Subject:|Issuer:|Validity|Key Usage|Extended Key Usage|Subject Alternative Name"
+    echo
+    echo "Client Certificate:"
+    openssl x509 -in "${CERT_DIR}/client.crt" -noout -text | grep -E "Subject:|Issuer:|Validity|Key Usage|Extended Key Usage"
+}
+
+# List generated files
+list_files() {
+    echo
+    echo "Generated files:"
+    ls -l "${CERT_DIR}"/*.{key,crt}
+}
+
+# Main function
+main() {
+    # Create certificates directory
+    mkdir -p "${CERT_DIR}"
+
+    # Create OpenSSL config files
+    create_ca_config
+    create_server_config
+    create_client_config
+
+    # Generate certificates
+    generate_ca
+    generate_server_cert
+    generate_client_cert
+
+    # Verify and display results
+    verify_certs
+    show_cert_details
+    list_files
+
+    # Clean up config files
+    rm -f "${CERT_DIR}"/*.cnf
+    rm -f "${CERT_DIR}"/*.srl
+
+    echo
+    echo "Certificate generation complete!"
+}
+
+# Run main function
+main "$@"

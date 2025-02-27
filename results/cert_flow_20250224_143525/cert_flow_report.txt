@@ -1,0 +1,62 @@
+[0;32m[INFO][0m Verifying CA certificate...
+[0;32m[INFO][0m Verifying server certificate...
+[0;32m[INFO][0m Verifying client certificate...
+[0;32m[INFO][0m Verifying certificate chain...
+Certificate Flow Analysis Report
+===============================
+Generated: Mon 24 Feb 2025 02:35:25 PM PST
+
+Certificate Information:
+----------------------
+CA Certificate:
+        Issuer: C = EU, ST = Europe, L = European Union, O = SSSonector, CN = SSSonector CA
+        Validity
+        Subject: C = EU, ST = Europe, L = European Union, O = SSSonector, CN = SSSonector CA
+            X509v3 Basic Constraints: critical
+            X509v3 Key Usage: critical
+
+Server Certificate:
+        Issuer: C = EU, ST = Europe, L = European Union, O = SSSonector, CN = SSSonector CA
+        Validity
+        Subject: C = EU, ST = Europe, L = European Union, O = SSSonector, CN = localhost
+            X509v3 Key Usage: critical
+            X509v3 Extended Key Usage: 
+            X509v3 Subject Alternative Name: 
+
+Client Certificate:
+        Issuer: C = EU, ST = Europe, L = European Union, O = SSSonector, CN = SSSonector CA
+        Validity
+        Subject: C = EU, ST = Europe, L = European Union, O = SSSonector, CN = sssonector-client
+            X509v3 Key Usage: critical
+            X509v3 Extended Key Usage: 
+
+Check Results:
+-------------
+[✓] client_subject: Valid client subject
+[✓] file_certs/server.key: File exists with correct permissions
+[✓] client_chain: Client certificate chain verified
+[✓] client_key_usage: Valid key usage
+[✓] server_chain: Server certificate chain verified
+[✓] server_ext_key_usage: Valid extended key usage
+[✓] server_san: Valid SAN entries
+[✓] server_subject: Valid server subject
+[✓] server_key_usage: Valid key usage
+[✓] ca_constraints: Valid basic constraints
+[✓] client_ext_key_usage: Valid extended key usage
+[✓] ca_subject: Valid CA subject
+[✓] file_certs/client.key: File exists with correct permissions
+[✓] ca_key_usage: Valid key usage
+[✓] file_certs/client.crt: File exists with correct permissions
+[✓] file_certs/ca.crt: File exists with correct permissions
+[✓] file_certs/server.crt: File exists with correct permissions
+[✓] file_certs/ca.key: File exists with correct permissions
+
+Summary:
+--------
+Total checks: 18
+Passed: 18
+Failed: 0
+Warnings: 0
+
+Overall Status: PASS
+[0;32m[INFO][0m Certificate flow analysis completed successfully

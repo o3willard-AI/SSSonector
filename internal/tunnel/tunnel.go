@@ -11,6 +11,7 @@ import (
 	"github.com/o3willard-AI/SSSonector/internal/adapter"
 	"github.com/o3willard-AI/SSSonector/internal/config/interfaces"
 	"github.com/o3willard-AI/SSSonector/internal/config/types"
+	"github.com/o3willard-AI/SSSonector/internal/network"
 	"github.com/o3willard-AI/SSSonector/internal/startup"
 	"go.uber.org/zap"
 )
@@ -110,9 +111,20 @@ func (s *Server) Start() error {
 	// Initialization phase
 	startupLogger.SetPhase(types.StartupPhaseInitialization)
 
+	// Check and enable IP forwarding
+	err := startupLogger.LogOperation(types.StartupComponentNetwork, "Check IP forwarding", func() error {
+		return network.EnableIPForwarding(s.logger)
+	}, nil)
+	if err != nil {
+		s.logger.Warn("Failed to enable IP forwarding, packet forwarding may not work",
+			zap.Error(err),
+		)
+		// Continue anyway, as this might be a permission issue or non-Linux system
+	}
+
 	// Create adapter options
 	var opts *adapter.Options
-	err := startupLogger.LogOperation(types.StartupComponentAdapter, "Create adapter options", func() error {
+	err = startupLogger.LogOperation(types.StartupComponentAdapter, "Create adapter options", func() error {
 		opts = adapter.DefaultOptions()
 		opts.Name = s.config.Config.Network.Interface
 		opts.MTU = s.config.Config.Network.MTU
@@ -120,8 +132,8 @@ func (s *Server) Start() error {
 
 		if s.config.Adapter != nil {
 			opts.RetryAttempts = s.config.Adapter.RetryAttempts
-			opts.RetryDelay = time.Duration(s.config.Adapter.RetryDelay) * time.Millisecond
-			opts.CleanupTimeout = time.Duration(s.config.Adapter.CleanupTimeout) * time.Millisecond
+			opts.RetryDelay = s.config.Adapter.RetryDelay.Duration
+			opts.CleanupTimeout = s.config.Adapter.CleanupTimeout.Duration
 		}
 		return nil
 	}, map[string]interface{}{
@@ -138,6 +150,13 @@ func (s *Server) Start() error {
 	err = startupLogger.LogOperation(types.StartupComponentAdapter, "Create TUN adapter", func() error {
 		var adapterErr error
 		s.adapter, adapterErr = adapter.NewTUNAdapter(opts)
+		if adapterErr == nil {
+			s.logger.Info("TUN adapter created successfully",
+				zap.String("interface", opts.Name),
+				zap.String("address", opts.Address),
+				zap.Int("mtu", opts.MTU),
+			)
+		}
 		return adapterErr
 	}, nil)
 	if err != nil {
@@ -187,7 +206,7 @@ func (s *Server) Start() error {
 	// Connection phase
 	startupLogger.SetPhase(types.StartupPhaseConnection)
 
-	// Create TCP listener
+	// Create TCP listener for initial connection only
 	addr := fmt.Sprintf("%s:%d",
 		s.config.Config.Tunnel.ListenAddress,
 		s.config.Config.Tunnel.ListenPort,
@@ -302,14 +321,28 @@ func (s *Server) acceptConnections() {
 			zap.String("remote", conn.RemoteAddr().String()),
 		)
 
+		s.logger.Info("Tunnel connection established",
+			zap.String("remote", conn.RemoteAddr().String()),
+			zap.String("local", conn.LocalAddr().String()),
+		)
+
+		// Authenticate connection using certificates
+		certManager := NewCertManager(s.logger, s.config)
+		if err := certManager.VerifyPeerCertificate(conn); err != nil {
+			s.logger.Error("Authentication failed", zap.Error(err))
+			conn.Close()
+			continue
+		}
+
 		s.transfers.Add(1)
 		go func() {
 			defer s.transfers.Done()
 			defer conn.Close()
 
+			// Create transfer using TUN adapter for data
 			transfer := NewTransfer(
-				conn,
-				NewAdapterWrapper(s.adapter),
+				conn,                         // Initial TCP connection
+				NewAdapterWrapper(s.adapter), // TUN adapter for data
 				s.config,
 				s.logger,
 			)

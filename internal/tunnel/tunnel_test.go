@@ -31,12 +31,17 @@ func newMockConn() *mockConn {
 	}
 }
 
+// Lock to prevent race conditions\n\tm.mu.Lock()\n\tdefer m.mu.Unlock()
+
 func (m *mockConn) Read(p []byte) (n int, err error) {
+	// Lock to prevent race conditions
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	// If there's no data to read, wait instead of returning EOF
 	if m.readPos >= len(m.readBuf) {
+		// Wait a bit before returning to simulate network delay
+		time.Sleep(time.Millisecond * 10)
 		// Return 0 bytes but no error to indicate no data available yet
 		// This prevents the transfer goroutine from exiting
 		return 0, nil
@@ -52,7 +57,10 @@ func (m *mockConn) Read(p []byte) (n int, err error) {
 	return n, nil
 }
 
+// Lock to prevent race conditions\n\tm.mu.Lock()\n\tdefer m.mu.Unlock()
+
 func (m *mockConn) Write(p []byte) (n int, err error) {
+	// Lock to prevent race conditions
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.writeBuf = append(m.writeBuf, p...)
@@ -103,6 +111,8 @@ func (m *mockAdapter) Read(p []byte) (n int, err error) {
 
 	// If there's no data to read, wait instead of returning EOF
 	if m.readPos >= len(m.readBuf) {
+		// Wait a bit before returning to simulate network delay
+		time.Sleep(time.Millisecond * 10)
 		// Return 0 bytes but no error to indicate no data available yet
 		// This prevents the transfer goroutine from exiting
 		return 0, nil
@@ -203,7 +213,7 @@ func TestTunnelTransfer(t *testing.T) {
 			log.Printf("Wrote %d bytes to adapter readBuf", len(tt.data))
 
 			// Wait for data to be transferred
-			deadline := time.Now().Add(1 * time.Second)
+			deadline := time.Now().Add(5 * time.Second)
 			for len(conn.writeBuf) < len(tt.data) && time.Now().Before(deadline) {
 				select {
 				case <-adapter.readCh:

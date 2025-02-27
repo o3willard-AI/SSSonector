@@ -1,0 +1,50 @@
+#!/usr/bin/expect -f
+
+set timeout 30
+set password "101abn"
+
+# Function to create directory and copy repository
+proc copy_repo {host} {
+    global password
+    
+    puts "\n=== Copying SSSonector repository to $host ==="
+    spawn bash -c "cd /home/sblanken/Desktop && \
+        ssh sblanken@$host 'mkdir -p /home/sblanken/go/src/github.com/o3willard-AI' && \
+        rsync -av go/src/github.com/o3willard-AI/SSSonector/ sblanken@$host:/home/sblanken/go/src/github.com/o3willard-AI/SSSonector/"
+
+    expect {
+        "password:" {
+            send "$password\r"
+            exp_continue
+        }
+        timeout {
+            puts "\n❌ Operation timed out"
+            exit 1
+        }
+        eof {
+            puts "\n✅ Repository copy complete"
+        }
+    }
+
+    # Set permissions and build
+    spawn ssh sblanken@$host "cd /home/sblanken/go/src/github.com/o3willard-AI/SSSonector && \
+        make build"
+
+    expect {
+        "password:" {
+            send "$password\r"
+            exp_continue
+        }
+        timeout {
+            puts "\n❌ Build timed out"
+            exit 1
+        }
+        eof {
+            puts "\n✅ Build complete"
+        }
+    }
+}
+
+# Copy repository to both systems
+copy_repo "192.168.50.210"
+copy_repo "192.168.50.211"

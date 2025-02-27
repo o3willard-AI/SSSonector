@@ -1,0 +1,137 @@
+# Environment-specific configurations for verification system
+
+# Common settings across all environments
+common:
+  openssl:
+    min_version: "1.1.1"
+    required_providers:
+      - default
+      - legacy
+  system:
+    min_fd_limit: 65535
+    min_disk_space_gb: 1
+    required_modules:
+      - tun
+  network:
+    mtu: 1500
+    ip_forward: true
+    required_ports:
+      - 443
+      - 8443
+      - 9090
+      - 9091
+      - 9092
+      - 9093
+
+# Local development environment
+local:
+  base_dir: "./dev"
+  cert_dir: "./dev/certs"
+  config_dir: "./dev/config"
+  log_dir: "./dev/logs"
+  interface_prefix: "tun"
+  monitoring:
+    enabled: false
+    interval: 1s
+  security:
+    namespace:
+      enabled: true
+      types:
+        - network
+        - mount
+    memory_protections:
+      enabled: true
+      features:
+        - no_exec
+        - aslr
+    tls:
+      min_version: "1.2"
+      cert_rotation: false
+
+# QA server environment
+qa_server:
+  base_dir: "/opt/sssonector"
+  cert_dir: "/opt/sssonector/certs"
+  config_dir: "/opt/sssonector/config"
+  log_dir: "/opt/sssonector/logs"
+  interface_prefix: "tun"
+  monitoring:
+    enabled: true
+    interval: 5s
+    metrics:
+      enabled: true
+      port: 9091
+      path: "/metrics"
+  security:
+    namespace:
+      enabled: true
+      types:
+        - network
+        - mount
+        - pid
+    memory_protections:
+      enabled: true
+      features:
+        - no_exec
+        - aslr
+        - stack_guard
+    tls:
+      min_version: "1.2"
+      cert_rotation: true
+      rotation_interval: 24h
+
+# QA client environment
+qa_client:
+  base_dir: "/opt/sssonector"
+  cert_dir: "/opt/sssonector/certs"
+  config_dir: "/opt/sssonector/config"
+  log_dir: "/opt/sssonector/logs"
+  interface_prefix: "tun"
+  monitoring:
+    enabled: true
+    interval: 5s
+    metrics:
+      enabled: true
+      port: 9093
+      path: "/metrics"
+  security:
+    namespace:
+      enabled: true
+      types:
+        - network
+        - mount
+        - pid
+    memory_protections:
+      enabled: true
+      features:
+        - no_exec
+        - aslr
+        - stack_guard
+    tls:
+      min_version: "1.2"
+      cert_rotation: true
+      rotation_interval: 24h
+
+# Performance thresholds
+performance:
+  local:
+    cpu_idle_min: 50
+    memory_free_min: 512
+    latency_max_ms: 1
+    throughput_min_mbps: 100
+  qa:
+    cpu_idle_min: 70
+    memory_free_min: 1024
+    latency_max_ms: 0.5
+    throughput_min_mbps: 500
+    
+# Resource limits
+resources:
+  local:
+    max_connections: 100
+    max_file_descriptors: 65535
+    max_processes: 1000
+  qa:
+    max_connections: 1000
+    max_file_descriptors: 131070
+    max_processes: 5000

@@ -4,7 +4,9 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"net"
 	"os"
+	"time"
 
 	"github.com/o3willard-AI/SSSonector/internal/config/types"
 	"go.uber.org/zap"
@@ -24,70 +26,60 @@ func NewCertManager(logger *zap.Logger, cfg *types.AppConfig) *CertManager {
 	}
 }
 
-// GetServerTLSConfig returns the TLS configuration for server mode
-func (m *CertManager) GetServerTLSConfig() (*tls.Config, error) {
+// VerifyPeerCertificate verifies peer certificates for authentication
+func (m *CertManager) VerifyPeerCertificate(conn net.Conn) error {
+	// Load CA certificate
+	caCertPool := x509.NewCertPool()
+	caCert, err := os.ReadFile(m.config.Config.Auth.CAFile)
+	if err != nil {
+		return fmt.Errorf("failed to read CA certificate: %w", err)
+	}
+	if !caCertPool.AppendCertsFromPEM(caCert) {
+		return fmt.Errorf("failed to parse CA certificate")
+	}
+
+	// Load server certificate
 	cert, err := tls.LoadX509KeyPair(m.config.Config.Auth.CertFile, m.config.Config.Auth.KeyFile)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load server certificate: %w", err)
+		return fmt.Errorf("failed to load certificate: %w", err)
 	}
 
-	var clientCAs *x509.CertPool
-	if m.config.Config.Auth.CAFile != "" {
-		clientCAs = x509.NewCertPool()
-		caCert, err := os.ReadFile(m.config.Config.Auth.CAFile)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read CA certificate: %w", err)
-		}
-		if !clientCAs.AppendCertsFromPEM(caCert) {
-			return nil, fmt.Errorf("failed to parse CA certificate")
-		}
-	}
-
-	return &tls.Config{
+	// Create TLS config for authentication only
+	tlsConfig := &tls.Config{
 		Certificates: []tls.Certificate{cert},
-		ClientCAs:    clientCAs,
+		ClientCAs:    caCertPool,
 		ClientAuth:   tls.RequireAndVerifyClientCert,
-		MinVersion:   tls.VersionTLS13,
-		CipherSuites: []uint16{
-			// EU-exportable cipher suites for TLS 1.3
-			tls.TLS_AES_128_GCM_SHA256,
-			tls.TLS_AES_256_GCM_SHA384,
-			tls.TLS_CHACHA20_POLY1305_SHA256,
-		},
-	}, nil
-}
-
-// GetClientTLSConfig returns the TLS configuration for client mode
-func (m *CertManager) GetClientTLSConfig() (*tls.Config, error) {
-	cert, err := tls.LoadX509KeyPair(m.config.Config.Auth.CertFile, m.config.Config.Auth.KeyFile)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load client certificate: %w", err)
 	}
 
-	var rootCAs *x509.CertPool
-	if m.config.Config.Auth.CAFile != "" {
-		rootCAs = x509.NewCertPool()
-		caCert, err := os.ReadFile(m.config.Config.Auth.CAFile)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read CA certificate: %w", err)
-		}
-		if !rootCAs.AppendCertsFromPEM(caCert) {
-			return nil, fmt.Errorf("failed to parse CA certificate")
-		}
+	// Perform TLS handshake for authentication
+	tlsConn := tls.Server(conn, tlsConfig)
+	if err := tlsConn.Handshake(); err != nil {
+		return fmt.Errorf("TLS handshake failed: %w", err)
 	}
 
-	return &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		RootCAs:      rootCAs,
-		MinVersion:   tls.VersionTLS13,
-		CipherSuites: []uint16{
-			// EU-exportable cipher suites for TLS 1.3
-			tls.TLS_AES_128_GCM_SHA256,
-			tls.TLS_AES_256_GCM_SHA384,
-			tls.TLS_CHACHA20_POLY1305_SHA256,
-		},
-		ServerName: m.config.Config.Network.Interface,
-	}, nil
+	// Verify peer certificate
+	certs := tlsConn.ConnectionState().PeerCertificates
+	if len(certs) == 0 {
+		return fmt.Errorf("no peer certificates provided")
+	}
+
+	opts := x509.VerifyOptions{
+		Roots:         caCertPool,
+		CurrentTime:   time.Now(),
+		Intermediates: x509.NewCertPool(),
+	}
+
+	// Add any intermediate certificates
+	for _, cert := range certs[1:] {
+		opts.Intermediates.AddCert(cert)
+	}
+
+	// Verify the peer's certificate chain
+	if _, err := certs[0].Verify(opts); err != nil {
+		return fmt.Errorf("certificate verification failed: %w", err)
+	}
+
+	return nil
 }
 
 // VerifyCertificates verifies that all required certificates exist and are valid

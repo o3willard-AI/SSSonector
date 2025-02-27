@@ -1,0 +1,109 @@
+#!/usr/bin/expect -f
+
+set timeout 60
+set password [lindex $argv 0]
+
+# SSH into monitor server
+spawn ssh 192.168.50.212
+
+expect {
+    "password:" {
+        send "$password\r"
+    }
+    timeout {
+        puts "Timeout while waiting for password prompt"
+        exit 1
+    }
+}
+
+expect {
+    "~$ " { }
+    ":~$ " { }
+    "$ " { }
+}
+
+# Create monitoring scripts
+send "sudo tee /usr/local/bin/check_throughput.sh > /dev/null << 'EOL'\r"
+send "#!/bin/bash\r"
+send "interface=\"enp0s3\"\r"
+send "rx_bytes=\$(cat /sys/class/net/\$interface/statistics/rx_bytes)\r"
+send "tx_bytes=\$(cat /sys/class/net/\$interface/statistics/tx_bytes)\r"
+send "echo \"\$rx_bytes:\$tx_bytes\"\r"
+send "EOL\r"
+expect {
+    "password" {
+        send "$password\r"
+        exp_continue
+    }
+    "~$ " { }
+    ":~$ " { }
+    "$ " { }
+}
+
+send "sudo tee /usr/local/bin/check_connections.sh > /dev/null << 'EOL'\r"
+send "#!/bin/bash\r"
+send "netstat -an | grep \"ESTABLISHED\" | wc -l\r"
+send "EOL\r"
+expect {
+    "~$ " { }
+    ":~$ " { }
+    "$ " { }
+}
+
+send "sudo tee /usr/local/bin/check_latency.sh > /dev/null << 'EOL'\r"
+send "#!/bin/bash\r"
+send "ping -c 1 192.168.50.210 | grep \"time=\" | cut -d \"=\" -f 4\r"
+send "EOL\r"
+expect {
+    "~$ " { }
+    ":~$ " { }
+    "$ " { }
+}
+
+# Make scripts executable
+send "sudo chmod +x /usr/local/bin/check_*.sh\r"
+expect {
+    "~$ " { }
+    ":~$ " { }
+    "$ " { }
+}
+
+# Configure SNMP
+send "sudo tee /etc/snmp/snmpd.conf > /dev/null << 'EOL'\r"
+send "agentAddress udp:161\r"
+send "rocommunity public 192.168.50.0/24\r"
+send "syslocation \"QA Environment\"\r"
+send "syscontact \"QA Team\"\r"
+send "master agentx\r"
+send "view systemview included .1.3.6.1.2.1.1\r"
+send "view systemview included .1.3.6.1.2.1.25.1\r"
+send "view systemview included .1.3.6.1.4.1.54321\r"
+send "extend sssonector-throughput /usr/local/bin/check_throughput.sh\r"
+send "extend sssonector-connections /usr/local/bin/check_connections.sh\r"
+send "extend sssonector-latency /usr/local/bin/check_latency.sh\r"
+send "EOL\r"
+expect {
+    "~$ " { }
+    ":~$ " { }
+    "$ " { }
+}
+
+# Restart SNMP service
+send "sudo systemctl restart snmpd\r"
+expect {
+    "~$ " { }
+    ":~$ " { }
+    "$ " { }
+}
+
+# Test SNMP configuration
+send "snmpwalk -v2c -c public localhost NET-SNMP-EXTEND-MIB::nsExtendObjects\r"
+expect {
+    "~$ " { }
+    ":~$ " { }
+    "$ " { }
+}
+
+# Exit
+send "exit\r"
+expect eof

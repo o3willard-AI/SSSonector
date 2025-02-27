@@ -1,0 +1,33 @@
+mode: server
+listen: 0.0.0.0:443
+interface: tun0
+address: 10.0.0.1/24
+log_level: info
+
+security:
+  tls:
+    enabled: true
+    min_version: "1.2"
+    cert_file: certs/server.crt
+    key_file: certs/server.key
+    ca_file: certs/ca.crt
+  memory_protections:
+    enabled: true
+    no_exec: true
+    aslr: true
+  namespace:
+    enabled: true
+    network: true
+    mount: true
+
+metrics:
+  enabled: true
+  port: 9090
+  prometheus:
+    enabled: true
+    path: /metrics
+
+logging:
+  file: logs/server.log
+  level: info
+  format: json

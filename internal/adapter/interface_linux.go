@@ -8,6 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"go.uber.org/zap"
@@ -231,12 +232,59 @@ func (i *tunAdapter) createInterface() error {
 	copy(ifr[:], i.opts.Name)
 	*(*uint16)(unsafe.Pointer(&ifr[16])) = syscall.IFF_TUN | syscall.IFF_NO_PI
 
+	i.logger.Debug("Creating TUN interface",
+		zap.String("name", i.opts.Name),
+		zap.Uint16("flags", syscall.IFF_TUN|syscall.IFF_NO_PI),
+	)
+
 	// Set interface flags
 	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, file.Fd(), uintptr(TUNSETIFF), uintptr(unsafe.Pointer(&ifr[0])))
 	if errno != 0 {
 		file.Close()
+		i.logger.Error("Failed to set interface flags",
+			zap.String("name", i.opts.Name),
+			zap.Error(errno),
+		)
 		return fmt.Errorf("failed to set interface flags: %w", errno)
 	}
+
+	i.logger.Debug("TUN interface created successfully",
+		zap.String("name", i.opts.Name),
+		zap.String("device", tunDevice),
+	)
+
+	// Create socket for interface configuration
+	sock, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_DGRAM, 0)
+	if err != nil {
+		file.Close()
+		return fmt.Errorf("failed to create socket: %w", err)
+	}
+	defer syscall.Close(sock)
+
+	// Set interface up and running
+	flags := syscall.IFF_UP | syscall.IFF_RUNNING | syscall.IFF_POINTOPOINT | syscall.IFF_MULTICAST
+	*(*uint16)(unsafe.Pointer(&ifr[16])) = uint16(flags)
+
+	i.logger.Debug("Setting interface flags",
+		zap.String("name", i.opts.Name),
+		zap.Int("flags", flags),
+	)
+
+	_, _, errno = syscall.Syscall(syscall.SYS_IOCTL, uintptr(sock), syscall.SIOCSIFFLAGS, uintptr(unsafe.Pointer(&ifr[0])))
+	if errno != 0 {
+		file.Close()
+		i.logger.Error("Failed to set interface up",
+			zap.String("name", i.opts.Name),
+			zap.Int("flags", flags),
+			zap.Error(errno),
+		)
+		return fmt.Errorf("failed to set interface up: %w", errno)
+	}
+
+	i.logger.Debug("Interface flags set successfully",
+		zap.String("name", i.opts.Name),
+		zap.Int("flags", flags),
+	)
 
 	i.file = file
 
@@ -251,6 +299,13 @@ func (i *tunAdapter) createInterface() error {
 
 // configureInterface sets up the network interface
 func configureInterface(name, address string, mtu int) error {
+	// Create logger for this function
+	logger, err := zap.NewProduction()
+	if err != nil {
+		return fmt.Errorf("failed to create logger: %w", err)
+	}
+	defer logger.Sync()
+
 	// Create socket
 	sock, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_DGRAM, 0)
 	if err != nil {
@@ -258,23 +313,43 @@ func configureInterface(name, address string, mtu int) error {
 	}
 	defer syscall.Close(sock)
 
+	logger.Debug("Created socket for interface configuration",
+		zap.String("name", name),
+		zap.Int("mtu", mtu),
+	)
+
 	// Create interface request
 	var ifr [ifReqSize]byte
 	copy(ifr[:], name)
 
-	// Set interface up
-	*(*uint16)(unsafe.Pointer(&ifr[16])) = syscall.IFF_UP | syscall.IFF_RUNNING
-	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(sock), syscall.SIOCSIFFLAGS, uintptr(unsafe.Pointer(&ifr[0])))
-	if errno != 0 {
-		return fmt.Errorf("failed to set interface up: %w", errno)
-	}
-
-	// Set MTU
+	// Set MTU first
 	*(*int32)(unsafe.Pointer(&ifr[16])) = int32(mtu)
-	_, _, errno = syscall.Syscall(syscall.SYS_IOCTL, uintptr(sock), syscall.SIOCSIFMTU, uintptr(unsafe.Pointer(&ifr[0])))
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(sock), syscall.SIOCSIFMTU, uintptr(unsafe.Pointer(&ifr[0])))
 	if errno != 0 {
 		return fmt.Errorf("failed to set interface MTU: %w", errno)
 	}
+
+	// Set interface up with all required flags
+	flags := syscall.IFF_UP | syscall.IFF_RUNNING | syscall.IFF_POINTOPOINT | syscall.IFF_MULTICAST
+	*(*uint16)(unsafe.Pointer(&ifr[16])) = uint16(flags)
+
+	_, _, errno = syscall.Syscall(syscall.SYS_IOCTL, uintptr(sock), syscall.SIOCSIFFLAGS, uintptr(unsafe.Pointer(&ifr[0])))
+	if errno != 0 {
+		logger.Error("Failed to set interface flags",
+			zap.String("name", name),
+			zap.Int("flags", flags),
+			zap.Error(errno),
+		)
+		return fmt.Errorf("failed to set interface up: %w", errno)
+	}
+
+	logger.Debug("Interface flags set successfully",
+		zap.String("name", name),
+		zap.Int("flags", flags),
+	)
+
+	// Wait for interface to be ready
+	time.Sleep(100 * time.Millisecond)
 
 	// Parse IP address and netmask
 	ip, ipNet, err := net.ParseCIDR(address)
@@ -285,13 +360,32 @@ func configureInterface(name, address string, mtu int) error {
 	// Set IP address
 	var sockaddr syscall.RawSockaddrInet4
 	sockaddr.Family = syscall.AF_INET
-	copy(sockaddr.Addr[:], ip.To4())
+	ipv4 := ip.To4()
+	if ipv4 == nil {
+		return fmt.Errorf("invalid IPv4 address: %s", ip.String())
+	}
+	copy(sockaddr.Addr[:], ipv4)
+
+	logger.Debug("Setting interface address",
+		zap.String("name", name),
+		zap.String("address", ip.String()),
+	)
 
 	*(*syscall.RawSockaddrInet4)(unsafe.Pointer(&ifr[16])) = sockaddr
 	_, _, errno = syscall.Syscall(syscall.SYS_IOCTL, uintptr(sock), syscall.SIOCSIFADDR, uintptr(unsafe.Pointer(&ifr[0])))
 	if errno != 0 {
+		logger.Error("Failed to set interface address",
+			zap.String("name", name),
+			zap.String("address", ip.String()),
+			zap.Error(errno),
+		)
 		return fmt.Errorf("failed to set interface address: %w", errno)
 	}
+
+	logger.Debug("Interface address set successfully",
+		zap.String("name", name),
+		zap.String("address", ip.String()),
+	)
 
 	// Set netmask
 	copy(sockaddr.Addr[:], ipNet.Mask)

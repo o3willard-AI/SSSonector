@@ -1,0 +1,31 @@
+type: server
+config:
+  mode: server
+  state_dir: ./state
+  log_dir: ./log
+  network:
+    name: tun0
+    interface: tun0
+    address: 10.0.0.1/24
+    mtu: 1500
+  tunnel:
+    protocol: tcp
+    max_clients: 1000
+    port: 8080
+    mtu: 1500
+    compression: false
+    keepalive: 1m
+  security:
+    memory_protections:
+      enabled: true
+    namespace:
+      enabled: true
+    capabilities:
+      enabled: true
+  logging:
+    level: debug
+    format: json
+    output: file
+    file: /home/sblanken/Desktop/go/src/github.com/o3willard-AI/SSSonector/log/sssonector.log
+    startup_logs: true
+version: 1.0.0

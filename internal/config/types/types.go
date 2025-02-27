@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	"go.uber.org/zap/zapcore"
 )
 
 // Type represents the configuration type
@@ -191,9 +193,9 @@ type AppConfig struct {
 
 // AdapterConfig represents adapter-specific configuration
 type AdapterConfig struct {
-	RetryAttempts  int
-	RetryDelay     time.Duration
-	CleanupTimeout time.Duration
+	RetryAttempts  int      `yaml:"retry_attempts"`
+	RetryDelay     Duration `yaml:"retry_delay"`
+	CleanupTimeout Duration `yaml:"cleanup_timeout"`
 }
 
 // ServiceConfig represents service-specific configuration
@@ -302,8 +304,8 @@ func NewThrottleConfig() *ThrottleConfig {
 func NewAdapterConfig() *AdapterConfig {
 	return &AdapterConfig{
 		RetryAttempts:  3,
-		RetryDelay:     time.Second,
-		CleanupTimeout: 30 * time.Second,
+		RetryDelay:     NewDuration(time.Second),
+		CleanupTimeout: NewDuration(30 * time.Second),
 	}
 }
 
@@ -329,6 +331,46 @@ const (
 	StartupPhaseListen         StartupPhase = "Listen"
 )
 
+// ValidatePhaseTransition validates if a phase transition is allowed
+func ValidatePhaseTransition(current, next StartupPhase) error {
+	// Define valid transitions
+	validTransitions := map[StartupPhase][]StartupPhase{
+		"":                         {StartupPhasePreStartup},
+		StartupPhasePreStartup:     {StartupPhaseInitialization},
+		StartupPhaseInitialization: {StartupPhaseConnection},
+		StartupPhaseConnection:     {StartupPhaseListen},
+		StartupPhaseListen:         {},
+	}
+
+	// Special case: empty current phase can only transition to PreStartup
+	if current == "" {
+		if next == StartupPhasePreStartup {
+			return nil
+		}
+		return fmt.Errorf("must start with PreStartup phase")
+	}
+
+	// Validate current phase exists
+	allowed, exists := validTransitions[current]
+	if !exists {
+		return fmt.Errorf("invalid current phase: %s", current)
+	}
+
+	// Empty next phase means we're done
+	if next == "" {
+		return nil
+	}
+
+	// Check if transition is allowed
+	for _, validNext := range allowed {
+		if next == validNext {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("invalid phase transition: %s -> %s", current, next)
+}
+
 // StartupComponent represents a startup component
 type StartupComponent string
 
@@ -353,6 +395,49 @@ type StartupLog struct {
 	Timestamp time.Time              `json:"timestamp" yaml:"timestamp"`
 }
 
+// MarshalLogObject implements zapcore.ObjectMarshaler
+func (s *StartupLog) MarshalLogObject(enc zapcore.ObjectEncoder) error {
+	enc.AddString("phase", string(s.Phase))
+	enc.AddString("component", string(s.Component))
+	enc.AddString("operation", s.Operation)
+	enc.AddString("status", s.Status)
+	enc.AddTime("timestamp", s.Timestamp)
+
+	if s.Error != "" {
+		enc.AddString("error", s.Error)
+	}
+
+	if s.Duration.Duration > 0 {
+		enc.AddDuration("duration", s.Duration.Duration)
+	}
+
+	if len(s.Details) > 0 {
+		enc.AddObject("details", zapcore.ObjectMarshalerFunc(func(enc zapcore.ObjectEncoder) error {
+			for k, v := range s.Details {
+				switch val := v.(type) {
+				case string:
+					enc.AddString(k, val)
+				case int:
+					enc.AddInt(k, val)
+				case bool:
+					enc.AddBool(k, val)
+				case float64:
+					enc.AddFloat64(k, val)
+				case time.Time:
+					enc.AddTime(k, val)
+				case time.Duration:
+					enc.AddDuration(k, val)
+				default:
+					enc.AddReflected(k, val)
+				}
+			}
+			return nil
+		}))
+	}
+
+	return nil
+}
+
 // LoggingConfig represents logging configuration
 type LoggingConfig struct {
 	Level       string `yaml:"level"`
@@ -363,12 +448,35 @@ type LoggingConfig struct {
 }
 
 type NetworkConfig struct {
-	Name      string   `yaml:"name"`
-	Interface string   `yaml:"interface"`
-	Address   string   `yaml:"address"`
-	MTU       int      `yaml:"mtu"`
-	DNS       []string `yaml:"dns,omitempty"`
-	Routes    []string `yaml:"routes,omitempty"`
+	Name       string   `yaml:"name"`
+	Interface  string   `yaml:"interface"`
+	Address    string   `yaml:"address"`
+	MTU        int      `yaml:"mtu"`
+	DNS        []string `yaml:"dns,omitempty"`
+	Routes     []string `yaml:"routes,omitempty"`
+	DNSServers []string `yaml:"dns_servers,omitempty"` // Legacy field for backward compatibility
+}
+
+// UnmarshalYAML implements yaml.Unmarshaler
+func (n *NetworkConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	type alias NetworkConfig
+	aux := &struct {
+		*alias
+	}{
+		alias: (*alias)(n),
+	}
+	if err := unmarshal(aux); err != nil {
+		return err
+	}
+
+	// Sync DNS and DNSServers fields
+	if len(n.DNS) > 0 && len(n.DNSServers) == 0 {
+		n.DNSServers = n.DNS
+	} else if len(n.DNSServers) > 0 && len(n.DNS) == 0 {
+		n.DNS = n.DNSServers
+	}
+
+	return nil
 }
 
 type TunnelConfig struct {
@@ -380,6 +488,7 @@ type TunnelConfig struct {
 	CAFile        string   `yaml:"ca_file"`
 	ListenAddress string   `yaml:"listen_address"`
 	ServerAddress string   `yaml:"server_address"`
+	Server        string   `yaml:"server"` // Full server address:port for client mode
 	MaxClients    int      `yaml:"max_clients"`
 	Port          int      `yaml:"port"`
 	MTU           int      `yaml:"mtu"`
