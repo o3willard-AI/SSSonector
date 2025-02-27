@@ -1,0 +1,57 @@
+[0;32m[INFO][0m Verifying CA certificate...
+[0;32m[INFO][0m Verifying server certificate...
+[0;32m[INFO][0m Verifying client certificate...
+[0;32m[INFO][0m Verifying certificate chain...
+Certificate Flow Analysis Report
+===============================
+Generated: Mon 24 Feb 2025 02:32:08 PM PST
+
+Certificate Information:
+----------------------
+CA Certificate:
+        Issuer: C = EU, ST = Europe, L = European Union, O = SSSonector, CN = SSSonector CA
+        Validity
+        Subject: C = EU, ST = Europe, L = European Union, O = SSSonector, CN = SSSonector CA
+            X509v3 Basic Constraints: critical
+            X509v3 Key Usage: critical
+
+Server Certificate:
+        Issuer: CN = SSSonector CA
+        Validity
+        Subject: CN = server
+
+Client Certificate:
+        Issuer: CN = SSSonector CA
+        Validity
+        Subject: CN = client
+
+Check Results:
+-------------
+[✓] client_subject: Valid client subject
+[✓] file_certs/server.key: File exists with correct permissions
+[✗] client_chain: Client certificate chain verification failed
+[✗] client_key_usage: Missing required key usage
+[✗] server_chain: Server certificate chain verification failed
+[✗] server_ext_key_usage: Missing required extended key usage
+[✗] server_san: Missing required SAN entries
+[✓] server_subject: Valid server subject
+[✗] server_key_usage: Missing required key usage
+[✓] ca_constraints: Valid basic constraints
+[✗] client_ext_key_usage: Missing required extended key usage
+[✓] ca_subject: Valid CA subject
+[✓] file_certs/client.key: File exists with correct permissions
+[✓] ca_key_usage: Valid key usage
+[✓] file_certs/client.crt: File exists with correct permissions
+[✓] file_certs/ca.crt: File exists with correct permissions
+[✓] file_certs/server.crt: File exists with correct permissions
+[✓] file_certs/ca.key: File exists with correct permissions
+
+Summary:
+--------
+Total checks: 18
+Passed: 11
+Failed: 7
+Warnings: 0
+
+Overall Status: FAIL
+[0;31m[ERROR][0m Certificate flow analysis failed

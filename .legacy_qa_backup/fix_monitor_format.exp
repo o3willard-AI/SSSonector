@@ -1,0 +1,64 @@
+#!/usr/bin/expect -f
+
+set timeout 30
+set password "101abn"
+
+puts "=== Fixing Monitor Script Format ==="
+spawn ssh sblanken@192.168.50.211 "echo '$password' | sudo -S bash -c 'cat > /tmp/monitor_metrics.sh << \"EOL\"
+#!/bin/bash
+
+# Create log directory
+mkdir -p /var/log/sssonector
+
+# Log file with timestamp
+LOG_FILE=\"/var/log/sssonector/snmp_metrics_\$(date +%Y%m%d_%H%M%S).log\"
+
+# Log header
+echo \"Timestamp,Bytes_In,Bytes_Out,Connections,CPU_Usage,Memory_Usage\" > \"\$LOG_FILE\"
+
+# Extract integer value from SNMP output
+get_value() {
+    echo \"\$1\" | awk \"{ print \\\$NF }\"
+}
+
+# Monitor function
+monitor_metrics() {
+    local bytes_in=\$(get_value \"\$(snmpget -v2c -c public -Oqv 192.168.50.212 .1.3.6.1.4.1.54321.1.1)\")
+    local bytes_out=\$(get_value \"\$(snmpget -v2c -c public -Oqv 192.168.50.212 .1.3.6.1.4.1.54321.1.2)\")
+    local connections=\$(get_value \"\$(snmpget -v2c -c public -Oqv 192.168.50.212 .1.3.6.1.4.1.54321.1.3)\")
+    local cpu_usage=\$(get_value \"\$(snmpget -v2c -c public -Oqv 192.168.50.212 .1.3.6.1.4.1.54321.1.4)\")
+    local memory_usage=\$(get_value \"\$(snmpget -v2c -c public -Oqv 192.168.50.212 .1.3.6.1.4.1.54321.1.5)\")
+    
+    echo \"\$(date +%Y-%m-%d_%H:%M:%S),\$bytes_in,\$bytes_out,\$connections,\$cpu_usage,\$memory_usage\" >> \"\$LOG_FILE\"
+    echo \"\$(date +%Y-%m-%d_%H:%M:%S) - In: \$bytes_in, Out: \$bytes_out, Conn: \$connections, CPU: \$cpu_usage%, Mem: \$memory_usage%\"
+}
+
+echo \"Starting SNMP monitoring, logging to \$LOG_FILE\"
+echo \"Press Ctrl+C to stop monitoring\"
+
+# Monitor every 5 seconds
+while true; do
+    monitor_metrics
+    sleep 5
+done
+EOL
+
+chmod +x /tmp/monitor_metrics.sh
+
+echo === STARTING MONITORING ===
+/tmp/monitor_metrics.sh'"
+
+expect {
+    "password:" {
+        send "$password\r"
+        exp_continue
+    }
+    timeout {
+        puts "\n❌ Operation timed out"
+        exit 1
+    }
+    eof {
+        puts "\n✅ Operation complete"
+        exit 0
+    }
+}

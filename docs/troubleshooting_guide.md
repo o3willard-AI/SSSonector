@@ -1,511 +1,433 @@
 # SSSonector Troubleshooting Guide
 
-## Overview
-This guide provides comprehensive troubleshooting information for common issues, error messages, and diagnostic procedures for SSSonector.
+This guide provides solutions to common issues encountered when using SSSonector.
 
-## Table of Contents
-1. [Quick Diagnostics](#quick-diagnostics)
-2. [Common Issues](#common-issues)
-3. [Error Messages](#error-messages)
-4. [System Checks](#system-checks)
-5. [Advanced Diagnostics](#advanced-diagnostics)
-6. [Recovery Procedures](#recovery-procedures)
+## Connection Issues
 
-## Quick Diagnostics
+### Server and Client Cannot Connect
 
-### Health Check Script
+**Symptoms**:
+- Client cannot connect to server
+- Error messages about connection failures
+
+**Possible Causes**:
+1. Firewall blocking the connection
+2. Incorrect server address or port
+3. Server not running
+4. Certificate issues
+
+**Solutions**:
+1. Check that the server is running: `ps aux | grep sssonector`
+2. Verify the server address and port in the client configuration
+3. Check firewall rules to ensure the port is open: `sudo iptables -L -n`
+4. Verify certificates are valid and in the correct location
+5. Enable debug logging for more detailed error messages: `logging.level: debug`
+
+### Tunnel Established but No Traffic Flows
+
+**Symptoms**:
+- Client connects to server successfully
+- Tunnel interfaces are created
+- No traffic flows through the tunnel
+
+**Possible Causes**:
+1. IP forwarding not enabled
+2. Firewall blocking tunnel traffic
+3. Routing issues
+4. MTU issues
+
+**Solutions**:
+1. Check that IP forwarding is enabled: `cat /proc/sys/net/ipv4/ip_forward`
+2. Enable IP forwarding if needed: `echo 1 | sudo tee /proc/sys/net/ipv4/ip_forward`
+3. Check firewall rules for the TUN interface: `sudo iptables -L -n`
+4. Add necessary firewall rules:
+   ```bash
+   sudo iptables -A FORWARD -i tun0 -o eth0 -j ACCEPT
+   sudo iptables -A FORWARD -i eth0 -o tun0 -j ACCEPT
+   sudo iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+   ```
+5. Check routing tables: `ip route show`
+6. Try adjusting the MTU: `network.mtu: 1400`
+
+### One-Way Communication
+
+**Symptoms**:
+- Server can ping client but client cannot ping server
+- Or client can ping server but server cannot ping client
+
+**Possible Causes**:
+1. Asymmetric routing
+2. Firewall rules blocking traffic in one direction
+3. NAT issues
+
+**Solutions**:
+1. Check firewall rules on both server and client
+2. Verify NAT configuration
+3. Check routing tables on both server and client
+4. Use packet capture to identify where packets are being dropped:
+   ```bash
+   sudo tcpdump -i tun0 -n
+   ```
+
+## Certificate Issues
+
+### Certificate Validation Failures
+
+**Symptoms**:
+- Client cannot connect to server
+- Error messages about certificate validation failures
+
+**Possible Causes**:
+1. Certificates not generated correctly
+2. Certificates expired
+3. Incorrect certificate paths
+4. CA certificate not trusted
+
+**Solutions**:
+1. Regenerate certificates: `./sssonector --generate-certs --cert-dir /path/to/certs --server-ip <server_ip>`
+2. Verify certificate validity: `openssl x509 -in certs/server.crt -text -noout`
+3. Check certificate paths in configuration files
+4. Ensure CA certificate is trusted by both server and client
+
+### Certificate Generation Failures
+
+**Symptoms**:
+- Certificate generation fails
+- Error messages about OpenSSL
+
+**Possible Causes**:
+1. OpenSSL not installed
+2. Insufficient permissions
+3. Invalid server IP
+
+**Solutions**:
+1. Install OpenSSL: `sudo apt-get install openssl`
+2. Run with sudo or as root: `sudo ./sssonector --generate-certs --cert-dir /path/to/certs --server-ip <server_ip>`
+3. Verify server IP is valid
+
+## Performance Issues
+
+### High Latency
+
+**Symptoms**:
+- Tunnel works but with high latency
+- Slow response times for applications using the tunnel
+
+**Possible Causes**:
+1. Network congestion
+2. MTU issues
+3. CPU or memory constraints
+4. Logging overhead
+
+**Solutions**:
+1. Check network conditions: `ping <server_ip>`
+2. Adjust MTU: `network.mtu: 1400`
+3. Monitor system resources: `top`
+4. Reduce logging level: `logging.level: warning`
+
+### Low Throughput
+
+**Symptoms**:
+- Tunnel works but with low throughput
+- Slow file transfers or streaming
+
+**Possible Causes**:
+1. Network bandwidth limitations
+2. MTU issues
+3. CPU or memory constraints
+4. TLS overhead
+
+**Solutions**:
+1. Check network bandwidth: `iperf -c <server_ip>`
+2. Adjust MTU: `network.mtu: 1500`
+3. Monitor system resources: `top`
+4. Optimize TLS settings: `security.tls.min_version: "1.3"`
+
+### Packet Loss
+
+**Symptoms**:
+- Intermittent connection issues
+- Retransmissions
+- Timeouts
+
+**Possible Causes**:
+1. Network congestion
+2. MTU issues
+3. Buffer overflows
+
+**Solutions**:
+1. Check network conditions: `ping <server_ip>`
+2. Adjust MTU: `network.mtu: 1400`
+3. Monitor packet loss: `ping -c 100 <server_ip> | grep loss`
+4. Use packet capture to identify where packets are being dropped:
+   ```bash
+   sudo tcpdump -i tun0 -n
+   ```
+
+## System Issues
+
+### Permission Denied
+
+**Symptoms**:
+- Error messages about permission denied
+- Cannot create TUN interface
+
+**Possible Causes**:
+1. Not running as root or with sufficient privileges
+2. TUN module not loaded
+3. File permission issues
+
+**Solutions**:
+1. Run with sudo or as root: `sudo ./sssonector -config config.yaml`
+2. Load TUN module: `sudo modprobe tun`
+3. Check file permissions: `ls -la certs/`
+4. Fix file permissions: `sudo chmod 600 certs/*.key && sudo chmod 644 certs/*.crt`
+
+### Resource Exhaustion
+
+**Symptoms**:
+- SSSonector crashes or stops working
+- Error messages about resource limits
+
+**Possible Causes**:
+1. Too many open files
+2. Memory exhaustion
+3. CPU overload
+
+**Solutions**:
+1. Increase file descriptor limits: `ulimit -n 65536`
+2. Monitor memory usage: `free -m`
+3. Monitor CPU usage: `top`
+4. Restart SSSonector if necessary
+
+### TUN Interface Issues
+
+**Symptoms**:
+- Cannot create TUN interface
+- Error messages about TUN interface
+
+**Possible Causes**:
+1. TUN module not loaded
+2. Insufficient permissions
+3. Interface name conflict
+
+**Solutions**:
+1. Load TUN module: `sudo modprobe tun`
+2. Run with sudo or as root: `sudo ./sssonector -config config.yaml`
+3. Check if interface already exists: `ip link show`
+4. Use a different interface name: `interface: sssonector0`
+
+## Configuration Issues
+
+### Invalid Configuration
+
+**Symptoms**:
+- SSSonector fails to start
+- Error messages about configuration
+
+**Possible Causes**:
+1. Syntax errors in configuration file
+2. Missing required fields
+3. Invalid values
+
+**Solutions**:
+1. Check configuration file syntax
+2. Verify all required fields are present
+3. Ensure values are valid
+4. Enable debug logging for more detailed error messages: `logging.level: debug`
+
+### Configuration File Not Found
+
+**Symptoms**:
+- SSSonector fails to start
+- Error messages about configuration file not found
+
+**Possible Causes**:
+1. Configuration file not in expected location
+2. Incorrect path specified
+
+**Solutions**:
+1. Verify configuration file exists
+2. Specify full path to configuration file: `./sssonector -config /path/to/config.yaml`
+3. Place configuration file in one of the default locations:
+   - `./sssonector.yaml` in the current directory
+   - `./sssonector.yml` in the current directory
+   - `/etc/sssonector/sssonector.yaml`
+   - `/etc/sssonector/sssonector.yml`
+
+## Logging and Debugging
+
+### Enabling Debug Logging
+
+To get more detailed information about what's happening, enable debug logging:
+
+```yaml
+logging:
+  level: debug
+  file: /var/log/sssonector.log
+```
+
+Or use the environment variable:
+
 ```bash
-#!/bin/bash
-# Quick health check for SSSonector
+export SSSONECTOR_LOGGING_LEVEL=debug
+```
 
-echo "=== SSSonector Health Check ==="
+### Common Debug Log Messages
 
-# Check service status
-echo "Checking service status..."
-systemctl status sssonector
+- **"Starting SSSonector in [server/client] mode"**: Indicates SSSonector is starting up
+- **"Listening on [address:port]"**: Server is listening for connections
+- **"Connecting to [address:port]"**: Client is connecting to server
+- **"TLS handshake successful"**: TLS connection established
+- **"Created TUN interface [name]"**: TUN interface created
+- **"Starting transfer"**: Packet forwarding started
+- **"Transfer complete"**: Packet forwarding stopped
+- **"Error: [message]"**: Error occurred
 
-# Check TUN interface
-echo "Checking TUN interface..."
-ip addr show tun0
+### Packet Capture
 
-# Check connectivity
-echo "Checking connectivity..."
-ping -c 3 10.0.0.1
+To capture and analyze packets flowing through the tunnel:
 
-# Check logs
-echo "Checking recent logs..."
-tail -n 20 /var/log/sssonector/sssonector.log
+```bash
+sudo tcpdump -i tun0 -n -w /tmp/tunnel.pcap
+```
 
-# Check resource usage
-echo "Checking resource usage..."
+To analyze the captured packets:
+
+```bash
+sudo tcpdump -r /tmp/tunnel.pcap -n
+```
+
+### Process Monitoring
+
+To monitor SSSonector processes:
+
+```bash
 ps aux | grep sssonector
 ```
 
-### Status Commands
+To monitor resource usage:
+
 ```bash
-# Basic status
-sssonector status
-
-# Detailed status
-sssonector status --verbose
-
-# Connection metrics
-sssonector metrics
-
-# Configuration check
-sssonector validate --config /etc/sssonector/config.yaml
+top -p $(pgrep -d',' -f sssonector)
 ```
 
-## Common Issues
+## Common Error Messages
 
-### Connection Problems
+### "Failed to create TUN interface"
 
-1. **Connection Timeout**
-```yaml
-symptoms:
-  - Connection attempts fail
-  - Timeout errors in logs
-  - No response from server
+**Possible Causes**:
+1. TUN module not loaded
+2. Insufficient permissions
+3. Interface name conflict
 
-checks:
-  - Verify server is running
-  - Check firewall rules
-  - Validate network connectivity
-  - Confirm port availability
+**Solutions**:
+1. Load TUN module: `sudo modprobe tun`
+2. Run with sudo or as root: `sudo ./sssonector -config config.yaml`
+3. Use a different interface name: `interface: sssonector0`
 
-solutions:
-  # Check server status
-  systemctl status sssonector-server
-  
-  # Verify firewall rules
-  sudo iptables -L | grep 8080
-  
-  # Test network connectivity
-  telnet server_ip 8080
-  
-  # Check port availability
-  netstat -tuln | grep 8080
-```
+### "Failed to bind to [address:port]"
 
-2. **TUN Interface Issues**
-```yaml
-symptoms:
-  - TUN device creation fails
-  - Network unreachable errors
-  - Routing problems
+**Possible Causes**:
+1. Port already in use
+2. Insufficient permissions
+3. Invalid address
 
-checks:
-  - Verify TUN module is loaded
-  - Check interface permissions
-  - Validate routing table
-  - Confirm network configuration
+**Solutions**:
+1. Check if port is already in use: `sudo netstat -tulpn | grep <port>`
+2. Use a different port
+3. Run with sudo or as root: `sudo ./sssonector -config config.yaml`
 
-solutions:
-  # Load TUN module
-  sudo modprobe tun
-  
-  # Check TUN status
-  lsmod | grep tun
-  
-  # Fix permissions
-  sudo chmod 666 /dev/net/tun
-  
-  # Verify routing
-  ip route show
-```
+### "Certificate verification failed"
 
-3. **Certificate Problems**
-```yaml
-symptoms:
-  - TLS handshake failures
-  - Certificate validation errors
-  - Authentication failures
+**Possible Causes**:
+1. Certificates not generated correctly
+2. Certificates expired
+3. Incorrect certificate paths
+4. CA certificate not trusted
 
-checks:
-  - Verify certificate validity
-  - Check certificate paths
-  - Validate certificate chain
-  - Confirm permissions
+**Solutions**:
+1. Regenerate certificates: `./sssonector --generate-certs --cert-dir /path/to/certs --server-ip <server_ip>`
+2. Verify certificate validity: `openssl x509 -in certs/server.crt -text -noout`
+3. Check certificate paths in configuration files
+4. Ensure CA certificate is trusted by both server and client
 
-solutions:
-  # Check certificate validity
-  openssl verify -CAfile ca.crt server.crt
-  
-  # Verify certificate dates
-  openssl x509 -in server.crt -noout -dates
-  
-  # Check permissions
-  ls -l /etc/sssonector/certs/
-  
-  # Validate configuration
-  sssonector validate --config config.yaml
-```
+### "Failed to establish tunnel"
 
-### Performance Issues
+**Possible Causes**:
+1. Network connectivity issues
+2. Firewall blocking connection
+3. Certificate issues
+4. Server not running
 
-1. **High Latency**
-```yaml
-symptoms:
-  - Slow connection speed
-  - High ping times
-  - Packet delays
+**Solutions**:
+1. Check network connectivity: `ping <server_ip>`
+2. Check firewall rules: `sudo iptables -L -n`
+3. Verify certificates
+4. Ensure server is running
 
-checks:
-  - Monitor network latency
-  - Check system resources
-  - Verify buffer sizes
-  - Analyze traffic patterns
+## Advanced Troubleshooting
 
-solutions:
-  # Monitor latency
-  ping -c 10 10.0.0.1
-  
-  # Check system load
-  top -n 1
-  
-  # Adjust buffer sizes
-  sysctl -w net.core.rmem_max=4194304
-  sysctl -w net.core.wmem_max=4194304
-  
-  # Analyze traffic
-  tcpdump -i tun0
-```
+### Kernel Parameters
 
-2. **Resource Exhaustion**
-```yaml
-symptoms:
-  - High CPU usage
-  - Memory depletion
-  - File descriptor limits
-  - System slowdown
+If you're experiencing performance issues or connectivity problems, check and adjust kernel parameters:
 
-checks:
-  - Monitor resource usage
-  - Check system limits
-  - Verify configuration
-  - Analyze processes
-
-solutions:
-  # Check resource usage
-  ps aux | grep sssonector
-  
-  # Monitor system metrics
-  vmstat 1
-  
-  # Adjust limits
-  ulimit -n 65535
-  
-  # Review configuration
-  cat /etc/sssonector/config.yaml
-```
-
-3. **Throughput Problems**
-```yaml
-symptoms:
-  - Low bandwidth
-  - Poor transfer rates
-  - Network congestion
-  - Buffer overflows
-
-checks:
-  - Test network speed
-  - Monitor throughput
-  - Check MTU settings
-  - Verify rate limits
-
-solutions:
-  # Test throughput
-  iperf3 -c 10.0.0.1
-  
-  # Check MTU
-  ip link show tun0
-  
-  # Monitor traffic
-  iftop -i tun0
-  
-  # Adjust rate limits
-  vim /etc/sssonector/config.yaml
-```
-
-## Error Messages
-
-### Common Error Codes
-
-1. **ERR_CONN_REFUSED**
-```yaml
-description: Connection refused by remote host
-causes:
-  - Server not running
-  - Firewall blocking
-  - Wrong port/address
-  - Service crashed
-
-resolution:
-  # Check server status
-  systemctl status sssonector-server
-  
-  # Verify firewall
-  sudo iptables -L
-  
-  # Check logs
-  tail -f /var/log/sssonector/sssonector.log
-```
-
-2. **ERR_CERT_INVALID**
-```yaml
-description: Certificate validation failed
-causes:
-  - Expired certificate
-  - Wrong CA chain
-  - Invalid certificate
-  - Permission issues
-
-resolution:
-  # Check certificate
-  openssl verify -CAfile ca.crt server.crt
-  
-  # Verify dates
-  openssl x509 -in server.crt -noout -dates
-  
-  # Check permissions
-  ls -l /etc/sssonector/certs/
-```
-
-3. **ERR_TUN_FAILED**
-```yaml
-description: TUN device creation failed
-causes:
-  - Missing permissions
-  - Module not loaded
-  - Device busy
-  - System limits
-
-resolution:
-  # Load module
-  sudo modprobe tun
-  
-  # Fix permissions
-  sudo chmod 666 /dev/net/tun
-  
-  # Check devices
-  ls -l /dev/net/tun
-```
-
-## System Checks
-
-### Network Diagnostics
 ```bash
-# Interface status
-ip addr show
-ip link show
+# Check current parameters
+sysctl -a | grep net.ipv4.tcp
 
-# Routing table
-ip route show
-ip route get 10.0.0.1
-
-# Connection tracking
-conntrack -L
-ss -tuln
-
-# DNS resolution
-dig server.example.com
-host server.example.com
+# Adjust parameters for better performance
+sudo sysctl -w net.ipv4.tcp_rmem="4096 87380 16777216"
+sudo sysctl -w net.ipv4.tcp_wmem="4096 65536 16777216"
+sudo sysctl -w net.ipv4.tcp_congestion_control=bbr
 ```
 
-### Resource Monitoring
+### Firewall Configuration
+
+For detailed firewall configuration:
+
 ```bash
-# CPU usage
-top -bn1
-mpstat 1 5
+# Allow SSSonector server port
+sudo iptables -A INPUT -p tcp --dport 443 -j ACCEPT
+sudo iptables -A OUTPUT -p tcp --sport 443 -j ACCEPT
 
-# Memory usage
-free -m
-vmstat 1
+# Allow forwarding between interfaces
+sudo iptables -A FORWARD -i tun0 -o eth0 -j ACCEPT
+sudo iptables -A FORWARD -i eth0 -o tun0 -j ACCEPT
 
-# File descriptors
-lsof -p $(pgrep sssonector)
-ulimit -n
+# Enable NAT for outgoing connections
+sudo iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
 ```
 
-### Log Analysis
+### Routing Tables
+
+For complex routing scenarios:
+
 ```bash
-# Error patterns
-grep ERROR /var/log/sssonector/sssonector.log
+# Add route for tunnel network
+sudo ip route add 10.0.0.0/24 dev tun0
 
-# Warning patterns
-grep WARN /var/log/sssonector/sssonector.log
-
-# Connection events
-grep "connection" /var/log/sssonector/sssonector.log
-
-# Full debug
-tail -f /var/log/sssonector/debug.log
+# Add route for specific destination through tunnel
+sudo ip route add 192.168.1.0/24 via 10.0.0.1
 ```
 
-## Advanced Diagnostics
+## Getting Help
 
-### Network Profiling
-```bash
-# Packet capture
-tcpdump -i tun0 -w capture.pcap
+If you're still experiencing issues after trying the solutions in this guide, check the following resources:
 
-# Traffic analysis
-wireshark capture.pcap
+1. SSSonector documentation
+2. GitHub issues
+3. Community forums
+4. Contact support
 
-# Bandwidth monitoring
-iftop -i tun0
+## Reporting Issues
 
-# Connection tracking
-netstat -np | grep sssonector
-```
+When reporting issues, include the following information:
 
-### Performance Profiling
-```bash
-# CPU profiling
-go tool pprof http://localhost:6060/debug/pprof/profile
-
-# Memory profiling
-go tool pprof http://localhost:6060/debug/pprof/heap
-
-# Goroutine analysis
-go tool pprof http://localhost:6060/debug/pprof/goroutine
-```
-
-### Security Auditing
-```bash
-# Certificate check
-openssl s_client -connect server:8080
-
-# TLS version check
-nmap --script ssl-enum-ciphers -p 8080 server
-
-# Port scanning
-nmap -sS -sV -p- server
-
-# Security logs
-grep "security" /var/log/sssonector/sssonector.log
-```
-
-## Recovery Procedures
-
-### Service Recovery
-```bash
-# Stop service
-systemctl stop sssonector
-
-# Clean up resources
-rm -f /var/run/sssonector.pid
-ip link delete tun0
-
-# Reset state
-rm -f /var/lib/sssonector/state.db
-
-# Start service
-systemctl start sssonector
-```
-
-### Configuration Recovery
-```bash
-# Backup current config
-cp /etc/sssonector/config.yaml /etc/sssonector/config.yaml.bak
-
-# Restore from backup
-cp /etc/sssonector/config.yaml.bak /etc/sssonector/config.yaml
-
-# Validate config
-sssonector validate --config /etc/sssonector/config.yaml
-
-# Apply changes
-systemctl restart sssonector
-```
-
-### Network Recovery
-```bash
-# Reset TUN interface
-ip link delete tun0
-ip tuntap add name tun0 mode tun
-ip link set tun0 up
-
-# Reset routing
-ip route flush table main
-ip route add default via 192.168.1.1
-
-# Reset firewall
-iptables-restore < /etc/iptables/rules.v4
-
-# Verify connectivity
-ping -c 3 10.0.0.1
-```
-
-## Best Practices
-
-### Preventive Measures
-1. Regular health checks
-2. Automated monitoring
-3. Backup configurations
-4. Update certificates
-5. Resource monitoring
-
-### Maintenance Schedule
-1. Daily log review
-2. Weekly backup
-3. Monthly certificate check
-4. Quarterly security audit
-
-### Documentation
-1. Keep error logs
-2. Document changes
-3. Track incidents
-4. Update procedures
-
-## Quick Reference
-
-### Common Commands
-```bash
-# Service control
-systemctl status sssonector
-systemctl restart sssonector
-systemctl stop sssonector
-
-# Log viewing
-tail -f /var/log/sssonector/sssonector.log
-journalctl -u sssonector
-
-# Configuration
-sssonector validate --config config.yaml
-sssonector reload --config config.yaml
-
-# Diagnostics
-sssonector status
-sssonector metrics
-sssonector debug
-```
-
-### Important Files
-```bash
-# Configuration
-/etc/sssonector/config.yaml
-
-# Certificates
-/etc/sssonector/certs/
-
-# Logs
-/var/log/sssonector/
-
-# State
-/var/lib/sssonector/
-```
-
-### System Limits
-```bash
-# File descriptors
-ulimit -n 65535
-
-# Process limits
-ulimit -u 65535
-
-# Memory limits
-sysctl -w vm.max_map_count=262144
-
-# Network limits
-sysctl -w net.core.rmem_max=4194304
+1. SSSonector version: `./sssonector --version`
+2. Operating system and version
+3. Configuration file (with sensitive information redacted)
+4. Debug logs
+5. Steps to reproduce the issue
+6. Expected behavior
+7. Actual behavior

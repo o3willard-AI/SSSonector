@@ -1,0 +1,168 @@
+#!/usr/bin/expect -f
+
+set timeout 300
+set password "101abn"
+
+proc expect_prompt {} {
+    expect {
+        "password for sblanken:" {
+            send "$::password\r"
+            exp_continue
+        }
+        "default=N" {
+            send "N\r"
+            exp_continue
+        }
+        "What would you like to do about it" {
+            send "N\r"
+            exp_continue
+        }
+        "*** ntopng.conf" {
+            send "N\r"
+            exp_continue
+        }
+        -re {[#\$] $}
+    }
+}
+
+foreach vm {
+    {192.168.50.210 "server"}
+    {192.168.50.211 "client"}
+    {192.168.50.212 "monitor"}
+} {
+    set ip [lindex $vm 0]
+    set role [lindex $vm 1]
+    
+    puts "\nFixing ntopng on $role VM ($ip)..."
+    
+    spawn ssh -i /home/sblanken/.ssh/qa_key sblanken@$ip
+    
+    expect {
+        "continue connecting (yes/no" {
+            send "yes\r"
+            exp_continue
+        }
+        -re {[#\$] $} {
+            puts "\nChecking for locked apt/dpkg..."
+            send "sudo pkill -9 apt-get dpkg\r"
+            expect_prompt
+            send "sudo rm -f /var/lib/dpkg/lock* /var/lib/apt/lists/lock* /var/cache/apt/archives/lock*\r"
+            expect_prompt
+            send "sudo dpkg --configure -a\r"
+            expect_prompt
+            
+            puts "\nRemoving old ntopng packages..."
+            send "sudo DEBIAN_FRONTEND=noninteractive apt-get remove -y ntopng ntopng-data\r"
+            expect_prompt
+            send "sudo rm -rf /etc/ntopng /var/lib/ntopng\r"
+            expect_prompt
+            
+            puts "\nChecking ntopng installation..."
+            send "which ntopng || echo 'not installed'\r"
+            expect {
+                "not installed" {
+                    puts "Installing ntopng..."
+                    send "sudo rm -rf /var/lib/apt/lists/*\r"
+                    expect_prompt
+                    send "sudo mkdir -p /var/lib/apt/lists/partial\r"
+                    expect_prompt
+                    send "sudo apt-get clean\r"
+                    expect_prompt
+                    send "sudo apt-get update --allow-insecure-repositories\r"
+                    expect_prompt
+                    send "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --allow-unauthenticated wget gnupg\r"
+                    expect_prompt
+                    send "wget http://apt.ntop.org/22.04/all/apt-ntop.deb\r"
+                    expect_prompt
+                    send "sudo dpkg -i apt-ntop.deb\r"
+                    expect_prompt
+                    send "sudo apt-get update --allow-insecure-repositories\r"
+                    expect_prompt
+                    send "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --allow-unauthenticated ntopng\r"
+                    expect_prompt
+                }
+                -re {[#\$] $}
+            }
+            
+            puts "\nStopping ntopng service..."
+            send "sudo systemctl stop ntopng || true\r"
+            expect_prompt
+            send "sudo pkill -9 ntopng || true\r"
+            expect_prompt
+            send "sudo rm -f /var/run/ntopng.pid\r"
+            expect_prompt
+            
+            puts "\nConfiguring ntopng..."
+            send "sudo mkdir -p /etc/ntopng\r"
+            expect_prompt
+            
+            # Create ntopng config
+            send "sudo bash -c 'cat > /etc/ntopng/ntopng.conf' << 'EOL'\r"
+            send "i=enp0s3\r"
+            send "w=3000\r"
+            send "d=/var/lib/ntopng\r"
+            send "n=192.168.50.0/24\r"
+            send "c=public\r"
+            send "D\r"
+            send "EOL\r"
+            expect_prompt
+            
+            puts "\nSetting up data directory..."
+            send "sudo mkdir -p /var/lib/ntopng\r"
+            expect_prompt
+            send "sudo useradd -r -s /bin/false ntopng || true\r"
+            expect_prompt
+            send "sudo groupadd -r ntopng || true\r"
+            expect_prompt
+            send "sudo usermod -a -G ntopng ntopng || true\r"
+            expect_prompt
+            send "sudo chown -R ntopng:ntopng /var/lib/ntopng\r"
+            expect_prompt
+            send "sudo chmod 755 /var/lib/ntopng\r"
+            expect_prompt
+            
+            puts "\nConfiguring systemd service..."
+            send "sudo bash -c 'cat > /lib/systemd/system/ntopng.service' << 'EOL'\r"
+            send "\[Unit\]\r"
+            send "Description=ntopng High-Speed Web-based Traffic Analysis\r"
+            send "After=network.target\r"
+            send "\r"
+            send "\[Service\]\r"
+            send "Type=simple\r"
+            send "ExecStart=/usr/bin/ntopng /etc/ntopng/ntopng.conf\r"
+            send "Restart=always\r"
+            send "\r"
+            send "\[Install\]\r"
+            send "WantedBy=multi-user.target\r"
+            send "EOL\r"
+            expect_prompt
+            
+            puts "\nRestarting ntopng..."
+            send "sudo systemctl daemon-reload\r"
+            expect_prompt
+            send "sudo systemctl enable ntopng\r"
+            expect_prompt
+            send "sudo systemctl start ntopng\r"
+            expect_prompt
+            
+            puts "\nVerifying ntopng status..."
+            send "sudo systemctl status ntopng | grep Active\r"
+            expect_prompt
+            
+            puts "\nChecking if ntopng is listening..."
+            send "sudo netstat -tulpn | grep ntopng\r"
+            expect_prompt
+            
+            puts "✅ ntopng fixed on $role VM"
+            send "exit\r"
+        }
+        timeout {
+            puts "❌ Connection timed out for $ip"
+            exit 1
+        }
+    }
+    expect eof
+}
+
+puts "\nntopng configuration complete on all VMs"
+exit 0

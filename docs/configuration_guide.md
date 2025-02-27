@@ -1,6 +1,13 @@
 # SSSonector Configuration Guide
 
-This guide provides detailed information about configuring SSSonector, including complete examples and explanations for both server and client setups.
+## Deployment Model Overview
+
+SSSonector operates as a standalone binary that reads its configuration from a YAML file. Key points:
+- No system-wide installation required
+- Configuration file can be placed anywhere
+- All paths can be relative to the binary location
+- Operation mode (server/client) determined by config
+- Foreground/background execution controlled by config
 
 ## Configuration File Structure
 
@@ -10,7 +17,7 @@ SSSonector uses YAML configuration files with the following main sections:
   - `mode`: Determines if running as server or client
   - `network`: Network interface configuration
   - `tunnel`: SSL tunnel and certificate settings
-  - `monitor`: Monitoring and SNMP configuration
+  - `monitor`: Monitoring configuration
   - `security`: Security settings including TLS configuration
   - `metrics`: Metrics collection settings
 - `version`: Configuration version
@@ -33,9 +40,9 @@ config:
   tunnel:
     listen_port: 8443
     protocol: tcp
-    cert_file: /etc/sssonector/certs/server.crt
-    key_file: /etc/sssonector/certs/server.key
-    ca_file: /etc/sssonector/certs/ca.crt
+    cert_file: ./certs/server.crt
+    key_file: ./certs/server.key
+    ca_file: ./certs/ca.crt
     listen_address: 0.0.0.0  # Listen on all interfaces
     max_clients: 10
 
@@ -67,8 +74,8 @@ config:
   logging:
     level: info
     format: json
-    output: stdout
-    file: /var/log/sssonector/sssonector.log
+    output: file
+    file: ./log/sssonector.log
     startup_logs: true  # Enable detailed startup logging
 
 version: 1.0.0
@@ -97,9 +104,9 @@ config:
   tunnel:
     server_port: 8443
     protocol: tcp
-    cert_file: /etc/sssonector/certs/client.crt
-    key_file: /etc/sssonector/certs/client.key
-    ca_file: /etc/sssonector/certs/ca.crt
+    cert_file: ./certs/client.crt
+    key_file: ./certs/client.key
+    ca_file: ./certs/ca.crt
     server_address: 192.168.50.210  # Server's public IP
 
   security:
@@ -150,7 +157,7 @@ throttle:
 ### Tunnel Configuration
 - `cert_file`, `key_file`, `ca_file`: Paths to SSL certificates
   * Can be absolute paths or relative to config directory
-  * Default location: /etc/sssonector/certs/
+  * Recommended to use relative paths for portability
 - `listen_address`, `listen_port`: Server listening settings
 - `server_address`, `server_port`: Client connection settings
 - `max_clients`: Maximum concurrent client connections (server only)
@@ -178,17 +185,47 @@ throttle:
 
 ### Logging Configuration
 - `level`: Log level (debug/info/warn/error)
-- `format`: Log format (text/json)
-- `output`: Log output (stdout/stderr/file)
-- `file`: Log file path when output is file
+- `format`: Log format (json/console)
+- `output`: Log output destination (file/stdout)
+- `file`: Log file path (relative or absolute)
 - `startup_logs`: Enable/disable detailed startup logging
   * When enabled, provides:
     - Startup phase tracking
     - Operation timing
     - Resource state monitoring
     - Structured JSON logging
+    - Version information
+    - Build metadata
   * Default: true
   * Recommended for production environments
+
+### Version Information
+Each SSSonector binary includes embedded version information that appears in logs:
+- Version number (from git tag)
+- Build timestamp
+- Git commit hash
+
+Example log entry:
+```json
+{
+  "level": "info",
+  "ts": 1740300472.7009985,
+  "caller": "tunnel/main.go:130",
+  "msg": "Starting tunnel",
+  "mode": "server",
+  "version": "v2.0.0-82-ge5bd185",
+  "build_time": "2025-02-23_08:53:53",
+  "commit": "e5bd185"
+}
+```
+
+Version information can also be displayed using the --version flag:
+```bash
+$ ./sssonector --version
+SSSonector v2.0.0-82-ge5bd185
+Build Time: 2025-02-23_08:53:53
+Commit: e5bd185
+```
 
 ### Throttle Configuration
 - `enabled`: Enable/disable rate limiting
@@ -200,19 +237,19 @@ throttle:
 1. Certificate paths:
    - Absolute paths are used as-is
    - Relative paths are resolved from config file location
-   - Default paths use /etc/sssonector/certs/
+   - Recommended to use relative paths for portability
 
 2. Log files:
    - Absolute paths are used as-is
    - Relative paths are resolved from current directory
-   - Default location: /var/log/sssonector/
+   - Recommended to use relative paths in development
 
 ## Common Issues and Solutions
 
 1. Certificate Loading Fails
    ```
    Problem: "failed to load certificate"
-   Solution: Ensure paths are correct and files have proper permissions (600)
+   Solution: Check paths are correct relative to config location
    ```
 
 2. Network Interface Creation Fails
@@ -233,49 +270,47 @@ Before deploying, validate your configuration:
 
 1. Test configuration syntax:
    ```bash
-   sssonector -validate-config /etc/sssonector/config.yaml
+   ./sssonector -validate-config config.yaml
    ```
 
 2. Test with debug logging:
    ```bash
-   sssonector -config /etc/sssonector/config.yaml -debug
+   ./sssonector -config config.yaml -debug
    ```
 
 3. Verify TLS configuration:
    ```bash
-   sssonector -validate-tls -config /etc/sssonector/config.yaml
+   ./sssonector -validate-tls -config config.yaml
    ```
 
 ## Best Practices
 
-1. Startup Logging
-   - Enable startup_logs in production for better diagnostics
+1. File Organization
+   - Keep binary and config files together
+   - Use relative paths for portability
+   - Maintain consistent directory structure
+   - Group certificates in a certs directory
+
+2. Startup Logging
+   - Enable startup_logs in production
    - Use JSON format for structured analysis
    - Configure appropriate log levels
    - Monitor startup performance metrics
-   - Analyze startup patterns for optimization
-   - Retain startup logs for troubleshooting
 
-2. Security
-   - Use absolute paths for certificates
-   - Set restrictive file permissions (600 for keys)
+3. Security
+   - Set restrictive file permissions
    - Configure TLS versions and ciphers explicitly
-   - Enable all security features (memory_protections, namespace, capabilities)
+   - Enable all security features
+   - Keep certificates secure
 
-2. Performance
+4. Performance
    - Set appropriate MTU for your network
-   - Configure rate limits based on available bandwidth
-   - Adjust metrics buffer size based on memory availability
-   - Monitor system metrics for optimization
+   - Configure rate limits based on bandwidth
+   - Adjust metrics buffer size as needed
+   - Monitor system metrics
 
-3. Monitoring
-   - Enable metrics collection in production
-   - Set appropriate collection intervals
-   - Monitor memory usage with buffer sizes
-   - Use structured logging format (json)
-
-4. Testing
-   - Validate configurations before deployment
+5. Testing
+   - Validate configurations before use
    - Test with debug logging enabled
    - Verify TLS settings
-   - Check security feature effectiveness
+   - Check security features

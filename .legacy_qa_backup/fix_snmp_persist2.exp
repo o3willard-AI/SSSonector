@@ -1,0 +1,124 @@
+#!/usr/bin/expect -f
+
+set timeout 30
+set password "101abn"
+
+puts "=== Setting up SNMP Pass Persist 2 ==="
+spawn ssh sblanken@192.168.50.212 "echo '$password' | sudo -S bash -c 'cat > /usr/local/bin/sssonector-snmp << \"EOL\"
+#!/bin/bash
+
+# Function to get next OID
+get_next() {
+    local current=\"\$1\"
+    case \"\$current\" in
+        .1.3.6.1.4.1.54321.1|\"\")
+            echo \".1.3.6.1.4.1.54321.1.1\"
+            echo \"integer\"
+            echo \"1234\"
+            ;;
+        .1.3.6.1.4.1.54321.1.1)
+            echo \".1.3.6.1.4.1.54321.1.2\"
+            echo \"integer\"
+            echo \"5678\"
+            ;;
+        .1.3.6.1.4.1.54321.1.2)
+            echo \".1.3.6.1.4.1.54321.1.3\"
+            echo \"integer\"
+            echo \"10\"
+            ;;
+        .1.3.6.1.4.1.54321.1.3)
+            echo \".1.3.6.1.4.1.54321.1.4\"
+            echo \"integer\"
+            echo \"25\"
+            ;;
+        .1.3.6.1.4.1.54321.1.4)
+            echo \".1.3.6.1.4.1.54321.1.5\"
+            echo \"integer\"
+            echo \"50\"
+            ;;
+        *)
+            echo \"NONE\"
+            ;;
+    esac
+}
+
+# Function to get specific OID
+get_oid() {
+    local oid=\"\$1\"
+    case \"\$oid\" in
+        .1.3.6.1.4.1.54321.1.1)
+            echo \"\$oid\"
+            echo \"integer\"
+            echo \"1234\"
+            ;;
+        .1.3.6.1.4.1.54321.1.2)
+            echo \"\$oid\"
+            echo \"integer\"
+            echo \"5678\"
+            ;;
+        .1.3.6.1.4.1.54321.1.3)
+            echo \"\$oid\"
+            echo \"integer\"
+            echo \"10\"
+            ;;
+        .1.3.6.1.4.1.54321.1.4)
+            echo \"\$oid\"
+            echo \"integer\"
+            echo \"25\"
+            ;;
+        .1.3.6.1.4.1.54321.1.5)
+            echo \"\$oid\"
+            echo \"integer\"
+            echo \"50\"
+            ;;
+        *)
+            echo \"NONE\"
+            ;;
+    esac
+}
+
+# Read commands from stdin
+while read command; do
+    case \"\$command\" in
+        PING)
+            echo \"PONG\"
+            ;;
+        getnext)
+            read oid
+            get_next \"\$oid\"
+            ;;
+        get)
+            read oid
+            get_oid \"\$oid\"
+            ;;
+        *)
+            echo \"Command not supported\"
+            exit 1
+            ;;
+    esac
+done
+
+EOL
+
+chmod +x /usr/local/bin/sssonector-snmp
+
+echo === RESTARTING SNMPD ===
+systemctl restart snmpd
+
+echo === TESTING SNMPWALK ===
+snmpwalk -v2c -c public localhost .1.3.6.1.4.1.54321.1'"
+
+expect {
+    "password:" {
+        send "$password\r"
+        exp_continue
+    }
+    timeout {
+        puts "\n❌ Operation timed out"
+        exit 1
+    }
+    eof {
+        puts "\n✅ Operation complete"
+        exit 0
+    }
+}

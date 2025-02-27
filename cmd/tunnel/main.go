@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -10,14 +11,17 @@ import (
 	"github.com/o3willard-AI/SSSonector/internal/config"
 	"github.com/o3willard-AI/SSSonector/internal/config/types"
 	"github.com/o3willard-AI/SSSonector/internal/config/validator"
+	"github.com/o3willard-AI/SSSonector/internal/integrity"
 	"github.com/o3willard-AI/SSSonector/internal/tunnel"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
 
 var (
-	flags   = types.NewCLIFlags()
-	Version string // Set by build flag
+	flags      = types.NewCLIFlags()
+	Version    string // Set by build flag
+	BuildTime  string // Set by build flag
+	CommitHash string // Set by build flag
 )
 
 func init() {
@@ -28,6 +32,22 @@ func init() {
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [options]\n\nOptions:\n", os.Args[0])
 		flag.PrintDefaults()
+	}
+}
+
+// getLogLevel converts a string log level to zapcore.Level
+func getLogLevel(level string) zapcore.Level {
+	switch level {
+	case "debug":
+		return zapcore.DebugLevel
+	case "info":
+		return zapcore.InfoLevel
+	case "warn":
+		return zapcore.WarnLevel
+	case "error":
+		return zapcore.ErrorLevel
+	default:
+		return zapcore.InfoLevel
 	}
 }
 
@@ -42,61 +62,119 @@ func main() {
 
 	// Show version and exit if requested
 	if flags.Version {
-		fmt.Printf("SSSonector %s\n", Version)
+		fmt.Printf("SSSonector %s\nBuild Time: %s\nCommit: %s\n", Version, BuildTime, CommitHash)
 		os.Exit(0)
 	}
 
-	// Initialize logger
-	var logger *zap.Logger
-	var err error
+	// Verify binary integrity
+	binaryPath, err := os.Executable()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to get executable path: %v\n", err)
+		os.Exit(1)
+	}
 
-	// Create custom encoder config
+	info, err := integrity.GetFileInfo(binaryPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to get binary info: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Always update binary info
+	infoPath := binaryPath + ".info"
+	infoBytes, err := json.Marshal(info)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to marshal binary info: %v\n", err)
+		os.Exit(1)
+	}
+	if err := os.WriteFile(infoPath, infoBytes, 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to write binary info: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Load and verify configuration integrity
+	// First verify config file permissions and integrity
+	if err := integrity.FixConfigPermissions(flags.ConfigFile); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to fix config permissions: %v\n", err)
+		os.Exit(1)
+	}
+
+	configInfo, err := integrity.GetFileInfo(flags.ConfigFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to get config info: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Verify config is of correct type
+	if !configInfo.IsConfig {
+		fmt.Fprintf(os.Stderr, "Not a valid config file: %s\n", flags.ConfigFile)
+		os.Exit(1)
+	}
+
+	// Store config info for future verification
+	configInfoPath := flags.ConfigFile + ".info"
+	configInfoBytes, err := json.Marshal(configInfo)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to marshal config info: %v\n", err)
+		os.Exit(1)
+	}
+	if err := os.WriteFile(configInfoPath, configInfoBytes, 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to write config info: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Now load the configuration
+	appCfg, err := config.LoadConfig(flags.ConfigFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load configuration: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Create custom encoder config for proper JSON formatting
 	encoderConfig := zapcore.EncoderConfig{
-		TimeKey:        "",
-		LevelKey:       "",
-		NameKey:        "",
-		CallerKey:      "",
+		TimeKey:        "ts",
+		LevelKey:       "level",
+		NameKey:        "logger",
+		CallerKey:      "caller",
 		MessageKey:     "msg",
-		StacktraceKey:  "",
+		StacktraceKey:  "stacktrace",
 		LineEnding:     zapcore.DefaultLineEnding,
 		EncodeLevel:    zapcore.CapitalLevelEncoder,
-		EncodeTime:     zapcore.ISO8601TimeEncoder,
-		EncodeDuration: zapcore.SecondsDurationEncoder,
+		EncodeTime:     zapcore.EpochTimeEncoder,
+		EncodeDuration: zapcore.StringDurationEncoder,
 		EncodeCaller:   zapcore.ShortCallerEncoder,
 	}
 
-	// Create custom config
+	// Create logger config based on configuration file
 	logConfig := zap.Config{
-		Level:            zap.NewAtomicLevelAt(zap.InfoLevel),
+		Level:            zap.NewAtomicLevelAt(getLogLevel(appCfg.Config.Logging.Level)),
 		Development:      flags.Debug,
-		Encoding:         "console",
+		Encoding:         "json", // Force JSON encoding
 		EncoderConfig:    encoderConfig,
-		OutputPaths:      []string{"stdout"},
-		ErrorOutputPaths: []string{"stderr"},
-		DisableCaller:    true,
+		OutputPaths:      []string{appCfg.Config.Logging.Output},
+		ErrorOutputPaths: []string{appCfg.Config.Logging.Output},
+		DisableCaller:    false,
+	}
+
+	// If file output is specified, use the file path
+	if appCfg.Config.Logging.Output == "file" && appCfg.Config.Logging.File != "" {
+		logConfig.OutputPaths = []string{appCfg.Config.Logging.File}
+		logConfig.ErrorOutputPaths = []string{appCfg.Config.Logging.File}
 	}
 
 	if flags.Debug {
 		logConfig.Level = zap.NewAtomicLevelAt(zap.DebugLevel)
 	}
 
-	// Build logger
-	logger, err = logConfig.Build()
+	// Build logger with proper JSON formatting
+	logger, err := logConfig.Build(
+		zap.AddCaller(),
+		zap.AddStacktrace(zapcore.ErrorLevel),
+	)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to create logger: %v\n", err)
 		os.Exit(1)
 	}
 	defer logger.Sync()
-
-	// Load configuration
-	appCfg, err := config.LoadConfig(flags.ConfigFile)
-	if err != nil {
-		logger.Error("Failed to load configuration",
-			zap.String("file", flags.ConfigFile),
-			zap.Error(err),
-		)
-		os.Exit(1)
-	}
 
 	// Validate configuration
 	v := validator.NewValidator()

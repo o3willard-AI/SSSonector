@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/o3willard-AI/SSSonector/internal/config/types"
 	"gopkg.in/yaml.v2"
@@ -54,6 +56,54 @@ func LoadConfig(path string) (*types.AppConfig, error) {
 
 	// Set configuration directory
 	cfg.ConfigDir = filepath.Dir(path)
+
+	// Set adapter configuration
+	cfg.Adapter = &types.AdapterConfig{
+		RetryAttempts:  3,
+		RetryDelay:     types.NewDuration(1 * time.Second),
+		CleanupTimeout: types.NewDuration(30 * time.Second),
+	}
+
+	// Ensure all configurations are properly initialized with defaults
+	if cfg.Config != nil {
+		// Network configuration
+		if cfg.Config.Network == nil {
+			cfg.Config.Network = types.NewNetworkConfig()
+		}
+		if cfg.Config.Network.Interface == "" {
+			cfg.Config.Network.Interface = "tun0"
+		}
+		if cfg.Config.Network.MTU == 0 {
+			cfg.Config.Network.MTU = 1500
+		}
+		// Ensure address is set and in CIDR format
+		if cfg.Config.Network.Address == "" {
+			if cfg.Config.Mode == types.ModeServer {
+				cfg.Config.Network.Address = "10.0.0.1/24"
+			} else {
+				cfg.Config.Network.Address = "10.0.0.2/24"
+			}
+		} else if !strings.Contains(cfg.Config.Network.Address, "/") {
+			cfg.Config.Network.Address = cfg.Config.Network.Address + "/24"
+		}
+
+		// Tunnel configuration
+		if cfg.Config.Tunnel == nil {
+			cfg.Config.Tunnel = types.NewTunnelConfig()
+		}
+		if cfg.Config.Tunnel.ListenPort == 0 {
+			cfg.Config.Tunnel.ListenPort = 8080
+		}
+		if cfg.Config.Tunnel.ListenAddress == "" {
+			cfg.Config.Tunnel.ListenAddress = "0.0.0.0"
+		}
+		if cfg.Config.Tunnel.Protocol == "" {
+			cfg.Config.Tunnel.Protocol = "tcp"
+		}
+		if cfg.Config.Tunnel.MaxClients == 0 {
+			cfg.Config.Tunnel.MaxClients = 1000
+		}
+	}
 
 	return cfg, nil
 }

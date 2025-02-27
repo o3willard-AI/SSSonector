@@ -1,0 +1,63 @@
+#!/usr/bin/expect -f
+
+# Set timeout
+set timeout 60
+set password [lindex $argv 0]
+
+# SSH into monitor server
+spawn ssh 192.168.50.212
+
+expect {
+    "password:" {
+        send "$password\r"
+    }
+    "yes/no" {
+        send "yes\r"
+        expect "password:"
+        send "$password\r"
+    }
+    timeout {
+        puts "Timeout while waiting for password prompt"
+        exit 1
+    }
+}
+
+expect {
+    "$ " { }
+    "~$ " { }
+    ":~$ " { }
+    timeout {
+        puts "Timeout while waiting for shell prompt"
+        exit 1
+    }
+}
+
+# Check SNMP daemon status
+send "systemctl status snmpd\r"
+expect "$ "
+
+# Check SNMP configuration
+send "cat /etc/snmp/snmpd.conf | grep -v '^#' | grep -v '^$'\r"
+expect "$ "
+
+# Check if SSSonector SNMP extension is installed
+send "ls -l /usr/local/share/snmp/mibs/SSSONECTOR-MIB.txt\r"
+expect "$ "
+
+# Test SNMP connectivity locally
+send "snmpwalk -v2c -c public localhost NET-SNMP-EXTEND-MIB::nsExtendObjects\r"
+expect "$ "
+
+# Check SNMP logs
+send "sudo tail -n 50 /var/log/snmpd.log\r"
+expect "password"
+send "$password\r"
+expect "$ "
+
+# Check if SSSonector metrics script exists
+send "ls -l /usr/local/bin/sssonector-snmp\r"
+expect "$ "
+
+# Exit
+send "exit\r"
+expect eof

@@ -1,0 +1,58 @@
+Environment Verification Report
+==============================
+Generated: Mon 24 Feb 2025 02:26:48 PM PST
+
+System Information:
+Linux ai-ws 6.8.0-52-generic #53-Ubuntu SMP PREEMPT_DYNAMIC Sat Jan 11 00:06:25 UTC 2025 x86_64 x86_64 x86_64 GNU/Linux
+
+OpenSSL Information:
+OpenSSL 3.0.13 30 Jan 2024 (Library: OpenSSL 3.0.13 30 Jan 2024)
+built on: Wed Feb  5 13:17:43 2025 UTC
+platform: debian-amd64
+options:  bn(64,64)
+compiler: gcc -fPIC -pthread -m64 -Wa,--noexecstack -Wall -fzero-call-used-regs=used-gpr -DOPENSSL_TLS_SECURITY_LEVEL=2 -Wa,--noexecstack -g -O2 -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer -ffile-prefix-map=/build/openssl-7xongr/openssl-3.0.13=. -fstack-protector-strong -fstack-clash-protection -Wformat -Werror=format-security -fcf-protection -fdebug-prefix-map=/build/openssl-7xongr/openssl-3.0.13=/usr/src/openssl-3.0.13-0ubuntu3.5 -DOPENSSL_USE_NODELETE -DL_ENDIAN -DOPENSSL_PIC -DOPENSSL_BUILDING_OPENSSL -DNDEBUG -Wdate-time -D_FORTIFY_SOURCE=3
+OPENSSLDIR: "/usr/lib/ssl"
+ENGINESDIR: "/usr/lib/x86_64-linux-gnu/engines-3"
+MODULESDIR: "/usr/lib/x86_64-linux-gnu/ossl-modules"
+Seeding source: os-specific
+CPUINFO: OPENSSL_ia32cap=0xdef82203078bffff:0x840529
+
+Available Providers:
+Providers:
+  default
+    name: OpenSSL Default Provider
+    version: 3.0.13
+    status: active
+    build info: 3.0.13
+    gettable provider parameters:
+      name: pointer to a UTF8 encoded string (arbitrary size)
+      version: pointer to a UTF8 encoded string (arbitrary size)
+      buildinfo: pointer to a UTF8 encoded string (arbitrary size)
+      status: integer (arbitrary size)
+
+Check Results:
+-------------
+[✓] openssl_version: OpenSSL version 3.0.13 meets requirements
+[✓] disk_space: Sufficient disk space available: 28G
+[✓] command_nc: Command available: nc
+[i] openssl_fips: FIPS mode is disabled
+[✓] network_mtu: Network MTU is standard (1500)
+[✓] command_timedatectl: Command available: timedatectl
+[✓] openssl_aes_gcm: AES-GCM support available
+[✓] command_openssl: Command available: openssl
+[✓] openssl_config: OpenSSL config directory exists: /usr/lib/ssl
+[✓] time_sync: System time is synchronized
+[✓] fd_limits: File descriptor limit sufficient: 1048576
+[✓] openssl_legacy: Legacy provider module available
+[✓] command_dig: Command available: dig
+[✓] openssl_providers: Default provider available
+[✓] port_443: Port 443 is available
+
+Summary:
+--------
+Total checks: 14
+Passed: 14
+Failed: 0
+Warnings: 0
+
+Overall Status: PASS

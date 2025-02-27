@@ -1,0 +1,22 @@
+#!/usr/bin/expect -f
+
+set timeout 10
+set password "101abn"
+
+puts "=== Starting ntopng Service ==="
+spawn ssh sblanken@192.168.50.212 "echo '$password' | sudo -S bash -c 'systemctl enable ntopng && systemctl start ntopng && echo === NTOPNG CONFIG === && cat /etc/ntopng/ntopng.conf && echo === SERVICE STATUS === && systemctl status ntopng'"
+
+expect {
+    "password:" {
+        send "$password\r"
+        exp_continue
+    }
+    timeout {
+        puts "\n❌ Operation timed out"
+        exit 1
+    }
+    eof {
+        puts "\n✅ Operation complete"
+        exit 0
+    }
+}

@@ -1,0 +1,30 @@
+#!/usr/bin/expect -f
+
+set timeout 30
+set password "101abn"
+
+# Function to check system
+proc check_system {host} {
+    global password
+    
+    puts "\n=== Checking System: $host ==="
+    spawn ssh sblanken@$host "echo '$password' | sudo -S bash -c 'echo === CHECKING TEST FILE === && ls -lh /home/sblanken/DryFire_v4_10.zip && echo === CHECKING INSTALLED FTP SERVERS === && dpkg -l | grep -i ftp && echo === CHECKING FTP SERVICE STATUS === && systemctl list-units | grep -i ftp'"
+
+    expect {
+        "password:" {
+            send "$password\r"
+            exp_continue
+        }
+        timeout {
+            puts "\n❌ Operation timed out"
+            exit 1
+        }
+        eof {
+            puts "\n✅ Check complete"
+        }
+    }
+}
+
+# Check both systems
+check_system "192.168.50.210"
+check_system "192.168.50.211"

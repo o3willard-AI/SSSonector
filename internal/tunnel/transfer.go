@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/o3willard-AI/SSSonector/internal/config/types"
 	"go.uber.org/zap"
@@ -75,7 +76,7 @@ func (t *Transfer) copy(dst io.Writer, src io.Reader) {
 	}
 
 	// Create buffer for reading
-	buf := make([]byte, mtu)
+	buf := make([]byte, mtu+100)
 
 	// Get source and destination types for logging
 	srcType := getConnType(src)
@@ -107,8 +108,8 @@ func (t *Transfer) copy(dst io.Writer, src io.Reader) {
 		default:
 			// Read from source
 			n, err := src.Read(buf)
-			if err != nil {
-				if err != io.EOF && t.logger != nil {
+			if err != nil && err != io.EOF {
+				if t.logger != nil {
 					t.logger.Error("Read failed",
 						zap.Error(err),
 						zap.String("src_type", srcType),
@@ -204,27 +205,57 @@ func (t *Transfer) copy(dst io.Writer, src io.Reader) {
 				// Write immediately without buffering
 				written := 0
 				for written < n {
-					w, err := dst.Write(buf[written:n])
-					if err != nil {
-						if t.logger != nil {
-							t.logger.Error("Write failed",
-								zap.Error(err),
-								zap.Int("buffer_size", n),
-								zap.Int("bytes_written", written),
-								zap.String("src_type", srcType),
-								zap.String("dst_type", dstType),
-								zap.Uint64("packet_number", packetCount),
-							)
+					// Retry failed writes
+					const maxRetries = 3
+					for retry := 0; retry < maxRetries; retry++ {
+						w, err := dst.Write(buf[written:n])
+						if err != nil {
+							if retry < maxRetries-1 {
+								if t.logger != nil {
+									t.logger.Warn("Write failed, retrying",
+										zap.Error(err),
+										zap.Int("retry", retry+1),
+									)
+								}
+								time.Sleep(time.Millisecond * 10)
+								continue
+							}
+							if t.logger != nil {
+								t.logger.Error("Write failed",
+									zap.Error(err),
+									zap.Int("buffer_size", n),
+									zap.Int("bytes_written", written),
+									zap.String("src_type", srcType),
+									zap.String("dst_type", dstType),
+									zap.Uint64("packet_number", packetCount),
+								)
+							}
+							return
 						}
-						return
-					}
 
-					written += w
-					t.bytes.Add(uint64(w))
+						written += w
+
+						// Flush immediately to ensure packet is sent
+						if flusher, ok := dst.(interface{ Flush() error }); ok {
+							if err := flusher.Flush(); err != nil {
+								if t.logger != nil {
+									t.logger.Error("Flush failed",
+										zap.Error(err),
+									)
+								}
+							}
+						}
+
+						t.bytes.Add(uint64(w))
+						break
+					}
 				}
 
 				// Log successful write
 				if t.logger != nil {
+					t.logger.Debug("Packet details",
+						zap.Binary("packet_data", buf[:min(n, 64)]),
+					)
 					t.logger.Debug("Write successful",
 						zap.Int("bytes_written", n),
 						zap.String("src_type", srcType),

@@ -1,0 +1,30 @@
+mode: server
+listen: 0.0.0.0:8443
+interface: tun0
+address: 10.0.0.1/24
+log_level: debug
+metrics:
+  enabled: true
+  port: 9090
+security:
+  tls:
+    enabled: true
+    min_version: "1.2"
+    cert_file: dev/certs/server.crt
+    key_file: dev/certs/server.key
+    ca_file: dev/certs/ca.crt
+  memory_protections:
+    enabled: true
+    no_exec: true
+    aslr: true
+  namespace:
+    enabled: true
+    network: true
+    mount: true
+monitoring:
+  enabled: true
+  interval: 1s
+  prometheus:
+    enabled: true
+    port: 9091
+    path: /metrics

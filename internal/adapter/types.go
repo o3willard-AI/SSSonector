@@ -123,8 +123,8 @@ func FromConfig(cfg interface{}) (AdapterInterface, error) {
 
 	if appConfig.Adapter != nil {
 		opts.RetryAttempts = appConfig.Adapter.RetryAttempts
-		opts.RetryDelay = time.Duration(appConfig.Adapter.RetryDelay) * time.Millisecond
-		opts.CleanupTimeout = time.Duration(appConfig.Adapter.CleanupTimeout) * time.Millisecond
+		opts.RetryDelay = appConfig.Adapter.RetryDelay.Duration
+		opts.CleanupTimeout = appConfig.Adapter.CleanupTimeout.Duration
 	}
 
 	return NewTUNAdapter(opts)

@@ -1,45 +1,89 @@
 # SSSonector Deployment Patterns Guide
 
-## Overview
-This guide provides comprehensive documentation for common deployment patterns, scenarios, and best practices for SSSonector in various environments.
+## Core Deployment Model
 
-## Table of Contents
-1. [Deployment Architectures](#deployment-architectures)
-2. [High Availability Patterns](#high-availability-patterns)
-3. [Cloud Deployment](#cloud-deployment)
-4. [Container Deployment](#container-deployment)
-5. [Bare Metal Deployment](#bare-metal-deployment)
-6. [Migration Strategies](#migration-strategies)
-7. [Startup Logging](#startup-logging)
-8. [Best Practices](#best-practices)
+SSSonector follows a simple, standalone deployment model:
+- Single binary executable
+- Configuration file driven
+- No system service integration required
+- Direct filesystem deployment
 
-[Previous sections remain unchanged up to Performance Optimization]
+### Basic Structure
+```
+/path/to/sssonector/
+├── sssonector           # The binary executable
+├── config/
+│   └── config.yaml      # Configuration file
+├── certs/               # Generated certificates
+│   ├── ca.crt
+│   ├── server.crt
+│   ├── server.key
+│   ├── client.crt
+│   └── client.key
+└── log/                 # Optional log directory
+    └── sssonector.log
+```
 
-### Performance Optimization
-```yaml
-# Performance configuration
-performance:
-  # Resource allocation
-  resources:
-    cpu_allocation: 80%
-    memory_limit: 80%
-    
-  # Network tuning
-  network:
-    tcp_keepalive: true
-    buffer_sizes: optimal
-    
-  # Connection handling
-  connections:
-    max_concurrent: 5000
-    backlog: 1000
+### Deployment Steps
 
-  # Startup logging optimization
-  startup_logging:
-    format: json
-    buffer_size: 8192
-    flush_interval: 1s
-    compression: true
+1. Binary Placement
+   - Copy the appropriate platform binary to desired location
+   - Set executable permissions (chmod 755)
+   - No installation or registration required
+
+2. Certificate Generation
+   ```bash
+   # Generate certificates without starting the tunnel
+   ./sssonector -generate-certs -cert-dir ./certs
+   ```
+
+3. Configuration
+   - Create config.yaml in an accessible location
+   - Specify all operational parameters in config
+   - Config determines server/client mode
+   - Config controls foreground/background operation
+
+4. Operation
+   ```bash
+   # Start SSSonector with config file
+   ./sssonector -config ./config/config.yaml [-debug] [-v]
+   ```
+
+### Version Management
+
+Each SSSonector binary includes:
+- Version number (from git tag)
+- Build timestamp
+- Git commit hash
+
+Version information can be queried:
+```bash
+./sssonector --version
+```
+
+### Binary Distribution
+```
+versions/
+├── v2.0.0-82-ge5bd185/
+│   ├── linux-amd64/
+│   │   ├── sssonector
+│   │   └── sssonector.sha256
+│   ├── linux-arm64/
+│   ├── darwin-amd64/
+│   └── windows-amd64/
+└── README.md
+```
+
+### Version Verification
+```bash
+# Check binary version
+./sssonector --version
+
+# Verify checksum
+sha256sum -c sssonector.sha256
+
+# Check binary type
+file sssonector
 ```
 
 ## Startup Logging
@@ -52,29 +96,28 @@ logging:
   level: info
   format: json
   output: file
-  file: /var/log/sssonector/startup.log
+  file: ./log/sssonector.log
 ```
 
-### Environment-Specific Configurations
-
-#### Development Environment
+### Development Configuration
 ```yaml
 logging:
   startup_logs: true
   level: debug
-  format: text
+  format: json
   output: stdout
-  file: /var/log/sssonector/startup.log
+  version_info: true  # Include version in all logs
 ```
 
-#### Production Environment
+### Production Configuration
 ```yaml
 logging:
   startup_logs: true
   level: info
   format: json
   output: file
-  file: /var/log/sssonector/startup.log
+  file: ./log/sssonector.log
+  version_info: true  # Include version in all logs
   rotation:
     max_size: 100MB
     max_age: 30d
@@ -82,188 +125,88 @@ logging:
     compress: true
 ```
 
-#### High Availability Environment
-```yaml
-logging:
-  startup_logs: true
-  level: info
-  format: json
-  output: both
-  file: /var/log/sssonector/startup.log
-  aggregation:
-    enabled: true
-    endpoint: logstash:5044
-    buffer_size: 8192
-```
-
-### Container Environment
-```yaml
-# Docker configuration with startup logging
-version: '3.8'
-services:
-  sssonector:
-    image: sssonector:2.0.0
-    environment:
-      - SSSONECTOR_STARTUP_LOGS=true
-      - SSSONECTOR_LOG_FORMAT=json
-      - SSSONECTOR_LOG_LEVEL=info
-    volumes:
-      - ./logs:/var/log/sssonector
-    logging:
-      driver: json-file
-      options:
-        max-size: "100m"
-        max-file: "10"
-```
-
-### Kubernetes Environment
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: sssonector
-spec:
-  template:
-    spec:
-      containers:
-      - name: sssonector
-        env:
-        - name: SSSONECTOR_STARTUP_LOGS
-          value: "true"
-        - name: SSSONECTOR_LOG_FORMAT
-          value: "json"
-        volumeMounts:
-        - name: startup-logs
-          mountPath: /var/log/sssonector
-      volumes:
-      - name: startup-logs
-        persistentVolumeClaim:
-          claimName: startup-logs-pvc
-```
-
-### Log Aggregation Setup
-```yaml
-# Filebeat configuration for log shipping
-filebeat.inputs:
-- type: log
-  enabled: true
-  paths:
-    - /var/log/sssonector/startup.log
-  json.keys_under_root: true
-  fields:
-    type: sssonector_startup
-
-output.elasticsearch:
-  hosts: ["elasticsearch:9200"]
-  index: "sssonector-startup-%{+yyyy.MM.dd}"
-```
-
-### Environment Variables
-```bash
-# Core settings
-export SSSONECTOR_MODE=server
-export SSSONECTOR_CONFIG=/etc/sssonector/config.yaml
-
-# Network settings
-export SSSONECTOR_INTERFACE=tun0
-export SSSONECTOR_ADDRESS=10.0.0.1/24
-
-# Startup logging settings
-export SSSONECTOR_STARTUP_LOGS=true
-export SSSONECTOR_LOG_FORMAT=json
-export SSSONECTOR_LOG_LEVEL=info
-export SSSONECTOR_LOG_FILE=/var/log/sssonector/startup.log
-
-# Security settings
-export SSSONECTOR_TLS_ENABLED=true
-export SSSONECTOR_CERT_DIR=/etc/sssonector/certs
-
-# Resource settings
-export SSSONECTOR_MAX_MEMORY=4G
-export SSSONECTOR_MAX_CPU=2
-```
-
 ## Best Practices
 
-### Deployment Checklist
-1. System Requirements
-   - Verify hardware requirements
-   - Check network capabilities
-   - Validate system resources
+### Deployment
+1. File Organization
+   - Keep binary and config in known location
+   - Maintain consistent directory structure
+   - Use absolute paths in config
+   - Secure certificate storage
 
-2. Startup Logging Setup
-   - Configure appropriate log level for environment
-   - Set up log rotation
-   - Configure log aggregation
-   - Enable performance optimizations
-   - Verify log permissions
+2. Version Management
+   - Track deployed versions
+   - Maintain checksums
+   - Document configuration changes
+   - Keep previous versions available
 
-3. Security Setup
-   - Configure TLS certificates
-   - Set up access control
-   - Enable security features
+3. Operation
+   - Test configuration before deployment
+   - Use debug logging during setup
+   - Monitor log output
+   - Maintain backup configurations
 
-4. Monitoring Setup
-   - Configure metrics collection
-   - Set up log aggregation
-   - Enable alerts
-   - Monitor startup performance
+4. Security
+   - Secure certificate permissions
+   - Restrict config file access
+   - Use absolute paths
+   - Validate configurations before use
 
-5. Backup Strategy
-   - Regular configuration backups
-   - Certificate backups
-   - State backups
-   - Log backups
+### Configuration
+1. Use clear, documented config files
+2. Validate config before deployment
+3. Maintain separate configs for different environments
+4. Document all custom settings
 
-### Troubleshooting Guide
-1. Deployment Issues
-   - Check system requirements
-   - Verify network configuration
-   - Validate configuration files
-   - Review service logs
-   - Analyze startup logs for initialization issues
-   - Check startup phase transitions
-   - Monitor startup performance metrics
-   - Verify resource state tracking
+### Monitoring
+1. Check log files regularly
+2. Monitor tunnel status
+3. Track version information
+4. Verify certificate validity
 
-2. Migration Issues
-   - Backup before migration
-   - Follow rollback plan
-   - Verify service status
-   - Monitor performance
-   - Review startup logs for migration issues
+### Maintenance
+1. Keep binary updated
+2. Rotate logs appropriately
+3. Backup configurations
+4. Document changes
 
-3. Performance Issues
-   - Check resource usage
-   - Monitor network metrics
-   - Review connection stats
-   - Analyze system logs
-   - Monitor startup duration
-   - Check startup resource consumption
+## Common Patterns
 
-### Startup Logging Best Practices
-1. Log Level Selection
-   - Use DEBUG in development
-   - Use INFO in production
-   - Use structured logging in production
-   - Enable detailed timing in staging
+### Development Setup
+```bash
+./sssonector -config ./config/dev.yaml -debug -v
+```
 
-2. Log Rotation
-   - Configure appropriate file sizes
-   - Set retention periods
-   - Enable compression
-   - Monitor disk usage
+### Production Setup
+```bash
+./sssonector -config /opt/sssonector/config/prod.yaml
+```
 
-3. Performance Optimization
-   - Use appropriate buffer sizes
-   - Enable compression where needed
-   - Configure flush intervals
-   - Monitor logging impact
+### Testing Setup
+```bash
+./sssonector -config ./config/test.yaml -debug
+```
 
-4. Monitoring Integration
-   - Set up log aggregation
-   - Configure alerts
-   - Monitor startup duration
-   - Track startup success rates
+## Troubleshooting
 
-[Previous sections remain unchanged]
+### Common Issues
+1. Certificate Problems
+   - Check certificate locations
+   - Verify permissions
+   - Validate certificate dates
+
+2. Configuration Issues
+   - Validate config syntax
+   - Check file permissions
+   - Verify paths are absolute
+
+3. Network Issues
+   - Check TUN interface
+   - Verify IP forwarding
+   - Test network connectivity
+
+### Debug Steps
+1. Run with -debug flag
+2. Check log output
+3. Verify configuration
+4. Test network setup

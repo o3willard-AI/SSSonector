@@ -1,0 +1,33 @@
+Environment Verification Report
+==============================
+Generated: Mon 24 Feb 2025 10:14:56 AM PST
+
+System Information:
+Linux ai-ws 6.8.0-52-generic #53-Ubuntu SMP PREEMPT_DYNAMIC Sat Jan 11 00:06:25 UTC 2025 x86_64 x86_64 x86_64 GNU/Linux
+
+Check Results:
+-------------
+[✓] openssl_version: OpenSSL version 3.0.13 meets requirements
+[✓] disk_space: Sufficient disk space available: 28G
+[✓] command_nc: Command available: nc
+[i] openssl_fips: FIPS mode is disabled
+[✓] network_mtu: Network MTU is standard (1500)
+[✓] command_timedatectl: Command available: timedatectl
+[✓] command_openssl: Command available: openssl
+[✓] openssl_config: OpenSSL config directory exists: /usr/lib/ssl
+[✗] command_chronyc: Required command not found: chronyc
+[i] firewall: UFW is inactive
+[✗] openssl_tls13: TLS 1.3 support not available
+[✗] time_sync: Time sync offset too high:  seconds
+[✓] fd_limits: File descriptor limit sufficient: 1048576
+[✓] command_dig: Command available: dig
+[✓] port_443: Port 443 is available
+
+Summary:
+--------
+Total checks: 13
+Passed: 10
+Failed: 3
+Warnings: 0
+
+Overall Status: FAIL
