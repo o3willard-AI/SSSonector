@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"time"
 
 	"github.com/o3willard-AI/SSSonector/internal/config/types"
 )
@@ -25,6 +26,35 @@ func (v *Validator) Validate(config *types.AppConfig) error {
 
 	if config.Config == nil {
 		return fmt.Errorf("config.Config cannot be nil")
+	}
+
+	// Validate version first
+	if err := v.validateVersion(config); err != nil {
+		return fmt.Errorf("invalid version: %v", err)
+	}
+
+	if err := v.validateMigrationHistory(config); err != nil {
+		return fmt.Errorf("invalid migration history: %v", err)
+	}
+
+	// Validate security configuration
+	if err := v.validateSecurityConfig(config); err != nil {
+		return fmt.Errorf("invalid security config: %v", err)
+	}
+
+	// Validate certificate file paths and extensions
+	if err := v.validateCertificateFilesExist(config); err != nil {
+		return fmt.Errorf("invalid certificate files: %v", err)
+	}
+
+	// Validate throttle configuration
+	if err := v.validateThrottleConfig(config); err != nil {
+		return fmt.Errorf("invalid throttle config: %v", err)
+	}
+
+	// Validate environment-specific configuration
+	if err := v.validateEnvironmentConfig(config); err != nil {
+		return fmt.Errorf("invalid environment config: %v", err)
 	}
 
 	if err := v.validateMode(config.Config.Mode); err != nil {
@@ -110,6 +140,61 @@ func (v *Validator) validateNetwork(config types.NetworkConfig) error {
 		if ip := net.ParseIP(dns); ip == nil {
 			return fmt.Errorf("invalid DNS server IP: %s", dns)
 		}
+	}
+
+	return nil
+}
+
+func (v *Validator) ValidateIPAddress(ipStr string) error {
+	// Validate IPv4 address
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return fmt.Errorf("invalid IP address format: %s", ipStr)
+	}
+
+	// Check if it's a valid unicast address
+	if ip.IsUnspecified() || ip.IsMulticast() || ip.IsLoopback() {
+		return fmt.Errorf("invalid IP address type: %s", ipStr)
+	}
+
+	return nil
+}
+
+func (v *Validator) ValidateCIDR(cidrStr string) error {
+	_, _, err := net.ParseCIDR(cidrStr)
+	if err != nil {
+		return fmt.Errorf("invalid CIDR notation: %s", cidrStr)
+	}
+	return nil
+}
+
+func (v *Validator) validateEnvironmentConfig(config *types.AppConfig) error {
+	// Validate environment-specific settings
+	validEnvironments := map[string]bool{
+		"development": true,
+		"staging":     true,
+		"production":  true,
+		"test":        true,
+	}
+
+	if !validEnvironments[config.Metadata.Environment] {
+		return fmt.Errorf("invalid environment: %s", config.Metadata.Environment)
+	}
+
+	// Environment-specific validation
+	switch config.Metadata.Environment {
+	case "production":
+		// Production should have stricter security
+		if config.Config.Security.TLS.MinVersion != "1.3" {
+			return fmt.Errorf("production environment requires TLS 1.3 minimum")
+		}
+		// Check if any TLS settings are configured (indicating TLS is enabled)
+		if config.Config.Security.TLS.MinVersion == "" && config.Config.Security.TLS.MaxVersion == "" {
+			return fmt.Errorf("TLS must be configured in production")
+		}
+	case "development":
+		// Development can have more lenient settings
+		// No additional restrictions
 	}
 
 	return nil
@@ -214,6 +299,195 @@ func (v *Validator) validateThrottle(config types.ThrottleConfig) error {
 
 	if config.Burst <= 0 {
 		return fmt.Errorf("invalid burst: %d", config.Burst)
+	}
+
+	return nil
+}
+
+func (v *Validator) validateVersion(config *types.AppConfig) error {
+	if config.Metadata.SchemaVersion == "" {
+		return fmt.Errorf("schema version cannot be empty")
+	}
+
+	// Validate schema version format (semantic versioning)
+	validVersions := map[string]bool{
+		"1.0.0": true,
+		"1.1.0": true,
+		"2.0.0": true,
+	}
+
+	if !validVersions[config.Metadata.SchemaVersion] {
+		return fmt.Errorf("unsupported schema version: %s", config.Metadata.SchemaVersion)
+	}
+
+	// Validate version compatibility
+	if config.Metadata.SchemaVersion == "2.0.0" {
+		// Add 2.0.0 specific validation here
+	}
+
+	return nil
+}
+
+func (v *Validator) validateMigrationHistory(config *types.AppConfig) error {
+	for _, record := range config.Metadata.MigrationHistory {
+		if record.FromVersion == "" {
+			return fmt.Errorf("migration record missing from_version")
+		}
+
+		if record.ToVersion == "" {
+			return fmt.Errorf("migration record missing to_version")
+		}
+
+		if record.Status == "" {
+			return fmt.Errorf("migration record missing status")
+		}
+
+		validStatuses := map[string]bool{
+			"completed":  true,
+			"failed":     true,
+			"pending":    true,
+			"rolledback": true,
+		}
+
+		if !validStatuses[record.Status] {
+			return fmt.Errorf("invalid migration status: %s", record.Status)
+		}
+
+		if record.Timestamp.IsZero() {
+			return fmt.Errorf("migration record missing timestamp")
+		}
+	}
+
+	return nil
+}
+
+func (v *Validator) validateSecurityConfig(config *types.AppConfig) error {
+	// Validate certificate file paths
+	if config.Config.Auth.CertFile != "" {
+		// Basic path validation - should be absolute or relative path
+		if strings.Contains(config.Config.Auth.CertFile, "..") {
+			return fmt.Errorf("certificate file path contains invalid characters: %s", config.Config.Auth.CertFile)
+		}
+	}
+
+	if config.Config.Auth.KeyFile != "" {
+		if strings.Contains(config.Config.Auth.KeyFile, "..") {
+			return fmt.Errorf("key file path contains invalid characters: %s", config.Config.Auth.KeyFile)
+		}
+	}
+
+	if config.Config.Auth.CAFile != "" {
+		if strings.Contains(config.Config.Auth.CAFile, "..") {
+			return fmt.Errorf("CA file path contains invalid characters: %s", config.Config.Auth.CAFile)
+		}
+	}
+
+	// Validate certificate rotation settings
+	if config.Config.Auth.CertRotation.Enabled {
+		if config.Config.Auth.CertRotation.Interval < time.Hour {
+			return fmt.Errorf("certificate rotation interval too short: %v", config.Config.Auth.CertRotation.Interval)
+		}
+	}
+
+	// Validate TLS configuration
+	if config.Config.Security.TLS.MinVersion > config.Config.Security.TLS.MaxVersion {
+		return fmt.Errorf("TLS min version cannot be greater than max version")
+	}
+
+	// Validate cipher suites
+	if len(config.Config.Security.TLS.Ciphers) > 0 {
+		validCiphers := map[string]bool{
+			"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256":   true,
+			"TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384":   true,
+			"TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256": true,
+			"TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384": true,
+		}
+
+		for _, cipher := range config.Config.Security.TLS.Ciphers {
+			if !validCiphers[cipher] {
+				return fmt.Errorf("invalid cipher suite: %s", cipher)
+			}
+		}
+	}
+
+	return nil
+}
+
+func (v *Validator) validateThrottleConfig(config *types.AppConfig) error {
+	if !config.Throttle.Enabled {
+		return nil
+	}
+
+	// Validate rate vs burst relationship
+	if config.Throttle.Rate > 0 && config.Throttle.Burst > 0 {
+		// Burst should not be more than 10x the rate
+		rateRatio := float64(config.Throttle.Burst) / config.Throttle.Rate
+		if rateRatio > 10 {
+			return fmt.Errorf("burst limit too large compared to rate: %.2f", rateRatio)
+		}
+	}
+
+	// Validate reasonable rate limits
+	if config.Throttle.Rate < 1024 { // 1KB/s minimum
+		return fmt.Errorf("rate limit too low: %f", config.Throttle.Rate)
+	}
+
+	if config.Throttle.Rate > 1024*1024*1024 { // 1GB/s maximum
+		return fmt.Errorf("rate limit too high: %f", config.Throttle.Rate)
+	}
+
+	return nil
+}
+
+func (v *Validator) validateCertificateFilesExist(config *types.AppConfig) error {
+	// Enhanced certificate file validation
+	if config.Config.Auth.CertFile != "" {
+		// Check for common path issues
+		if strings.HasPrefix(config.Config.Auth.CertFile, "..") {
+			return fmt.Errorf("certificate file path contains parent directory reference: %s", config.Config.Auth.CertFile)
+		}
+
+		if strings.Contains(config.Config.Auth.CertFile, "//") {
+			return fmt.Errorf("certificate file path contains duplicate slashes: %s", config.Config.Auth.CertFile)
+		}
+
+		// Check file extension
+		if !strings.HasSuffix(config.Config.Auth.CertFile, ".crt") &&
+			!strings.HasSuffix(config.Config.Auth.CertFile, ".pem") {
+			return fmt.Errorf("certificate file should have .crt or .pem extension: %s", config.Config.Auth.CertFile)
+		}
+	}
+
+	if config.Config.Auth.KeyFile != "" {
+		if strings.HasPrefix(config.Config.Auth.KeyFile, "..") {
+			return fmt.Errorf("key file path contains parent directory reference: %s", config.Config.Auth.KeyFile)
+		}
+
+		if strings.Contains(config.Config.Auth.KeyFile, "//") {
+			return fmt.Errorf("key file path contains duplicate slashes: %s", config.Config.Auth.KeyFile)
+		}
+
+		// Check file extension
+		if !strings.HasSuffix(config.Config.Auth.KeyFile, ".key") &&
+			!strings.HasSuffix(config.Config.Auth.KeyFile, ".pem") {
+			return fmt.Errorf("key file should have .key or .pem extension: %s", config.Config.Auth.KeyFile)
+		}
+	}
+
+	if config.Config.Auth.CAFile != "" {
+		if strings.HasPrefix(config.Config.Auth.CAFile, "..") {
+			return fmt.Errorf("CA file path contains parent directory reference: %s", config.Config.Auth.CAFile)
+		}
+
+		if strings.Contains(config.Config.Auth.CAFile, "//") {
+			return fmt.Errorf("CA file path contains duplicate slashes: %s", config.Config.Auth.CAFile)
+		}
+
+		// Check file extension
+		if !strings.HasSuffix(config.Config.Auth.CAFile, ".crt") &&
+			!strings.HasSuffix(config.Config.Auth.CAFile, ".pem") {
+			return fmt.Errorf("CA file should have .crt or .pem extension: %s", config.Config.Auth.CAFile)
+		}
 	}
 
 	return nil

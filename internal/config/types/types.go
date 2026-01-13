@@ -74,6 +74,17 @@ type ConfigMetadata struct {
 	UpdatedAt   time.Time `yaml:"updated_at" json:"updated_at"`
 	Environment string    `yaml:"environment" json:"environment"`
 	Region      string    `yaml:"region" json:"region"`
+	SchemaVersion string  `yaml:"schema_version" json:"schema_version"`
+	MigrationHistory []MigrationRecord `yaml:"migration_history" json:"migration_history"`
+}
+
+// MigrationRecord represents a configuration migration event
+type MigrationRecord struct {
+	FromVersion string    `yaml:"from_version" json:"from_version"`
+	ToVersion   string    `yaml:"to_version" json:"to_version"`
+	Timestamp   time.Time `yaml:"timestamp" json:"timestamp"`
+	Status      string    `yaml:"status" json:"status"`
+	Notes       string    `yaml:"notes" json:"notes"`
 }
 
 // Config represents the main configuration structure
@@ -243,6 +254,16 @@ func NewAppConfig(configType Type) *AppConfig {
 			UpdatedAt:   time.Now(),
 			Environment: "development",
 			Region:      "local",
+			SchemaVersion: "1.0.0",
+			MigrationHistory: []MigrationRecord{
+				{
+					FromVersion: "0.0.0",
+					ToVersion:   "1.0.0",
+					Timestamp:   time.Now(),
+					Status:      "completed",
+					Notes:       "Initial configuration schema",
+				},
+			},
 		},
 		Throttle: ThrottleConfig{
 			Enabled: false,
