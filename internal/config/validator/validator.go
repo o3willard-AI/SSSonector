@@ -4,6 +4,7 @@ package validator
 import (
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 
@@ -35,6 +36,10 @@ func (v *Validator) Validate(config *types.AppConfig) error {
 
 	if err := v.validateMigrationHistory(config); err != nil {
 		return fmt.Errorf("invalid migration history: %v", err)
+	}
+
+	if err := v.validateMigration(config); err != nil {
+		return fmt.Errorf("invalid migration path: %v", err)
 	}
 
 	// Validate security configuration
@@ -87,6 +92,137 @@ func (v *Validator) Validate(config *types.AppConfig) error {
 
 	if err := v.validateThrottle(config.Throttle); err != nil {
 		return fmt.Errorf("invalid throttle config: %v", err)
+	}
+
+	return nil
+}
+
+// validateMigration validates configuration migration paths and upgrade logic
+func (v *Validator) validateMigration(config *types.AppConfig) error {
+	history := config.Metadata.MigrationHistory
+
+	if len(history) == 0 {
+		// No migration history - this is expected for fresh configs
+		return nil
+	}
+
+	// Define valid migration paths (from -> to)
+	validMigrations := map[string]map[string]bool{
+		"1.0.0": {
+			"1.1.0": true,
+			"2.0.0": true,
+		},
+		"1.1.0": {
+			"2.0.0": true,
+		},
+		"2.0.0": {
+			// No migrations from 2.0.0 yet
+		},
+	}
+
+	// Validate each migration record sequentially
+	for i, record := range history {
+		// Check if this migration path is valid
+		if !v.isValidMigrationPath(record.FromVersion, record.ToVersion, validMigrations) {
+			return fmt.Errorf("invalid migration path: %s -> %s", record.FromVersion, record.ToVersion)
+		}
+
+		// Check chronological order (later migrations should be after earlier ones)
+		if i > 0 {
+			if record.Timestamp.Before(history[i-1].Timestamp) {
+				return fmt.Errorf("migration record %d has timestamp before previous record", i+1)
+			}
+		}
+
+		// Validate final migration leads to current schema version
+		if i == len(history)-1 {
+			if record.ToVersion != config.Metadata.SchemaVersion {
+				return fmt.Errorf("final migration destination (%s) does not match current schema version (%s)",
+					record.ToVersion, config.Metadata.SchemaVersion)
+			}
+		}
+
+		// Validate starting point for first migration
+		if i == 0 {
+			// First migration should either be from 0.0.0 (fresh install) or 1.0.0
+			if record.FromVersion != "0.0.0" && record.FromVersion != "1.0.0" {
+				return fmt.Errorf("first migration must start from 0.0.0 or 1.0.0, got %s", record.FromVersion)
+			}
+		} else {
+			// Subsequent migrations should start where the previous one ended
+			if record.FromVersion != history[i-1].ToVersion {
+				return fmt.Errorf("migration %d starts from %s but previous migration ended at %s",
+					i+1, record.FromVersion, history[i-1].ToVersion)
+			}
+		}
+
+		// Version 2.0.0 breaking changes require special validation
+		if record.ToVersion == "2.0.0" {
+			if err := v.validateVersionTwoMigration(config); err != nil {
+				return fmt.Errorf("version 2.0.0 migration validation failed: %v", err)
+			}
+		}
+	}
+
+	// Validate that there are no circular dependencies or invalid jumps
+	if err := v.validateMigrationSequence(history); err != nil {
+		return fmt.Errorf("migration sequence validation failed: %v", err)
+	}
+
+	return nil
+}
+
+// isValidMigrationPath checks if a migration from one version to another is valid
+func (v *Validator) isValidMigrationPath(from, to string, validMigrations map[string]map[string]bool) bool {
+	if fromTargets, exists := validMigrations[from]; exists {
+		return fromTargets[to]
+	}
+	return false
+}
+
+// validateVersionTwoMigration validates specific requirements for migrating to version 2.0.0
+func (v *Validator) validateVersionTwoMigration(config *types.AppConfig) error {
+	// Version 2.0.0 requires explicit TLS configuration
+	if config.Config.Security.TLS.MinVersion == "" {
+		return fmt.Errorf("version 2.0.0 migration requires TLS minimum version to be configured")
+	}
+
+	// For production environment, require TLS 1.2 minimum
+	if config.Metadata.Environment == "production" && config.Config.Security.TLS.MinVersion < "1.2" {
+		return fmt.Errorf("production environment migration to 2.0.0 requires TLS 1.2 minimum")
+	}
+
+	return nil
+}
+
+// validateMigrationSequence validates the overall migration sequence for consistency
+func (v *Validator) validateMigrationSequence(history []types.MigrationRecord) error {
+	// Check for duplicate migrations (same from->to pair)
+	migrationPaths := make(map[string]bool)
+	for _, record := range history {
+		path := record.FromVersion + "->" + record.ToVersion
+		if migrationPaths[path] {
+			return fmt.Errorf("duplicate migration path detected: %s", path)
+		}
+		migrationPaths[path] = true
+	}
+
+	// Validate that migration status makes sense chronologically
+	statuses := []string{}
+	for _, record := range history {
+		statuses = append(statuses, record.Status)
+	}
+
+	// Check for "failed" followed by successful migrations (would indicate inconsistency)
+	for i, status := range statuses {
+		if status == "failed" {
+			// After a failed migration, subsequent records should be retries or rollbacks
+			for j := i + 1; j < len(statuses); j++ {
+				if statuses[j] == "completed" {
+					return fmt.Errorf("migration %d failed but later migration %d completed - inconsistent migration status", i+1, j+1)
+				}
+			}
+		}
 	}
 
 	return nil
@@ -310,19 +446,94 @@ func (v *Validator) validateVersion(config *types.AppConfig) error {
 	}
 
 	// Validate schema version format (semantic versioning)
-	validVersions := map[string]bool{
-		"1.0.0": true,
-		"1.1.0": true,
-		"2.0.0": true,
+	if err := v.validateSemanticVersion(config.Metadata.SchemaVersion); err != nil {
+		return fmt.Errorf("invalid schema version format: %v", err)
 	}
 
-	if !validVersions[config.Metadata.SchemaVersion] {
-		return fmt.Errorf("unsupported schema version: %s", config.Metadata.SchemaVersion)
+	// Define supported schema versions with compatibility rules
+	supportedVersions := map[string]struct {
+		major           int
+		minor           int
+		patch           int
+		breakingChanges bool
+		deprecated      bool
+	}{
+		"1.0.0": {1, 0, 0, false, false},
+		"1.1.0": {1, 1, 0, false, false},
+		"2.0.0": {2, 0, 0, true, false},
 	}
 
-	// Validate version compatibility
-	if config.Metadata.SchemaVersion == "2.0.0" {
-		// Add 2.0.0 specific validation here
+	versionInfo, supported := supportedVersions[config.Metadata.SchemaVersion]
+	if !supported {
+		return fmt.Errorf("unsupported schema version: %s (supported: 1.0.0, 1.1.0, 2.0.0)", config.Metadata.SchemaVersion)
+	}
+
+	if versionInfo.deprecated {
+		return fmt.Errorf("schema version %s is deprecated and no longer supported", config.Metadata.SchemaVersion)
+	}
+
+	// Validate version compatibility with current components
+	if err := v.validateVersionCompatibility(config, versionInfo); err != nil {
+		return fmt.Errorf("version compatibility check failed: %v", err)
+	}
+
+	return nil
+}
+
+// validateSemanticVersion validates semantic version format (MAJOR.MINOR.PATCH)
+func (v *Validator) validateSemanticVersion(version string) error {
+	parts := strings.Split(version, ".")
+	if len(parts) != 3 {
+		return fmt.Errorf("version must be in MAJOR.MINOR.PATCH format")
+	}
+
+	for i, part := range parts {
+		num, err := strconv.Atoi(part)
+		if err != nil || num < 0 {
+			return fmt.Errorf("version part %d must be a non-negative integer: %s", i+1, part)
+		}
+		// Major version should not be 0 for production software, but allow for early versions
+		if i == 0 && num > 99 {
+			return fmt.Errorf("major version too high: %d", num)
+		}
+	}
+
+	return nil
+}
+
+// validateVersionCompatibility checks version-specific compatibility rules
+func (v *Validator) validateVersionCompatibility(config *types.AppConfig, versionInfo struct {
+	major           int
+	minor           int
+	patch           int
+	breakingChanges bool
+	deprecated      bool
+}) error {
+	// Version 2.0.0+ requires TLS configuration
+	if versionInfo.major >= 2 {
+		if config.Config.Security.TLS.MinVersion == "" {
+			return fmt.Errorf("version 2.0.0+ requires explicit TLS minimum version configuration")
+		}
+		if versionInfo.breakingChanges {
+			// Additional breaking change validations for major version bumps
+			if config.Metadata.Environment == "production" && config.Config.Security.TLS.MinVersion < "1.2" {
+				return fmt.Errorf("production environment with version 2.0.0+ requires TLS 1.2 minimum")
+			}
+		}
+	}
+
+	// Version 1.1.0+ requires monitoring configuration if metrics enabled
+	if versionInfo.major >= 1 && versionInfo.minor >= 1 {
+		if config.Config.Metrics.Enabled && config.Config.Monitor.Type == "" {
+			return fmt.Errorf("version 1.1.0+ requires monitor type configuration when metrics are enabled")
+		}
+	}
+
+	// Version 1.0.0 has basic requirements
+	if versionInfo.major == 1 && versionInfo.minor == 0 && versionInfo.patch == 0 {
+		if config.Metadata.Environment == "" {
+			return fmt.Errorf("version 1.0.0 requires environment to be specified")
+		}
 	}
 
 	return nil
