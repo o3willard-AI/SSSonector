@@ -66,3 +66,20 @@ func CreateDefaultConfig() *AppConfig {
 func CreateAppConfig(configType Type) *AppConfig {
 	return types.NewAppConfig(configType)
 }
+
+// CreateConfigLoader creates a new configuration loader
+func CreateConfigLoader() *ConfigLoader {
+	return NewConfigLoader()
+}
+
+// LoadConfigFile loads and upgrades a configuration file
+func LoadConfigFile(filename string) (*AppConfig, error) {
+	l := CreateConfigLoader()
+	return l.LoadFile(filename)
+}
+
+// LoadConfigString loads and upgrades configuration from string
+func LoadConfigString(content, format string) (*AppConfig, error) {
+	l := CreateConfigLoader()
+	return l.LoadFromString(content, format)
+}

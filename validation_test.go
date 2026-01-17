@@ -71,7 +71,6 @@ func testValidConfig() {
 	err = validator.Validate(&config)
 	if err != nil {
 		fmt.Printf("❌ Valid config failed validation: %v\n", err)
-		fmt.Printf("   Detailed error: %v\n", err)
 	} else {
 		fmt.Printf("✅ Valid config passed validation\n")
 		fmt.Printf("   Schema Version: %s\n", config.Metadata.SchemaVersion)
