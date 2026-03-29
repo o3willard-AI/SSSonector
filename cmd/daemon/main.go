@@ -5,23 +5,20 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
 	"github.com/o3willard-AI/SSSonector/internal/config"
-	"github.com/o3willard-AI/SSSonector/internal/service"
-	"github.com/o3willard-AI/SSSonector/internal/service/control"
+	"github.com/o3willard-AI/SSSonector/internal/tunnel"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
 
 var (
-	// Version is set during build
 	Version = "dev"
 
-	// Command line flags
 	configFile = flag.String("config", "/etc/sssonector/config.yaml", "Path to config file")
-	socketPath = flag.String("socket", "/var/run/sssonector.sock", "Path to control socket")
 	logLevel   = flag.String("log-level", "info", "Log level (debug, info, warn, error)")
 )
 
@@ -41,10 +38,8 @@ func getLogLevel(level string) zapcore.Level {
 }
 
 func main() {
-	// Parse command line flags
 	flag.Parse()
 
-	// Initialize logger
 	logConfig := zap.NewProductionConfig()
 	logConfig.Level = zap.NewAtomicLevelAt(getLogLevel(*logLevel))
 	logger, err := logConfig.Build()
@@ -54,70 +49,78 @@ func main() {
 	}
 	defer logger.Sync()
 
-	// Initialize configuration manager
-	configManager := config.CreateManager(*configFile)
-
-	// Get configuration
-	cfg, err := configManager.Get()
+	cfg, err := config.LoadConfigFile(*configFile)
 	if err != nil {
-		logger.Error("Failed to get config", zap.Error(err))
+		logger.Error("Failed to load config", zap.Error(err))
 		os.Exit(1)
 	}
 
-	// Create service
-	svc, err := service.NewBaseService(cfg, service.ServiceOptions{
-		Name:      "sssonector",
-		ConfigDir: "/etc/sssonector",
-		DataDir:   "/var/lib/sssonector",
-		LogDir:    "/var/log/sssonector",
-	})
-	if err != nil {
-		logger.Error("Failed to create service", zap.Error(err))
+	configDir := filepath.Dir(*configFile)
+	instanceDir := filepath.Join(configDir, "instances")
+	instanceName := ""
+	for i, part := range strings.Split(*configFile, string(filepath.Separator)) {
+		if part == "instances" && i+1 < len(strings.Split(*configFile, string(filepath.Separator))) {
+			instanceName = strings.Split(*configFile, string(filepath.Separator))[i+1]
+			instanceDir = filepath.Join(configDir, "instances", instanceName)
+			break
+		}
+	}
+	if instanceName != "" {
+		if err := tunnel.UpdateCertificatePaths(cfg, instanceDir); err != nil {
+			logger.Error("Failed to update certificate paths", zap.Error(err))
+			os.Exit(1)
+		}
+	}
+
+	configManager := config.CreateManager(filepath.Dir(*configFile))
+
+	var tnl interface {
+		Start() error
+		Stop() error
+	}
+
+	mode := cfg.Config.Mode
+	if mode == "" {
+		mode = string(cfg.Type)
+	}
+
+	switch mode {
+	case "server":
+		logger.Info("Starting in server mode")
+		tnl = tunnel.NewServer(cfg, configManager, logger)
+	case "client":
+		logger.Info("Starting in client mode")
+		tnl = tunnel.NewClient(cfg, configManager, logger)
+	default:
+		logger.Error("Unknown mode", zap.String("mode", mode))
 		os.Exit(1)
 	}
 
-	// Create control server
-	controlServer, err := control.NewControlServer(svc)
-	if err != nil {
-		logger.Error("Failed to create control server", zap.Error(err))
-		os.Exit(1)
-	}
-
-	// Set socket path and start control server
-	controlServer.SetSocketPath(*socketPath)
-	if err := controlServer.Start(); err != nil {
-		logger.Error("Failed to start control server", zap.Error(err))
-		os.Exit(1)
-	}
-	defer controlServer.Stop()
-
-	// Start service
-	if err := svc.Start(); err != nil {
-		logger.Error("Failed to start service", zap.Error(err))
-		os.Exit(1)
-	}
-	defer svc.Stop()
-
-	// Log startup
-	logger.Info("Service started",
-		zap.String("version", Version),
-		zap.String("config", *configFile),
-		zap.String("socket", *socketPath),
-		zap.String("log_level", *logLevel),
-	)
-
-	// Wait for signals
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	// Handle signals
-	sig := <-sigChan
-	logger.Info("Received signal", zap.String("signal", sig.String()))
+	errChan := make(chan error, 1)
+	go func() {
+		errChan <- tnl.Start()
+	}()
 
-	// Stop service
-	if err := svc.Stop(); err != nil {
+	logger.Info("Service started",
+		zap.String("version", Version),
+		zap.String("config", *configFile),
+		zap.String("mode", mode),
+	)
+
+	select {
+	case sig := <-sigChan:
+		logger.Info("Received signal", zap.String("signal", sig.String()))
+	case err := <-errChan:
+		if err != nil {
+			logger.Error("Service error", zap.Error(err))
+		}
+	}
+
+	if err := tnl.Stop(); err != nil {
 		logger.Error("Failed to stop service", zap.Error(err))
-		os.Exit(1)
 	}
 
 	logger.Info("Service stopped")
