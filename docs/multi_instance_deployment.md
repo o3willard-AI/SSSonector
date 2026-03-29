@@ -29,7 +29,40 @@ Each SSSonector instance provides a point-to-point tunnel between a server and o
 
 ## Quick Start
 
-### 1. Install the Instance Manager
+### Option 1: Using the Install Script (Recommended)
+
+The install script can create additional instances on subsequent runs:
+
+```bash
+# Create first server instance
+curl -fsSL https://raw.githubusercontent.com/o3willard-AI/SSSonector/main/install.sh | \
+  sudo SSSONECTOR_MODE=server \
+       SSSONECTOR_INSTANCE=client-a \
+       SSSONECTOR_ADDRESS=10.0.1.1/24 \
+       SSSONECTOR_PORT=8443 \
+       bash
+
+# Create second server instance
+curl -fsSL https://raw.githubusercontent.com/o3willard-AI/SSSonector/main/install.sh | \
+  sudo SSSONECTOR_MODE=server \
+       SSSONECTOR_INSTANCE=client-b \
+       SSSONECTOR_ADDRESS=10.0.2.1/24 \
+       SSSONECTOR_PORT=8444 \
+       bash
+
+# Create client instance (on client machine)
+curl -fsSL https://raw.githubusercontent.com/o3willard-AI/SSSonector/main/install.sh | \
+  sudo SSSONECTOR_MODE=client \
+       SSSONECTOR_INSTANCE=client-a \
+       SSSONECTOR_ADDRESS=10.0.1.2/24 \
+       SSSONECTOR_SERVER=192.168.1.10 \
+       SSSONECTOR_PORT=8443 \
+       bash
+```
+
+### Option 2: Using the Instance Manager Script
+
+For manual instance management, use the instance-manager.sh script:
 
 ```bash
 # Copy the instance manager script
@@ -41,7 +74,7 @@ sudo cp deploy/systemd/sssonector@.service /etc/systemd/system/
 sudo systemctl daemon-reload
 ```
 
-### 2. Create Server Instances
+### Create Server Instances
 
 ```bash
 # Create instance for client-a
@@ -63,7 +96,7 @@ sudo sssonector-instance create-server \
   -p 8445
 ```
 
-### 3. Create Client Instances
+### Create Client Instances
 
 On each client machine:
 
@@ -90,7 +123,7 @@ sudo sssonector-instance create-client \
   -p 8445
 ```
 
-### 4. Copy Certificates
+### Copy Certificates
 
 After creating instances, copy the client certificates to each client:
 
@@ -105,7 +138,7 @@ scp /tmp/client-a-certs.tar.gz client-a:/tmp/
 sudo tar xzf /tmp/client-a-certs.tar.gz -C /etc/sssonector/instances/client-a/certs
 ```
 
-### 5. Start Services
+### Start Services
 
 ```bash
 # Start instances
@@ -119,7 +152,7 @@ sudo systemctl enable sssonector@client-b
 sudo systemctl enable sssonector@client-c
 ```
 
-### 6. Verify
+### Verify
 
 ```bash
 # Check status
@@ -328,3 +361,31 @@ For large deployments (50+ instances), consider:
 - Increasing system file descriptor limits
 - Using a dedicated tunnel server
 - Monitoring memory usage
+
+## Upgrading Multi-Instance Deployments
+
+The upgrade script automatically handles multiple instances:
+
+```bash
+# Upgrade all instances (stops, upgrades, restarts)
+curl -fsSL https://raw.githubusercontent.com/o3willard-AI/SSSonector/main/upgrade.sh | sudo bash
+
+# Upgrade without restarting (manual restart later)
+curl -fsSL https://raw.githubusercontent.com/o3willard-AI/SSSonector/main/upgrade.sh | \
+  sudo bash -s -- --no-restart
+
+# Manual restart after upgrade
+sudo systemctl start sssonector@client-a
+sudo systemctl start sssonector@client-b
+sudo systemctl start sssonector@client-c
+
+# Or restart all at once
+sudo systemctl start 'sssonector@*'
+```
+
+The upgrade process:
+1. Detects all running instances
+2. Downloads new binary
+3. Stops each running instance
+4. Replaces binary
+5. Restarts previously running instances

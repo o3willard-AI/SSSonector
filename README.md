@@ -5,23 +5,29 @@ SSSonector is a high-performance, secure tunnel service with advanced monitoring
 ## Features
 
 ### Core Features
-- Secure TLS-based tunneling
+- Secure TLS-based tunneling with mutual certificate authentication
 - Cross-platform support (Linux, Windows, macOS)
-- High-performance data transfer
+- High-performance data transfer with optimized buffer management
 - Certificate-based authentication
 - Configurable MTU and buffer sizes
 
+### Multi-Instance Architecture
+- Run multiple independent tunnel instances on a single host
+- One instance per client-server pairing (point-to-point)
+- Isolated configuration and certificates per instance
+- Independent systemd services per instance
+
 ### Platform Support
-- Linux: Full TUN interface support
-- Windows: Basic support (TAP adapter)
+- Linux: Full TUN interface support (primary platform)
 - macOS: Basic support (future TUN implementation)
+- Windows: Basic support (TAP adapter)
 
 ### Monitoring
 - SNMP v2c monitoring
 - Custom MIB implementation
 - Real-time metrics collection
 - System resource monitoring
-- Prometheus integration
+- Prometheus integration per instance
 - Grafana dashboards
 
 ### Rate Limiting
@@ -32,19 +38,12 @@ SSSonector is a high-performance, secure tunnel service with advanced monitoring
 - Burst allowance
 - Fair queuing support
 
-### Performance
-- Optimized buffer management
-- Connection pooling
-- Async I/O operations
-- Resource usage optimization
-- Performance metrics tracking
-
 ## Quick Start
 
 ### Installation
 
-#### One-line Install (Linux)
 ```bash
+# One-line install (Linux)
 curl -fsSL https://raw.githubusercontent.com/o3willard-AI/SSSonector/main/install.sh | sudo bash
 ```
 
@@ -55,16 +54,27 @@ The installer will:
 4. Generate TLS certificates
 5. Install systemd service template
 
-#### Non-interactive Install
+#### Install Options
+
+| Environment Variable | Description | Default |
+|---------------------|-------------|---------|
+| `SSSONECTOR_VERSION` | Version to install | latest |
+| `SSSONECTOR_MODE` | "server" or "client" | interactive |
+| `SSSONECTOR_INSTANCE` | Instance name | interactive |
+| `SSSONECTOR_ADDRESS` | TUN interface address (CIDR) | interactive |
+| `SSSONECTOR_SERVER` | Server address (client mode) | interactive |
+| `SSSONECTOR_PORT` | Listen/connect port | auto-assigned |
+| `SSSONECTOR_NO_SERVICE` | Don't install systemd service | false |
+
 ```bash
-# Server mode
+# Non-interactive server install
 curl -fsSL https://raw.githubusercontent.com/o3willard-AI/SSSonector/main/install.sh | \
   sudo SSSONECTOR_MODE=server \
        SSSONECTOR_INSTANCE=tunnel-a \
        SSSONECTOR_ADDRESS=10.0.1.1/24 \
        bash
 
-# Client mode
+# Non-interactive client install
 curl -fsSL https://raw.githubusercontent.com/o3willard-AI/SSSonector/main/install.sh | \
   sudo SSSONECTOR_MODE=client \
        SSSONECTOR_INSTANCE=tunnel-a \
@@ -84,177 +94,213 @@ curl -fsSL https://raw.githubusercontent.com/o3willard-AI/SSSonector/main/instal
 | Windows | amd64 | `sssonector-windows-amd64.exe` |
 
 ```bash
-# Download from releases page
 curl -LO https://github.com/o3willard-AI/SSSonector/releases/latest/download/sssonector-linux-amd64
 chmod +x sssonector-linux-amd64
 sudo mv sssonector-linux-amd64 /usr/local/bin/sssonector
 ```
 
-#### Uninstall
-```bash
-# Remove binary and service only (keeps configs)
-curl -fsSL https://raw.githubusercontent.com/o3willard-AI/SSSonector/main/uninstall.sh | sudo bash
-
-# Remove everything including configurations
-curl -fsSL https://raw.githubusercontent.com/o3willard-AI/SSSonector/main/uninstall.sh | sudo bash -s -- --purge
-```
+## Lifecycle Management
 
 ### Upgrade
 
 ```bash
-# Upgrade to latest version
+# Upgrade to latest version (restarts running instances)
 curl -fsSL https://raw.githubusercontent.com/o3willard-AI/SSSonector/main/upgrade.sh | sudo bash
 
 # Upgrade to specific version
-curl -fsSL https://raw.githubusercontent.com/o3willard-AI/SSSonector/main/upgrade.sh | sudo bash -s -- --version v1.2.0
+curl -fsSL https://raw.githubusercontent.com/o3willard-AI/SSSonector/main/upgrade.sh | \
+  sudo bash -s -- --version v1.2.0
 
 # Upgrade without restarting services
-curl -fsSL https://raw.githubusercontent.com/o3willard-AI/SSSonector/main/upgrade.sh | sudo bash -s -- --no-restart
+curl -fsSL https://raw.githubusercontent.com/o3willard-AI/SSSonector/main/upgrade.sh | \
+  sudo bash -s -- --no-restart
+
+# Non-interactive upgrade
+curl -fsSL https://raw.githubusercontent.com/o3willard-AI/SSSonector/main/upgrade.sh | \
+  sudo bash -s -- -y
 ```
 
-The upgrade script will:
-1. Check current installed version
-2. Download the new version
-3. Stop running instances
-4. Replace the binary
-5. Restart instances that were running
+Upgrade process:
+1. Checks current installed version
+2. Downloads new binary from GitHub releases
+3. Stops running instances
+4. Replaces the binary
+5. Restarts previously running instances
 
 ### Uninstall
 
 ```bash
-# Remove binary and systemd service (preserves configurations)
+# Remove binary and systemd service (preserves instances)
 curl -fsSL https://raw.githubusercontent.com/o3willard-AI/SSSonector/main/uninstall.sh | sudo bash
 
-# Remove everything including all instances and configurations
-curl -fsSL https://raw.githubusercontent.com/o3willard-AI/SSSonector/main/uninstall.sh | sudo bash -s -- --purge
+# Remove everything (binary, service, configs, logs, certificates)
+curl -fsSL https://raw.githubusercontent.com/o3willard-AI/SSSonector/main/uninstall.sh | \
+  sudo bash -s -- --purge
 
 # Remove all instances but keep binary
-curl -fsSL https://raw.githubusercontent.com/o3willard-AI/SSSonector/main/uninstall.sh | sudo bash -s -- --all
+curl -fsSL https://raw.githubusercontent.com/o3willard-AI/SSSonector/main/uninstall.sh | \
+  sudo bash -s -- --all
+
+# Non-interactive uninstall
+curl -fsSL https://raw.githubusercontent.com/o3willard-AI/SSSonector/main/uninstall.sh | \
+  sudo bash -s -- -y --purge
 ```
 
 Uninstall options:
-- Default: Removes binary and systemd service template, preserves instance configs
-- `--purge`: Removes everything (binary, service, configs, logs, certificates)
-- `--all`: Removes all instance configurations
-- `-y`: Skip confirmation prompt
 
-### Basic Configuration
+| Option | Description |
+|--------|-------------|
+| (default) | Removes binary and systemd service template, preserves instance configs |
+| `--purge` | Removes everything: binary, service, configs, logs, certificates |
+| `--all` | Removes all instance configurations |
+| `-y, --yes` | Skip confirmation prompt |
 
-#### Server Setup
-```yaml
-mode: "server"
-network:
-  interface: "tun0"
-  address: "10.0.0.1/24"
-  mtu: 1500
-tunnel:
-  cert_file: "/etc/sssonector/certs/server.crt"
-  key_file: "/etc/sssonector/certs/server.key"
-  ca_file: "/etc/sssonector/certs/ca.crt"
-  listen_address: "0.0.0.0"
-  listen_port: 8443
-monitor:
-  enabled: true
-  snmp_enabled: true
-  snmp_port: 10161
-throttle:
-  enabled: true
-  rate_limit: 10485760  # 10 MB/s
-  burst_limit: 20971520 # 20 MB burst
-```
+### Instance Management
 
-#### Client Setup
-```yaml
-mode: "client"
-network:
-  interface: "tun0"
-  address: "10.0.0.2/24"
-  mtu: 1500
-tunnel:
-  cert_file: "/etc/sssonector/certs/client.crt"
-  key_file: "/etc/sssonector/certs/client.key"
-  ca_file: "/etc/sssonector/certs/ca.crt"
-  server_address: "server.example.com"
-  server_port: 8443
-monitor:
-  enabled: true
-  log_file: "/var/log/sssonector/client.log"
-throttle:
-  enabled: true
-  rate_limit: 5242880   # 5 MB/s
-  burst_limit: 10485760 # 10 MB burst
-```
+SSSonector supports multiple independent tunnel instances per host:
 
-### Running the Service
-
-SSSonector uses a multi-instance architecture - each tunnel connection runs as a separate systemd service.
-
-#### Linux
 ```bash
-# List instances
+# List all instances
 ls /etc/sssonector/instances/
 
 # Start a specific instance
 sudo systemctl start sssonector@<instance-name>
 
-# View status
-sudo systemctl status sssonector@<instance-name>
+# Stop an instance
+sudo systemctl stop sssonector@<instance-name>
 
 # View logs
 journalctl -u sssonector@<instance-name> -f
 
 # Enable at boot
 sudo systemctl enable sssonector@<instance-name>
+
+# Remove an instance
+sudo rm -rf /etc/sssonector/instances/<instance-name>
 ```
 
-#### Managing Multiple Instances
-```bash
-# Create a new server instance
-sudo /usr/local/bin/sssonector instance create-server \
-  --name client-b \
-  --address 10.0.2.1/24 \
-  --port 8444
+## Configuration
 
-# Create a new client instance  
-sudo /usr/local/bin/sssonector instance create-client \
-  --name client-b \
-  --address 10.0.2.2/24 \
-  --server your-server-ip \
-  --port 8444
+### Instance Directory Structure
 
-# List all instances
-sudo /usr/local/bin/sssonector instance list
+```
+/etc/sssonector/
+├── instances/
+│   ├── client-a/
+│   │   ├── config.yaml      # Instance configuration
+│   │   └── certs/
+│   │       ├── ca.crt       # Certificate Authority
+│   │       ├── ca.key       # CA private key
+│   │       ├── server.crt   # Server certificate
+│   │       ├── server.key   # Server private key
+│   │       ├── client.crt   # Client certificate
+│   │       └── client.key   # Client private key
+│   └── client-b/
+│       ├── config.yaml
+│       └── certs/
+└── templates/               # Configuration templates
 ```
 
-#### macOS
-```bash
-# Start service
-sudo launchctl load /Library/LaunchDaemons/com.o3willard.sssonector.plist
+### Server Configuration
 
-# View status
-sudo launchctl list | grep sssonector
-
-# View logs
-tail -f /var/log/sssonector/service.log
+```yaml
+type: server
+config:
+  mode: server
+  network:
+    name: tun1
+    interface: tun1
+    address: 10.0.1.1/24
+    mtu: 1500
+  tunnel:
+    listen_address: 0.0.0.0
+    listen_port: 8443
+    protocol: tcp
+  auth:
+    cert_file: /etc/sssonector/instances/client-a/certs/server.crt
+    key_file: /etc/sssonector/instances/client-a/certs/server.key
+    ca_file: /etc/sssonector/instances/client-a/certs/ca.crt
+  security:
+    tls:
+      min_version: "1.2"
+      max_version: "1.3"
+    auth_method: certificate
+  monitor:
+    enabled: true
+    type: prometheus
+    prometheus:
+      enabled: true
+      port: 9090
+      path: /metrics
+throttle:
+  enabled: true
+  rate: 1048576    # 1 MB/s
+  burst: 2097152   # 2 MB burst
 ```
 
-#### Windows
-```powershell
-# Start service
-Start-Service SSonector
+### Client Configuration
 
-# View status
-Get-Service SSonector
-
-# View logs
-Get-EventLog -LogName Application -Source "SSonector"
+```yaml
+type: client
+config:
+  mode: client
+  network:
+    name: tun1
+    interface: tun1
+    address: 10.0.1.2/24
+    mtu: 1500
+  tunnel:
+    server_address: 192.168.1.10
+    server_port: 8443
+    protocol: tcp
+  auth:
+    cert_file: /etc/sssonector/instances/client-a/certs/client.crt
+    key_file: /etc/sssonector/instances/client-a/certs/client.key
+    ca_file: /etc/sssonector/instances/client-a/certs/ca.crt
+  security:
+    tls:
+      min_version: "1.2"
+      max_version: "1.3"
+    auth_method: certificate
+throttle:
+  enabled: true
+  rate: 1048576    # 1 MB/s
+  burst: 2097152   # 2 MB burst
 ```
+
+## Multi-Instance Deployment
+
+SSSonector uses a point-to-point architecture: one instance per client-server pairing.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        SERVER (192.168.1.10)                     │
+│                                                                  │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐           │
+│  │  Instance    │  │  Instance    │  │  Instance    │           │
+│  │  client-a    │  │  client-b    │  │  client-c    │           │
+│  │  tun1        │  │  tun2        │  │  tun3        │           │
+│  │  10.0.1.1    │  │  10.0.2.1    │  │  10.0.3.1    │           │
+│  │  port 8443   │  │  port 8444   │  │  port 8445   │           │
+│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘           │
+└─────────┼────────────────┼────────────────┼────────────────────┘
+          │                │                │
+          │ TLS            │ TLS            │ TLS
+          ▼                ▼                ▼
+     ┌─────────┐      ┌─────────┐      ┌─────────┐
+     │Client A │      │Client B │      │Client C │
+     │10.0.1.2 │      │10.0.2.2 │      │10.0.3.2 │
+     └─────────┘      └─────────┘      └─────────┘
+```
+
+See [Multi-Instance Deployment Guide](docs/multi_instance_deployment.md) for details.
 
 ## Documentation
 
 - [Installation Guide](docs/installation.md)
 - [Multi-Instance Deployment](docs/multi_instance_deployment.md)
 - [Configuration Guide](docs/configuration_guide.md)
+- [Certificate Management](docs/certificate_management.md)
 - Platform-specific guides:
   - [Linux Installation](docs/linux_install.md)
   - [macOS Installation](docs/macos_install.md)
@@ -268,18 +314,12 @@ Get-EventLog -LogName Application -Source "SSonector"
 - Go 1.21 or later
 - Make
 - GCC (Linux/macOS)
-- Visual Studio Build Tools (Windows)
 
 ### Build Steps
 ```bash
-# Clone repository
 git clone https://github.com/o3willard-AI/SSSonector.git
 cd SSSonector
-
-# Build
 make build
-
-# Install
 sudo make install
 ```
 
@@ -297,7 +337,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Support
 
-- Documentation: https://docs.sssonector.io
 - Issues: https://github.com/o3willard-AI/SSSonector/issues
-- Community: https://community.sssonector.io
-- Security: https://security.sssonector.io
