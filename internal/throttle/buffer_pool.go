@@ -29,12 +29,14 @@ func NewBufferPool(logger *zap.Logger) *BufferPool {
 		return &buf
 	}
 
-	logger.Info("Initialized buffer pool",
-		zap.Int("read_size", defaultReadBufferSize),
-		zap.Int("write_size", defaultWriteBufferSize),
-		zap.Int("max_pool_size", maxBufferPoolSize),
-		zap.Bool("preallocated", true),
-	)
+	if logger != nil {
+		logger.Info("Initialized buffer pool",
+			zap.Int("read_size", defaultReadBufferSize),
+			zap.Int("write_size", defaultWriteBufferSize),
+			zap.Int("max_pool_size", maxBufferPoolSize),
+			zap.Bool("preallocated", true),
+		)
+	}
 
 	return bp
 }

@@ -2,6 +2,7 @@ package throttle
 
 import (
 	"fmt"
+	"io"
 	"math"
 	"sync"
 	"time"
@@ -57,7 +58,7 @@ type DynamicMetrics struct {
 }
 
 // NewDynamicLimiter creates a new dynamic rate limiter with enhanced features
-func NewDynamicLimiter(cfg *types.ThrottleConfig, reader Reader, writer Writer, logger *zap.Logger) *DynamicLimiter {
+func NewDynamicLimiter(cfg *types.ThrottleConfig, reader io.Reader, writer io.Writer, logger *zap.Logger) *DynamicLimiter {
 	limiter := &Limiter{
 		enabled: cfg.Enabled,
 		reader:  reader,
@@ -67,8 +68,8 @@ func NewDynamicLimiter(cfg *types.ThrottleConfig, reader Reader, writer Writer, 
 
 	// Initialize with TCP overhead compensation
 	baseRate := float64(cfg.Rate)
-	limiter.inBucket = NewTokenBucket(baseRate*tcpOverheadFactor, float64(cfg.Burst*tcpOverheadFactor))
-	limiter.outBucket = NewTokenBucket(baseRate*tcpOverheadFactor, float64(cfg.Burst*tcpOverheadFactor))
+	limiter.inBucket = NewTokenBucket(baseRate*tcpOverheadFactor, float64(cfg.Burst)*tcpOverheadFactor)
+	limiter.outBucket = NewTokenBucket(baseRate*tcpOverheadFactor, float64(cfg.Burst)*tcpOverheadFactor)
 
 	dl := &DynamicLimiter{
 		limiter:            limiter,

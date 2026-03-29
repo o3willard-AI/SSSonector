@@ -1,0 +1,49 @@
+# SSSonector Client Instance Template
+# Variables: {{INSTANCE_NAME}}, {{TUN_INTERFACE}}, {{TUN_ADDRESS}}, {{SERVER_ADDRESS}}, {{SERVER_PORT}}
+type: client
+config:
+  mode: client
+  logging:
+    level: info
+    file: /var/log/sssonector/{{INSTANCE_NAME}}.log
+    format: json
+  network:
+    name: {{TUN_INTERFACE}}
+    interface: {{TUN_INTERFACE}}
+    mtu: 1500
+    address: {{TUN_ADDRESS}}
+  tunnel:
+    server_address: {{SERVER_ADDRESS}}
+    server_port: {{SERVER_PORT}}
+    protocol: tcp
+    compression: false
+  auth:
+    cert_file: /etc/sssonector/instances/{{INSTANCE_NAME}}/certs/client.crt
+    key_file: /etc/sssonector/instances/{{INSTANCE_NAME}}/certs/client.key
+    ca_file: /etc/sssonector/instances/{{INSTANCE_NAME}}/certs/ca.crt
+  security:
+    tls:
+      min_version: "1.2"
+      max_version: "1.3"
+    auth_method: certificate
+  monitor:
+    enabled: true
+    type: prometheus
+    interval: 10s
+    prometheus:
+      enabled: true
+      port: {{PROMETHEUS_PORT}}
+      path: /metrics
+  metrics:
+    enabled: true
+    interval: 5s
+    buffer_size: 1000
+throttle:
+  enabled: true
+  rate: {{RATE_LIMIT}}
+  burst: {{RATE_BURST}}
+metadata:
+  version: 1.0.0
+  environment: production
+  region: local
+  instance: {{INSTANCE_NAME}}

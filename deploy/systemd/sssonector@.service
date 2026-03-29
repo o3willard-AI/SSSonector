@@ -1,0 +1,35 @@
+[Unit]
+Description=SSSonector Tunnel Instance %i
+Documentation=https://github.com/o3willard-AI/SSSonector
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/local/bin/sssonector -config /etc/sssonector/instances/%i/config.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=30
+TimeoutStopSec=30
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/log/sssonector /var/run
+
+# Resource limits
+LimitNOFILE=65535
+LimitNPROC=4096
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=sssonector-%i
+
+[Install]
+WantedBy=multi-user.target
