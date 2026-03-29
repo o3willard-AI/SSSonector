@@ -99,6 +99,45 @@ curl -fsSL https://raw.githubusercontent.com/o3willard-AI/SSSonector/main/uninst
 curl -fsSL https://raw.githubusercontent.com/o3willard-AI/SSSonector/main/uninstall.sh | sudo bash -s -- --purge
 ```
 
+### Upgrade
+
+```bash
+# Upgrade to latest version
+curl -fsSL https://raw.githubusercontent.com/o3willard-AI/SSSonector/main/upgrade.sh | sudo bash
+
+# Upgrade to specific version
+curl -fsSL https://raw.githubusercontent.com/o3willard-AI/SSSonector/main/upgrade.sh | sudo bash -s -- --version v1.2.0
+
+# Upgrade without restarting services
+curl -fsSL https://raw.githubusercontent.com/o3willard-AI/SSSonector/main/upgrade.sh | sudo bash -s -- --no-restart
+```
+
+The upgrade script will:
+1. Check current installed version
+2. Download the new version
+3. Stop running instances
+4. Replace the binary
+5. Restart instances that were running
+
+### Uninstall
+
+```bash
+# Remove binary and systemd service (preserves configurations)
+curl -fsSL https://raw.githubusercontent.com/o3willard-AI/SSSonector/main/uninstall.sh | sudo bash
+
+# Remove everything including all instances and configurations
+curl -fsSL https://raw.githubusercontent.com/o3willard-AI/SSSonector/main/uninstall.sh | sudo bash -s -- --purge
+
+# Remove all instances but keep binary
+curl -fsSL https://raw.githubusercontent.com/o3willard-AI/SSSonector/main/uninstall.sh | sudo bash -s -- --all
+```
+
+Uninstall options:
+- Default: Removes binary and systemd service template, preserves instance configs
+- `--purge`: Removes everything (binary, service, configs, logs, certificates)
+- `--all`: Removes all instance configurations
+- `-y`: Skip confirmation prompt
+
 ### Basic Configuration
 
 #### Server Setup
