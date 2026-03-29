@@ -259,6 +259,8 @@ config:
 
 ## Firewall Configuration
 
+### Standard Setup (direct port access)
+
 Open the required ports on the server:
 
 ```bash
@@ -272,6 +274,51 @@ sudo iptables -A INPUT -p tcp --dport 8443 -j ACCEPT
 sudo iptables -A INPUT -p tcp --dport 8444 -j ACCEPT
 sudo iptables -A INPUT -p tcp --dport 8445 -j ACCEPT
 ```
+
+### HTTPS Facade Setup (firewall traversal)
+
+When clients are behind firewalls that only allow outbound HTTPS (port 443),
+enable the HTTPS facade. Only port 443 needs to be open on the server -- the
+facade routes all tunnel connections to their respective tunnel ports internally.
+
+```bash
+# Only port 443 is needed
+sudo ufw allow 443/tcp
+```
+
+Add the facade section to each **server** instance config:
+
+```yaml
+# /etc/sssonector/instances/client-a/config.yaml
+  facade:
+    enabled: true
+    listen_address: 0.0.0.0
+    listen_port: 443
+    token_ttl: 30s
+    tunnel_ports:
+      - 8443    # This instance's tunnel port
+```
+
+Add the facade section to each **client** instance config:
+
+```yaml
+# /etc/sssonector/instances/client-a/config.yaml (on client machine)
+  facade:
+    enabled: true
+    server_port: 443
+    direct_timeout: 3s
+```
+
+The client will:
+1. First try connecting directly to port 8443
+2. If blocked, automatically fall back to port 443 via HTTPS facade
+3. The facade verifies the HMAC token and proxies to the correct tunnel port
+
+The token secret is automatically derived from the shared CA certificate, so
+no additional secret configuration is needed as long as server and client share
+the same CA cert (which they already do for mTLS).
+
+See [HTTPS Facade Design](implementation/https_facade.md) for technical details.
 
 ## Monitoring
 

@@ -66,15 +66,15 @@ type AppConfig struct {
 
 // ConfigMetadata represents configuration metadata
 type ConfigMetadata struct {
-	Version     string    `yaml:"version" json:"version"`
-	Created     time.Time `yaml:"created" json:"created"`
-	Modified    time.Time `yaml:"modified" json:"modified"`
-	CreatedBy   string    `yaml:"created_by" json:"created_by"`
-	CreatedAt   time.Time `yaml:"created_at" json:"created_at"`
-	UpdatedAt   time.Time `yaml:"updated_at" json:"updated_at"`
-	Environment string    `yaml:"environment" json:"environment"`
-	Region      string    `yaml:"region" json:"region"`
-	SchemaVersion string  `yaml:"schema_version" json:"schema_version"`
+	Version          string            `yaml:"version" json:"version"`
+	Created          time.Time         `yaml:"created" json:"created"`
+	Modified         time.Time         `yaml:"modified" json:"modified"`
+	CreatedBy        string            `yaml:"created_by" json:"created_by"`
+	CreatedAt        time.Time         `yaml:"created_at" json:"created_at"`
+	UpdatedAt        time.Time         `yaml:"updated_at" json:"updated_at"`
+	Environment      string            `yaml:"environment" json:"environment"`
+	Region           string            `yaml:"region" json:"region"`
+	SchemaVersion    string            `yaml:"schema_version" json:"schema_version"`
 	MigrationHistory []MigrationRecord `yaml:"migration_history" json:"migration_history"`
 }
 
@@ -98,6 +98,7 @@ type Config struct {
 	Monitor  MonitorConfig  `yaml:"monitor" json:"monitor"`
 	Metrics  MetricsConfig  `yaml:"metrics" json:"metrics"`
 	SNMP     SNMPConfig     `yaml:"snmp" json:"snmp"`
+	Facade   FacadeConfig   `yaml:"facade" json:"facade"`
 }
 
 // LoggingConfig represents logging configuration
@@ -227,6 +228,48 @@ type SNMPConfig struct {
 	Community string `yaml:"community" json:"community"`
 }
 
+// FacadeConfig represents HTTPS facade configuration for firewall traversal.
+// The facade allows tunnel traffic to traverse firewalls that only permit
+// standard HTTPS (port 443) by disguising tunnel connections as WebSocket
+// upgrades over a legitimate HTTPS web server.
+type FacadeConfig struct {
+	// Enabled activates the HTTPS facade (server) or fallback (client)
+	Enabled bool `yaml:"enabled" json:"enabled"`
+	// ListenAddress is the address the facade server binds to (server only)
+	ListenAddress string `yaml:"listen_address" json:"listen_address"`
+	// ListenPort is the port the facade server listens on (server only, typically 443)
+	ListenPort int `yaml:"listen_port" json:"listen_port"`
+	// ServerAddress is the facade server address to connect to (client only, defaults to tunnel.server_address)
+	ServerAddress string `yaml:"server_address" json:"server_address"`
+	// ServerPort is the facade server port to connect to (client only, typically 443)
+	ServerPort int `yaml:"server_port" json:"server_port"`
+	// Hostname is the server hostname for TLS SNI (server only)
+	Hostname string `yaml:"hostname" json:"hostname"`
+	// WebRoot is the content returned for GET / (makes the server look like a real website)
+	WebRoot string `yaml:"web_root" json:"web_root"`
+	// TokenSecret is the shared secret for HMAC token authentication.
+	// If empty, the secret is derived from the CA certificate.
+	TokenSecret string `yaml:"token_secret" json:"token_secret"`
+	// TokenTTL is the validity duration for authentication tokens (default 30s)
+	TokenTTL time.Duration `yaml:"token_ttl" json:"token_ttl"`
+	// DirectTimeout is how long the client waits for a direct connection before
+	// falling back to the facade (client only, default 3s)
+	DirectTimeout time.Duration `yaml:"direct_timeout" json:"direct_timeout"`
+	// TLS holds TLS configuration specific to the facade. If cert/key/ca are empty,
+	// they are inherited from the auth section.
+	TLS FacadeTLSConfig `yaml:"tls" json:"tls"`
+	// TunnelPorts lists the tunnel ports this facade routes to (server only)
+	TunnelPorts []int `yaml:"tunnel_ports" json:"tunnel_ports"`
+}
+
+// FacadeTLSConfig represents TLS configuration specific to the HTTPS facade.
+// If fields are empty, they inherit from the main auth configuration.
+type FacadeTLSConfig struct {
+	CertFile string `yaml:"cert_file" json:"cert_file"`
+	KeyFile  string `yaml:"key_file" json:"key_file"`
+	CAFile   string `yaml:"ca_file" json:"ca_file"`
+}
+
 // ThrottleConfig represents rate limiting configuration
 type ThrottleConfig struct {
 	Enabled bool    `yaml:"enabled" json:"enabled"`
@@ -246,14 +289,14 @@ func NewAppConfig(configType Type) *AppConfig {
 		Config:  &Config{Mode: string(configType)},
 		Version: "1.0.0",
 		Metadata: ConfigMetadata{
-			Version:     "1.0.0",
-			Created:     time.Now(),
-			Modified:    time.Now(),
-			CreatedBy:   "system",
-			CreatedAt:   time.Now(),
-			UpdatedAt:   time.Now(),
-			Environment: "development",
-			Region:      "local",
+			Version:       "1.0.0",
+			Created:       time.Now(),
+			Modified:      time.Now(),
+			CreatedBy:     "system",
+			CreatedAt:     time.Now(),
+			UpdatedAt:     time.Now(),
+			Environment:   "development",
+			Region:        "local",
 			SchemaVersion: "1.0.0",
 			MigrationHistory: []MigrationRecord{
 				{

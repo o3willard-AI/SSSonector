@@ -38,6 +38,16 @@ config:
     enabled: true
     interval: 5s
     buffer_size: 1000
+  # HTTPS Facade fallback for firewall traversal
+  facade:
+    enabled: false
+    server_port: 443
+    direct_timeout: 3s
+    token_secret: ""
+    tls:
+      cert_file: ""
+      key_file: ""
+      ca_file: ""
 throttle:
   enabled: true
   rate: {{RATE_LIMIT}}

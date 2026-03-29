@@ -720,8 +720,79 @@
      * Add correlation engine
      * Add visualization tools
 
+## Phase 5: HTTPS Facade (Firewall Traversal)
+
+### Files Created
+1. internal/facade/token.go
+   - Status: ✅ Complete
+   - HMAC-SHA256 token generation and validation
+   - CA-derived secret resolution
+   - Token TTL enforcement with clock skew tolerance
+
+2. internal/facade/server.go
+   - Status: ✅ Complete
+   - HTTPS server on port 443 with legitimate web page
+   - WebSocket upgrade handling for tunnel negotiation
+   - HTTP Hijacker-based connection handoff
+   - Token validation and port routing
+
+3. internal/facade/client.go
+   - Status: ✅ Complete
+   - Direct-connect with configurable timeout
+   - Automatic fallback to HTTPS facade
+   - WebSocket upgrade with HMAC token
+   - ViaFacade flag to skip double TLS encryption
+
+4. internal/facade/proxy.go
+   - Status: ✅ Complete
+   - Bidirectional TCP proxy for hijacked connections
+   - Context-aware graceful shutdown
+
+5. internal/facade/token_test.go
+   - Status: ✅ Complete (14 tests)
+   - Token generation/validation round-trip
+   - Expiry, tampering, wrong secret tests
+   - Secret derivation tests
+
+6. internal/facade/server_test.go
+   - Status: ✅ Complete (12 tests)
+   - Server lifecycle, root handler, 404 handler
+   - WebSocket upgrade with/without token
+   - Valid token with data echo through proxy
+   - Unconfigured port rejection
+   - WebSocket protocol compliance
+
+7. internal/facade/client_test.go
+   - Status: ✅ Complete (5 tests)
+   - Direct connect success
+   - Fallback to facade with data echo
+   - Client validation and defaults
+
+### Files Modified
+1. internal/config/types/types.go
+   - Added FacadeConfig, FacadeTLSConfig structs
+   - Added Facade field to Config struct
+
+2. internal/config/validator/validator.go
+   - Added validateFacade() for server/client facade config
+
+3. internal/config/loader.go
+   - Added facade defaults in version upgrade paths
+
+4. internal/tunnel/tunnel.go
+   - Integrated facade.Server into tunnel Server
+   - Integrated facade.Client into tunnel Client
+   - ViaFacade flag skips double TLS encryption
+
+5. configs/server.yaml, configs/client.yaml
+   - Added facade configuration sections
+
+6. templates/server.yaml.template, templates/client.yaml.template
+   - Added facade template sections
+
 ## Progress Tracking
 - [x] Phase 1: Configuration System (Complete - Version validation, migration validation, and file loading with automatic upgrades)
 - [ ] Phase 2: Service Layer
 - [ ] Phase 3: Tunnel Implementation
 - [ ] Phase 4: Deployment and Monitoring
+- [x] Phase 5: HTTPS Facade (Complete - Firewall traversal via WebSocket upgrade on port 443)

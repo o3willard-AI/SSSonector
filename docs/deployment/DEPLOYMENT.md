@@ -167,10 +167,19 @@ openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out s
 ### 2. Firewall Configuration
 
 ```bash
-# Allow SSSonector ports
-sudo ufw allow 8080/tcp  # HTTP API
-sudo ufw allow 8443/tcp  # HTTPS API
+# Allow SSSonector tunnel ports (direct connection)
+sudo ufw allow 8443/tcp  # Tunnel instance
+sudo ufw allow 9090/tcp  # Prometheus metrics
+
+# If using HTTPS facade for firewall traversal:
+sudo ufw allow 443/tcp   # HTTPS facade (replaces need for tunnel ports from clients)
 ```
+
+**HTTPS Facade deployment note**: When the facade is enabled, clients connect
+through port 443 instead of the direct tunnel ports. The server still needs the
+tunnel ports open on loopback (127.0.0.1) since the facade proxies to them
+internally, but they don't need to be exposed to the internet. Only port 443
+needs to be publicly accessible.
 
 ### 3. SELinux Configuration
 

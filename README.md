@@ -1,15 +1,26 @@
 # SSSonector
 
-SSSonector is a high-performance, secure tunnel service with advanced monitoring and rate limiting capabilities.
+SSSonector (**Secure SSL Connector**) is a high-performance, secure tunnel service designed to enable point-to-point communication over the public internet. Tunnel traffic is indistinguishable from normal HTTPS web traffic, allowing it to traverse firewalls and network infrastructure that only permits standard web browsing.
 
 ## Features
 
 ### Core Features
 - Secure TLS-based tunneling with mutual certificate authentication
+- **HTTPS Facade** for firewall traversal -- tunnel traffic disguised as standard HTTPS/WebSocket on port 443
 - Cross-platform support (Linux, Windows, macOS)
 - High-performance data transfer with optimized buffer management
 - Certificate-based authentication
 - Configurable MTU and buffer sizes
+
+### HTTPS Facade (Firewall Traversal)
+- Tunnel traffic appears identical to normal HTTPS to firewalls and DPI systems
+- Server runs a legitimate HTTPS web server on port 443 (returns a real web page to browsers)
+- Tunnel connections use standard HTTP/1.1 WebSocket upgrade protocol (RFC 6455)
+- HMAC-SHA256 signed tokens prevent unauthorized tunnel establishment
+- Client automatically falls back to facade when direct ports are blocked
+- Zero port enumeration -- unauthorized probes see only a normal website
+- No double encryption -- facade TLS layer is reused by the tunnel
+- Supports multiple tunnel instances behind a single facade on port 443
 
 ### Multi-Instance Architecture
 - Run multiple independent tunnel instances on a single host
@@ -225,6 +236,14 @@ config:
       min_version: "1.2"
       max_version: "1.3"
     auth_method: certificate
+  # HTTPS Facade -- enable to allow clients to connect via port 443
+  facade:
+    enabled: true
+    listen_address: 0.0.0.0
+    listen_port: 443
+    token_ttl: 30s
+    tunnel_ports:
+      - 8443
   monitor:
     enabled: true
     type: prometheus
@@ -262,6 +281,11 @@ config:
       min_version: "1.2"
       max_version: "1.3"
     auth_method: certificate
+  # HTTPS Facade -- enable to fall back to port 443 when direct port is blocked
+  facade:
+    enabled: true
+    server_port: 443
+    direct_timeout: 3s
 throttle:
   enabled: true
   rate: 1048576    # 1 MB/s
@@ -271,6 +295,8 @@ throttle:
 ## Multi-Instance Deployment
 
 SSSonector uses a point-to-point architecture: one instance per client-server pairing.
+
+### Direct Connection (ports open)
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -293,6 +319,36 @@ SSSonector uses a point-to-point architecture: one instance per client-server pa
      └─────────┘      └─────────┘      └─────────┘
 ```
 
+### With HTTPS Facade (firewall only allows port 443)
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        SERVER (192.168.1.10)                     │
+│                                                                  │
+│  ┌─────────────────────────────────────────────────────────┐     │
+│  │              HTTPS Facade (:443)                         │     │
+│  │  GET / → "Hello, World" web page                         │     │
+│  │  WebSocket Upgrade + HMAC Token → proxy to tunnel port   │     │
+│  └──────┬────────────────┬────────────────┬────────────────┘     │
+│         │ proxy           │ proxy           │ proxy               │
+│  ┌──────▼───────┐  ┌──────▼───────┐  ┌──────▼───────┐           │
+│  │  Instance    │  │  Instance    │  │  Instance    │           │
+│  │  client-a    │  │  client-b    │  │  client-c    │           │
+│  │  port 8443   │  │  port 8444   │  │  port 8445   │           │
+│  └──────────────┘  └──────────────┘  └──────────────┘           │
+└─────────────────────────────────────────────────────────────────┘
+          ▲                ▲                ▲
+          │ HTTPS (:443)   │ HTTPS (:443)   │ HTTPS (:443)
+          │                │                │
+     ┌─────────┐      ┌─────────┐      ┌─────────┐
+     │Client A │      │Client B │      │Client C │
+     │(behind  │      │(behind  │      │(behind  │
+     │firewall)│      │firewall)│      │firewall)│
+     └─────────┘      └─────────┘      └─────────┘
+```
+
+Clients automatically try the direct port first, then fall back to the facade.
+
 See [Multi-Instance Deployment Guide](docs/multi_instance_deployment.md) for details.
 
 ## Documentation
@@ -300,12 +356,14 @@ See [Multi-Instance Deployment Guide](docs/multi_instance_deployment.md) for det
 - [Installation Guide](docs/installation.md)
 - [Multi-Instance Deployment](docs/multi_instance_deployment.md)
 - [Configuration Guide](docs/configuration_guide.md)
+- [HTTPS Facade Design](docs/implementation/https_facade.md)
 - [Certificate Management](docs/certificate_management.md)
 - Platform-specific guides:
   - [Linux Installation](docs/linux_install.md)
   - [macOS Installation](docs/macos_install.md)
 - [SNMP Monitoring](docs/snmp_monitoring.md)
 - [Rate Limiting Implementation](docs/rate_limiting_implementation.md)
+- [Architecture](docs/implementation/ARCHITECTURE.md)
 - [Release Notes](docs/RELEASE_NOTES.md)
 
 ## Building from Source

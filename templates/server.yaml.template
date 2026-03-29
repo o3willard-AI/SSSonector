@@ -40,6 +40,19 @@ config:
     enabled: true
     interval: 5s
     buffer_size: 1000
+  # HTTPS Facade for firewall traversal
+  facade:
+    enabled: false
+    listen_address: 0.0.0.0
+    listen_port: 443
+    token_secret: ""
+    token_ttl: 30s
+    tls:
+      cert_file: ""
+      key_file: ""
+      ca_file: ""
+    tunnel_ports:
+      - {{LISTEN_PORT}}
 throttle:
   enabled: true
   rate: {{RATE_LIMIT}}

@@ -7,17 +7,32 @@ This document provides information for developers working on the SSSonector code
 ```
 internal/
   ├── adapter/         # Network interface adapters
-  ├── config/         # Configuration management
-  ├── monitor/        # Monitoring and metrics
-  ├── security/       # Security and authentication
-  ├── service/        # Core service implementation
-  │   ├── control/    # Service control interface
-  │   ├── daemon/     # Daemon management
-  │   ├── platform/   # Platform-specific code
-  │   ├── base.go     # Base service implementation
-  │   └── types.go    # Service type definitions
-  ├── throttle/       # Rate limiting
-  └── tunnel/         # Tunnel implementation
+  ├── buffer/          # Multi-tier buffer pool management
+  ├── cert/            # Certificate lifecycle and rotation
+  ├── config/          # Configuration management
+  │   ├── types/       # Configuration type definitions
+  │   ├── validator/   # Configuration validation rules
+  │   ├── store/       # File-based config storage
+  │   ├── manager/     # Thread-safe config manager
+  │   └── loader.go    # Version detection and upgrade
+  ├── connection/      # Connection lifecycle management
+  ├── facade/          # HTTPS facade for firewall traversal
+  │   ├── server.go    # HTTPS server with WebSocket upgrade
+  │   ├── client.go    # Direct-connect with facade fallback
+  │   ├── token.go     # HMAC-SHA256 token generation/validation
+  │   └── proxy.go     # Bidirectional TCP proxy
+  ├── memory/          # Memory management and GC control
+  ├── monitor/         # Monitoring and metrics
+  ├── pool/            # Connection pooling
+  ├── security/        # Security and authentication
+  ├── service/         # Core service implementation
+  │   ├── control/     # Service control interface
+  │   ├── daemon/      # Daemon management
+  │   ├── platform/    # Platform-specific code
+  │   ├── base.go      # Base service implementation
+  │   └── types.go     # Service type definitions
+  ├── throttle/        # Rate limiting (token bucket + dynamic)
+  └── tunnel/          # Tunnel implementation
 ```
 
 ## Service Control System

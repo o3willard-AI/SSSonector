@@ -34,6 +34,24 @@ config:
     enabled: true
     interval: 5s
     buffer_size: 1000
+  # HTTPS Facade for firewall traversal
+  # When enabled, the server runs a legitimate HTTPS web server on port 443.
+  # Tunnel connections arrive as WebSocket upgrades and are proxied to the
+  # configured tunnel port, making traffic indistinguishable from normal HTTPS.
+  facade:
+    enabled: false
+    listen_address: 0.0.0.0
+    listen_port: 443
+    # hostname: server.example.com
+    web_root: ""             # HTML content for GET / (empty = default page)
+    token_secret: ""         # Shared secret for HMAC tokens (empty = derived from CA cert)
+    token_ttl: 30s
+    tls:                     # If empty, inherits from auth section
+      cert_file: ""
+      key_file: ""
+      ca_file: ""
+    tunnel_ports:            # Tunnel ports this facade routes to
+      - 8443
 throttle:
   enabled: false
   rate: 1048576

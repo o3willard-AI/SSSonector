@@ -2,9 +2,21 @@
 
 ## Overview
 
-This documentation covers the SSSonector project's SNMP monitoring system, rate limiting implementation, and QA testing infrastructure. The documentation is organized into several key sections that detail different aspects of the system.
+SSSonector (**Secure SSL Connector**) is a high-performance, secure tunnel service. Tunnel traffic is designed to be indistinguishable from normal HTTPS web traffic, allowing connections to traverse firewalls and network infrastructure that only permits standard web browsing.
+
+This documentation covers all aspects of the system including architecture, HTTPS facade, SNMP monitoring, rate limiting, and QA testing infrastructure.
 
 ## Core Documentation
+
+### 0. [HTTPS Facade Design](implementation/https_facade.md)
+- Firewall traversal architecture
+- WebSocket upgrade protocol flow
+- HMAC token authentication
+- Server and client integration
+- Configuration reference
+- Security considerations
+
+
 
 ### 1. [QA Environment State](qa_environment_state.md)
 - Current environment configuration
@@ -41,6 +53,7 @@ This documentation covers the SSSonector project's SNMP monitoring system, rate 
 
 ### Configuration
 - [Configuration Guide](configuration_guide.md)
+- [HTTPS Facade Design](implementation/https_facade.md)
 - [Installation Guide](installation.md)
 - [SNMP Monitoring Guide](snmp_monitoring.md)
 

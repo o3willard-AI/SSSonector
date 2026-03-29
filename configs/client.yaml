@@ -20,3 +20,18 @@ monitor:
   snmp_port: 10162
   snmp_community: "public"
   snmp_address: "0.0.0.0"
+
+# HTTPS Facade fallback for firewall traversal
+# When enabled, the client first tries a direct connection to server_port.
+# If that fails (e.g., port blocked by firewall), it falls back to connecting
+# through the HTTPS facade on port 443 using a WebSocket upgrade.
+facade:
+  enabled: false
+  server_port: 443           # Facade server port to connect to
+  # server_address: ""       # Defaults to tunnel.server_address
+  direct_timeout: 3s         # How long to wait for direct connection
+  token_secret: ""           # Must match server (empty = derived from CA cert)
+  tls:                       # If empty, inherits from tunnel cert config
+    cert_file: ""
+    key_file: ""
+    ca_file: ""

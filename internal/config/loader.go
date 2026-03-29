@@ -221,6 +221,11 @@ func (l *ConfigLoader) upgradeFrom10(raw map[string]interface{}) types.AppConfig
 	config.Config.Security.TLS.MaxVersion = "1.3"
 	config.Metadata.SchemaVersion = "2.0.0"
 
+	// Initialize facade with disabled defaults during upgrade
+	config.Config.Facade = types.FacadeConfig{
+		Enabled: false,
+	}
+
 	return *config
 }
 

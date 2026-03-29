@@ -94,6 +94,10 @@ func (v *Validator) Validate(config *types.AppConfig) error {
 		return fmt.Errorf("invalid throttle config: %v", err)
 	}
 
+	if err := v.validateFacade(config.Config.Facade, config.Config.Mode); err != nil {
+		return fmt.Errorf("invalid facade config: %v", err)
+	}
+
 	return nil
 }
 
@@ -645,6 +649,59 @@ func (v *Validator) validateThrottleConfig(config *types.AppConfig) error {
 
 	if config.Throttle.Rate > 1024*1024*1024 { // 1GB/s maximum
 		return fmt.Errorf("rate limit too high: %f", config.Throttle.Rate)
+	}
+
+	return nil
+}
+
+func (v *Validator) validateFacade(config types.FacadeConfig, mode string) error {
+	if !config.Enabled {
+		return nil
+	}
+
+	if mode == types.ModeServer {
+		// Server-side facade validation
+		if config.ListenPort < 1 || config.ListenPort > 65535 {
+			return fmt.Errorf("invalid facade listen port: %d", config.ListenPort)
+		}
+
+		if len(config.TunnelPorts) == 0 {
+			return fmt.Errorf("facade requires at least one tunnel port in tunnel_ports")
+		}
+
+		for _, port := range config.TunnelPorts {
+			if port < 1 || port > 65535 {
+				return fmt.Errorf("invalid tunnel port in facade config: %d", port)
+			}
+		}
+
+		// Facade listen port must not collide with any tunnel port it routes to
+		for _, port := range config.TunnelPorts {
+			if port == config.ListenPort {
+				return fmt.Errorf("facade listen port %d conflicts with tunnel port", port)
+			}
+		}
+	}
+
+	if mode == types.ModeClient {
+		// Client-side facade validation
+		if config.ServerPort < 1 || config.ServerPort > 65535 {
+			return fmt.Errorf("invalid facade server port: %d", config.ServerPort)
+		}
+
+		if config.DirectTimeout > 0 && config.DirectTimeout < time.Second {
+			return fmt.Errorf("facade direct_timeout too short: %v (minimum 1s)", config.DirectTimeout)
+		}
+	}
+
+	// Token TTL validation (applies to both server and client)
+	if config.TokenTTL > 0 {
+		if config.TokenTTL < 5*time.Second {
+			return fmt.Errorf("facade token_ttl too short: %v (minimum 5s)", config.TokenTTL)
+		}
+		if config.TokenTTL > 120*time.Second {
+			return fmt.Errorf("facade token_ttl too long: %v (maximum 120s)", config.TokenTTL)
+		}
 	}
 
 	return nil

@@ -99,6 +99,15 @@ graph TB
 - **Network Manager**: Manages network interfaces
 - **Filesystem Manager**: Handles filesystem operations
 
+### HTTPS Facade Security Layer
+- **HMAC Token Authentication**: HMAC-SHA256 signed tokens bind port + timestamp to shared secret
+- **Token Expiry**: Tokens are valid for configurable TTL (default 30s), preventing replay attacks
+- **Secret Derivation**: Shared secret derived from CA certificate SHA-256 hash (no additional config needed)
+- **Information Hiding**: Invalid requests receive 404 (not 403) to prevent port/capability enumeration
+- **Standard Protocol**: WebSocket upgrade headers are indistinguishable from normal web traffic to DPI
+- **Optional mTLS**: Facade supports `VerifyClientCertIfGiven` for optional client cert verification
+- **TLS Separation**: Facade can use separate TLS certificates from the tunnel layer
+
 ## Security Flow
 
 1. Process Initialization

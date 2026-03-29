@@ -11,6 +11,7 @@ import (
 	"github.com/o3willard-AI/SSSonector/internal/adapter"
 	"github.com/o3willard-AI/SSSonector/internal/config/interfaces"
 	"github.com/o3willard-AI/SSSonector/internal/config/types"
+	"github.com/o3willard-AI/SSSonector/internal/facade"
 	"github.com/o3willard-AI/SSSonector/internal/monitor"
 	"go.uber.org/zap"
 )
@@ -39,17 +40,18 @@ func UpdateCertificatePaths(cfg *types.AppConfig, baseDir string) error {
 
 // Server represents a tunnel server (point-to-point, one client per instance)
 type Server struct {
-	config     *types.AppConfig
-	manager    interfaces.ConfigManager
-	logger     *zap.Logger
-	ln         net.Listener
-	iface      adapter.Interface
-	tlsManager *TLSManager
-	wg         sync.WaitGroup
-	ctx        context.Context
-	cancel     context.CancelFunc
-	mu         sync.Mutex
-	activeConn net.Conn
+	config       *types.AppConfig
+	manager      interfaces.ConfigManager
+	logger       *zap.Logger
+	ln           net.Listener
+	iface        adapter.Interface
+	tlsManager   *TLSManager
+	facadeServer *facade.Server
+	wg           sync.WaitGroup
+	ctx          context.Context
+	cancel       context.CancelFunc
+	mu           sync.Mutex
+	activeConn   net.Conn
 }
 
 // NewServer creates a new tunnel server
@@ -114,6 +116,26 @@ func (s *Server) Start() error {
 
 	s.wg.Add(1)
 	go s.acceptLoop()
+
+	// Start the HTTPS facade if enabled
+	if s.config.Config.Facade.Enabled {
+		facadeServer, err := facade.NewServer(&s.config.Config.Facade, &s.config.Config.Auth, s.logger)
+		if err != nil {
+			s.logger.Error("Failed to create HTTPS facade", zap.Error(err))
+			// Non-fatal: tunnel still works on its direct port
+		} else {
+			if err := facadeServer.Start(); err != nil {
+				s.logger.Error("Failed to start HTTPS facade", zap.Error(err))
+				// Non-fatal: tunnel still works on its direct port
+			} else {
+				s.facadeServer = facadeServer
+				s.logger.Info("HTTPS facade started",
+					zap.Int("facade_port", s.config.Config.Facade.ListenPort),
+					zap.Int("tunnel_port", s.config.Config.Tunnel.ListenPort),
+				)
+			}
+		}
+	}
 
 	return nil
 }
@@ -189,6 +211,13 @@ func (s *Server) handleConnection(conn net.Conn) {
 func (s *Server) Stop() error {
 	s.logger.Info("Stopping tunnel server")
 
+	// Stop the HTTPS facade first
+	if s.facadeServer != nil {
+		if err := s.facadeServer.Stop(); err != nil {
+			s.logger.Error("Failed to stop HTTPS facade", zap.Error(err))
+		}
+	}
+
 	s.cancel()
 
 	if s.ln != nil {
@@ -219,6 +248,7 @@ type Client struct {
 	logger       *zap.Logger
 	iface        adapter.Interface
 	tlsManager   *TLSManager
+	facadeClient *facade.Client
 	conn         net.Conn
 	ctx          context.Context
 	cancel       context.CancelFunc
@@ -249,7 +279,7 @@ func NewClient(cfg *types.AppConfig, manager interfaces.ConfigManager, logger *z
 		}
 	}
 
-	return &Client{
+	client := &Client{
 		config:       cfg,
 		manager:      manager,
 		logger:       logger,
@@ -261,6 +291,21 @@ func NewClient(cfg *types.AppConfig, manager interfaces.ConfigManager, logger *z
 		retryDelay:   time.Second,
 		maxRetryWait: 30 * time.Second,
 	}
+
+	// Initialize facade client if enabled
+	if cfg.Config.Facade.Enabled {
+		facadeClient, err := facade.NewClient(&cfg.Config.Facade, &cfg.Config.Tunnel, &cfg.Config.Auth, logger)
+		if err != nil {
+			logger.Error("Failed to create facade client, will use direct connections only", zap.Error(err))
+		} else {
+			client.facadeClient = facadeClient
+			logger.Info("HTTPS facade fallback enabled",
+				zap.Int("tunnel_port", cfg.Config.Tunnel.ServerPort),
+			)
+		}
+	}
+
+	return client
 }
 
 // Start starts the tunnel client
@@ -308,7 +353,25 @@ func (c *Client) connectLoop() {
 		default:
 		}
 
-		conn, err := net.DialTimeout("tcp4", serverAddr, 10*time.Second)
+		var conn net.Conn
+		var tunnelConn net.Conn
+		var err error
+		viaFacade := false
+
+		if c.facadeClient != nil {
+			// Use facade client: tries direct first, then falls back to HTTPS facade
+			result, connectErr := c.facadeClient.Connect(c.ctx)
+			if connectErr != nil {
+				err = connectErr
+			} else {
+				conn = result.Conn
+				viaFacade = result.ViaFacade
+			}
+		} else {
+			// Direct connection only (original behavior)
+			conn, err = net.DialTimeout("tcp4", serverAddr, 10*time.Second)
+		}
+
 		if err != nil {
 			retryCount++
 			if retryCount > c.maxRetries {
@@ -339,20 +402,27 @@ func (c *Client) connectLoop() {
 		retryCount = 0
 		currentDelay = c.retryDelay
 
-		var tunnelConn net.Conn
-		if c.tlsManager != nil {
+		if viaFacade {
+			// Connection via HTTPS facade is already TLS-encrypted.
+			// Skip the tunnel's TLS wrapping to avoid double encryption.
+			tunnelConn = conn
+			c.logger.Info("Connected to server via HTTPS facade",
+				zap.String("address", serverAddr),
+			)
+		} else if c.tlsManager != nil {
 			tunnelConn, err = c.tlsManager.WrapConn(conn, false)
 			if err != nil {
 				conn.Close()
 				c.logger.Error("TLS handshake failed", zap.Error(err))
 				continue
 			}
+			c.logger.Info("Connected to server", zap.String("address", serverAddr))
 		} else {
 			tunnelConn = conn
+			c.logger.Info("Connected to server", zap.String("address", serverAddr))
 		}
 
 		c.conn = conn
-		c.logger.Info("Connected to server", zap.String("address", serverAddr))
 
 		adapterConn := NewAdapterWrapper(c.iface)
 		transfer := NewTransfer(tunnelConn, adapterConn, c.config, c.logger)

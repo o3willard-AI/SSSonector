@@ -177,6 +177,76 @@ sssonectorctl verify-auth
 - Wrong authentication method
 - Permission problems
 
+## HTTPS Facade Issues
+
+### Facade Won't Start
+
+1. Check if port 443 is already in use:
+```bash
+sudo netstat -tlnp | grep :443
+```
+
+2. Verify certificate files exist and are readable:
+```bash
+ls -l /etc/sssonector/instances/*/certs/
+```
+
+3. Check logs for specific errors:
+```bash
+journalctl -u sssonector@<instance> -n 50 | grep facade
+```
+
+4. Common causes:
+- Port 443 already bound by another service (nginx, apache, etc.)
+- Certificate file permissions (must be readable by sssonector user)
+- Missing or invalid CA certificate (needed for token secret derivation)
+- Facade enabled but `tunnel_ports` list is empty in server config
+
+### Client Can't Connect Via Facade
+
+1. Verify the facade server is accessible:
+```bash
+# Should return an HTML page with "Hello, World"
+curl -k https://<server-ip>:443/
+```
+
+2. Verify the facade is running on the server:
+```bash
+sudo journalctl -u sssonector@<instance> | grep "HTTPS facade started"
+```
+
+3. Check that client and server share the same CA certificate:
+```bash
+# Compare CA cert checksums
+sha256sum /etc/sssonector/instances/<instance>/certs/ca.crt
+```
+
+4. Common causes:
+- Token secret mismatch (different CA certificates on server and client)
+- `facade.server_port` on client doesn't match `facade.listen_port` on server
+- Tunnel port not listed in server's `facade.tunnel_ports`
+- Client `facade.enabled` is false
+- Clock skew > 30 seconds between server and client (tokens expire)
+
+### Facade Returns 404 for Upgrade Requests
+
+This is the expected behavior when:
+- The HMAC token is invalid or expired
+- The token references a port not in `tunnel_ports`
+- The request is missing WebSocket upgrade headers
+- The request is missing the `X-Tunnel-Token` header
+
+The facade intentionally returns 404 (not 403) to avoid leaking information about its tunnel functionality to unauthorized probes.
+
+### Direct Connection Works but Facade Doesn't
+
+1. Check that the facade is enabled on both server AND client configs
+2. Verify the facade server's TLS certificate covers the server hostname/IP
+3. Ensure port 443 is open in the server's firewall:
+```bash
+sudo ufw allow 443/tcp
+```
+
 ## Network Issues
 
 ### Tunnel Problems

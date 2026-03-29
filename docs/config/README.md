@@ -25,9 +25,29 @@ type AppConfig struct {
     Mode     Mode           // Operating mode
     Network  NetworkConfig  // Network configuration
     Tunnel   TunnelConfig  // Tunnel configuration
+    Facade   FacadeConfig  // HTTPS facade for firewall traversal
     Monitor  MonitorConfig // Monitor configuration
     Throttle ThrottleConfig // Rate limiting configuration
     Security SecurityConfig // Security configuration
+}
+```
+
+The `FacadeConfig` type controls the HTTPS facade for firewall traversal:
+
+```go
+type FacadeConfig struct {
+    Enabled       bool          // Enable facade server/client fallback
+    ListenAddress string        // Server bind address (server only)
+    ListenPort    int           // Server listen port, typically 443 (server only)
+    ServerAddress string        // Facade server address (client only)
+    ServerPort    int           // Facade server port (client only)
+    Hostname      string        // TLS SNI hostname (server only)
+    WebRoot       string        // HTML for GET / (server only)
+    TokenSecret   string        // HMAC shared secret (empty = derive from CA)
+    TokenTTL      time.Duration // Token validity duration (default 30s)
+    DirectTimeout time.Duration // Direct connect timeout before fallback (client only)
+    TLS           FacadeTLSConfig // Optional separate TLS config
+    TunnelPorts   []int         // Tunnel ports to route to (server only)
 }
 ```
 

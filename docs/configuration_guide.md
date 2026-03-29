@@ -8,6 +8,7 @@ SSSonector uses YAML configuration files with the following main sections:
 - `mode`: Determines if running as server or client
 - `network`: Network interface configuration
 - `tunnel`: SSL tunnel and certificate settings
+- `facade`: HTTPS facade for firewall traversal (optional)
 - `monitor`: Monitoring and SNMP configuration
 - `throttle`: Rate limiting settings
 
@@ -97,6 +98,52 @@ throttle:
 - `server_address`, `server_port`: Client connection settings
 - `max_clients`: Maximum concurrent client connections (server only)
 - `upload_kbps`, `download_kbps`: Bandwidth limits in Kbps
+
+### Facade Configuration (Firewall Traversal)
+
+The HTTPS facade allows tunnel traffic to traverse firewalls that only permit
+standard HTTPS (port 443). When enabled, tunnel connections are disguised as
+WebSocket upgrades over a legitimate HTTPS web server.
+
+**Server-side options:**
+- `facade.enabled`: Enable the HTTPS facade server (default: false)
+- `facade.listen_address`: Address to bind the facade (default: 0.0.0.0)
+- `facade.listen_port`: Port for the facade (default/typical: 443)
+- `facade.hostname`: Server hostname for TLS SNI
+- `facade.web_root`: HTML content for GET / (empty = default "Hello, World" page)
+- `facade.token_secret`: Shared HMAC secret (empty = auto-derived from CA cert)
+- `facade.token_ttl`: Token validity duration (default: 30s, min: 5s, max: 120s)
+- `facade.tls.cert_file`, `facade.tls.key_file`, `facade.tls.ca_file`: Optional separate TLS config (empty = inherits from auth section)
+- `facade.tunnel_ports`: List of tunnel ports this facade routes to (required when enabled)
+
+**Client-side options:**
+- `facade.enabled`: Enable facade fallback (default: false)
+- `facade.server_address`: Facade server address (default: same as tunnel.server_address)
+- `facade.server_port`: Facade server port (default: 443)
+- `facade.direct_timeout`: How long to wait for direct connection before fallback (default: 3s)
+- `facade.token_secret`: Must match server (empty = auto-derived from CA cert)
+- `facade.tls.cert_file`, `facade.tls.key_file`, `facade.tls.ca_file`: Optional separate TLS config
+
+**Example -- Server with facade:**
+```yaml
+facade:
+  enabled: true
+  listen_address: 0.0.0.0
+  listen_port: 443
+  token_ttl: 30s
+  tunnel_ports:
+    - 8443
+    - 8444
+    - 8445
+```
+
+**Example -- Client with facade fallback:**
+```yaml
+facade:
+  enabled: true
+  server_port: 443
+  direct_timeout: 3s
+```
 
 ### Monitor Configuration
 - `enabled`: Enable/disable monitoring

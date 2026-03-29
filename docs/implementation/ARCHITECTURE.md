@@ -2,7 +2,7 @@
 
 ## Overview
 
-SSSonector is a high-performance communications utility designed to enable secure service-to-service communication over the public internet without VPN requirements. This document outlines the system architecture and key components.
+SSSonector (**Secure SSL Connector**) is a high-performance communications utility designed to enable secure service-to-service communication over the public internet without VPN requirements. Tunnel traffic is designed to be indistinguishable from normal HTTPS web traffic, enabling traversal of firewalls and network infrastructure that only permits standard web browsing. This document outlines the system architecture and key components.
 
 ## Core Components
 
@@ -52,6 +52,7 @@ AppConfig
 ├── Mode          // Operating mode (server/client)
 ├── Network       // Network configuration
 ├── Tunnel        // Tunnel settings
+├── Facade        // HTTPS facade for firewall traversal
 ├── Monitor       // Monitoring configuration
 ├── Security      // Security settings
 └── Throttle      // Rate limiting
@@ -63,7 +64,51 @@ Features:
 - Hot reload capability
 - Validation system
 
-### 4. Network Layer
+### 4. HTTPS Facade (Firewall Traversal)
+
+The facade enables tunnel connections to traverse firewalls that only allow standard HTTPS traffic (port 443).
+
+```
+Facade
+├── Server              // HTTPS web server on port 443
+│   ├── Web Handler     // Returns legitimate web page for GET /
+│   ├── Upgrade Handler // Handles WebSocket upgrade with HMAC token
+│   └── Proxy           // Bridges hijacked connection to tunnel port
+├── Client              // Two-stage connection with fallback
+│   ├── Direct Connect  // Try configured tunnel port first
+│   └── Facade Fallback // Fall back to HTTPS upgrade on port 443
+├── Token               // HMAC-SHA256 signed authentication tokens
+│   ├── Generation      // Port + timestamp + signature
+│   ├── Validation      // Signature verification + TTL check
+│   └── Secret Derivation // From CA certificate or explicit config
+└── TLS                 // Separate TLS config for facade layer
+```
+
+Connection flow:
+```
+Client                                 Facade (:443)              Tunnel (:8443)
+  │                                       │                           │
+  ├── TLS Handshake ──────────────────►   │                           │
+  ├── GET /connect + Upgrade headers ──►  │                           │
+  │   + X-Tunnel-Token (HMAC signed)      │                           │
+  │                                       ├── Validate token          │
+  │                                       ├── Verify port allowed     │
+  ◄── 101 Switching Protocols ──────────  │                           │
+  │                                       ├── Hijack connection       │
+  │                                       ├── Dial 127.0.0.1:8443 ──►│
+  │◄ ─ ─ ─ Raw bidirectional tunnel data ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─►│
+```
+
+Security:
+- HMAC-SHA256 tokens prevent unauthorized tunnel establishment
+- Tokens expire after configurable TTL (default 30s)
+- Unknown paths return 404 (no port enumeration possible)
+- Standard WebSocket upgrade headers -- indistinguishable from normal web traffic
+- Optional client certificate verification via `VerifyClientCertIfGiven`
+
+See [HTTPS Facade Design](https_facade.md) for full implementation details.
+
+### 5. Network Layer
 
 ```
 Tunnel
@@ -79,7 +124,7 @@ Capabilities:
 - Traffic encryption
 - Optional compression
 
-### 5. Security System
+### 6. Security System
 
 ```
 Security
@@ -95,7 +140,7 @@ Features:
 - Network-level access control
 - Security event auditing
 
-### 6. Monitoring System
+### 7. Monitoring System
 
 ```
 Monitor
@@ -111,7 +156,7 @@ Metrics:
 - Connection tracking
 - Error rates
 
-### 7. Rate Limiting
+### 8. Rate Limiting
 
 ```
 Throttle
@@ -136,16 +181,27 @@ Start
   └── Begin Monitoring
 ```
 
-2. Client Connection
+2. Client Connection (Direct)
 ```
 Connect
-  ├── Authentication
-  ├── Tunnel Setup
+  ├── TCP to configured port (e.g. 8443)
+  ├── TLS Handshake (mTLS)
   ├── Rate Limit Check
   └── Begin Transfer
 ```
 
-3. Data Transfer
+3. Client Connection (Via HTTPS Facade)
+```
+Connect
+  ├── Try direct port → fails (blocked by firewall)
+  ├── TLS to facade port 443
+  ├── HTTP WebSocket Upgrade + HMAC Token
+  ├── 101 Switching Protocols
+  ├── Connection hijacked → proxy to tunnel port
+  └── Begin Transfer (TLS already established, no double encryption)
+```
+
+4. Data Transfer
 ```
 Transfer
   ├── Encryption

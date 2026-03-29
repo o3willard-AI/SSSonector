@@ -6,26 +6,35 @@ This document provides an overview of the security features and hardening measur
 
 SSSonector implements multiple layers of security to ensure robust protection:
 
-1. Linux Security Features
+1. HTTPS Facade Security (Firewall Traversal)
+   - HMAC-SHA256 signed tokens prevent unauthorized tunnel establishment
+   - Tokens include port + timestamp, are non-replayable (TTL-based expiry)
+   - Token secret derived from shared CA certificate (or explicit configuration)
+   - All unknown paths return 404 (no information leakage about tunnel ports)
+   - Standard WebSocket upgrade headers make traffic indistinguishable from normal HTTPS
+   - Optional client certificate verification (`VerifyClientCertIfGiven`)
+   - TLS 1.2+ with standard cipher suites matching typical web servers
+
+2. Linux Security Features
    - Namespaces for isolation
    - Cgroups for resource control
    - Seccomp for syscall filtering
    - Capabilities for privilege management
    - SELinux/AppArmor for mandatory access control
 
-2. Memory Protection
+3. Memory Protection
    - Stack protector
    - Address space randomization
    - Memory page locking
    - Executable space protection
 
-3. Resource Limits
+4. Resource Limits
    - Process limits
    - File size limits
    - Memory limits
    - Open file limits
 
-4. Filesystem Security
+5. Filesystem Security
    - Read-only root filesystem
    - Hidden sensitive paths
    - Private /tmp directory
