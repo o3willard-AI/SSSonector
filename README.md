@@ -43,30 +43,60 @@ SSSonector is a high-performance, secure tunnel service with advanced monitoring
 
 ### Installation
 
-#### Linux
+#### One-line Install (Linux)
 ```bash
-# Download latest release
-wget https://github.com/o3willard-AI/SSSonector/releases/download/v2.0.0/sssonector_2.0.0_linux_amd64
-chmod +x sssonector_2.0.0_linux_amd64
-sudo mv sssonector_2.0.0_linux_amd64 /usr/local/bin/sssonector
+curl -fsSL https://raw.githubusercontent.com/o3willard-AI/SSSonector/main/install.sh | sudo bash
 ```
 
-#### Windows
-```powershell
-# Download and install
-Invoke-WebRequest -Uri "https://github.com/o3willard-AI/SSSonector/releases/download/v2.0.0/sssonector_2.0.0_windows_amd64.exe" -OutFile "sssonector.exe"
+The installer will:
+1. Detect your OS and architecture
+2. Download the latest release binary
+3. Prompt for configuration (server/client mode, instance name, addresses)
+4. Generate TLS certificates
+5. Install systemd service template
+
+#### Non-interactive Install
+```bash
+# Server mode
+curl -fsSL https://raw.githubusercontent.com/o3willard-AI/SSSonector/main/install.sh | \
+  sudo SSSONECTOR_MODE=server \
+       SSSONECTOR_INSTANCE=tunnel-a \
+       SSSONECTOR_ADDRESS=10.0.1.1/24 \
+       bash
+
+# Client mode
+curl -fsSL https://raw.githubusercontent.com/o3willard-AI/SSSonector/main/install.sh | \
+  sudo SSSONECTOR_MODE=client \
+       SSSONECTOR_INSTANCE=tunnel-a \
+       SSSONECTOR_ADDRESS=10.0.1.2/24 \
+       SSSONECTOR_SERVER=your-server-ip \
+       bash
 ```
 
-#### macOS
+#### Manual Download
+
+| Platform | Architecture | Binary |
+|----------|-------------|--------|
+| Linux | amd64 | `sssonector-linux-amd64` |
+| Linux | arm64 | `sssonector-linux-arm64` |
+| macOS | amd64 | `sssonector-darwin-amd64` |
+| macOS | arm64 | `sssonector-darwin-arm64` |
+| Windows | amd64 | `sssonector-windows-amd64.exe` |
+
 ```bash
-# Intel Mac
-curl -LO https://github.com/o3willard-AI/SSSonector/releases/download/v2.0.0/sssonector_2.0.0_darwin_amd64
+# Download from releases page
+curl -LO https://github.com/o3willard-AI/SSSonector/releases/latest/download/sssonector-linux-amd64
+chmod +x sssonector-linux-amd64
+sudo mv sssonector-linux-amd64 /usr/local/bin/sssonector
+```
 
-# Apple Silicon
-curl -LO https://github.com/o3willard-AI/SSSonector/releases/download/v2.0.0/sssonector_2.0.0_darwin_arm64
+#### Uninstall
+```bash
+# Remove binary and service only (keeps configs)
+curl -fsSL https://raw.githubusercontent.com/o3willard-AI/SSSonector/main/uninstall.sh | sudo bash
 
-chmod +x sssonector_2.0.0_darwin_*
-sudo mv sssonector_2.0.0_darwin_* /usr/local/bin/sssonector
+# Remove everything including configurations
+curl -fsSL https://raw.githubusercontent.com/o3willard-AI/SSSonector/main/uninstall.sh | sudo bash -s -- --purge
 ```
 
 ### Basic Configuration
@@ -118,19 +148,55 @@ throttle:
 
 ### Running the Service
 
-#### Linux/macOS
+SSSonector uses a multi-instance architecture - each tunnel connection runs as a separate systemd service.
+
+#### Linux
 ```bash
-# Start service
-sudo systemctl start sssonector  # Linux
-sudo launchctl load /Library/LaunchDaemons/com.sssonector.plist  # macOS
+# List instances
+ls /etc/sssonector/instances/
+
+# Start a specific instance
+sudo systemctl start sssonector@<instance-name>
 
 # View status
-sudo systemctl status sssonector  # Linux
-sudo launchctl list | grep sssonector  # macOS
+sudo systemctl status sssonector@<instance-name>
 
 # View logs
-journalctl -u sssonector -f  # Linux
-tail -f /var/log/sssonector/output.log  # macOS
+journalctl -u sssonector@<instance-name> -f
+
+# Enable at boot
+sudo systemctl enable sssonector@<instance-name>
+```
+
+#### Managing Multiple Instances
+```bash
+# Create a new server instance
+sudo /usr/local/bin/sssonector instance create-server \
+  --name client-b \
+  --address 10.0.2.1/24 \
+  --port 8444
+
+# Create a new client instance  
+sudo /usr/local/bin/sssonector instance create-client \
+  --name client-b \
+  --address 10.0.2.2/24 \
+  --server your-server-ip \
+  --port 8444
+
+# List all instances
+sudo /usr/local/bin/sssonector instance list
+```
+
+#### macOS
+```bash
+# Start service
+sudo launchctl load /Library/LaunchDaemons/com.o3willard.sssonector.plist
+
+# View status
+sudo launchctl list | grep sssonector
+
+# View logs
+tail -f /var/log/sssonector/service.log
 ```
 
 #### Windows
@@ -148,10 +214,10 @@ Get-EventLog -LogName Application -Source "SSonector"
 ## Documentation
 
 - [Installation Guide](docs/installation.md)
+- [Multi-Instance Deployment](docs/multi_instance_deployment.md)
 - [Configuration Guide](docs/configuration_guide.md)
 - Platform-specific guides:
   - [Linux Installation](docs/linux_install.md)
-  - [Windows Installation](docs/windows_install.md)
   - [macOS Installation](docs/macos_install.md)
 - [SNMP Monitoring](docs/snmp_monitoring.md)
 - [Rate Limiting Implementation](docs/rate_limiting_implementation.md)
