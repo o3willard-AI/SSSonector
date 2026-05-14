@@ -213,12 +213,46 @@ func (l *ConfigLoader) upgradeFrom10(raw map[string]interface{}) types.AppConfig
 			if protocol, ok := tunnel["protocol"].(string); ok {
 				config.Config.Tunnel.Protocol = protocol
 			}
+			// Also copy these tunnel fields that were missing:
+			if listenAddr, ok := tunnel["listen_address"].(string); ok {
+				config.Config.Tunnel.ListenAddress = listenAddr
+			}
+			if listenPort, ok := tunnel["listen_port"].(int); ok {
+				config.Config.Tunnel.ListenPort = listenPort
+			}
+			if serverAddr, ok := tunnel["server_address"].(string); ok {
+				config.Config.Tunnel.ServerAddress = serverAddr
+			}
+			if serverPort, ok := tunnel["server_port"].(int); ok {
+				config.Config.Tunnel.ServerPort = serverPort
+			}
+			if keepalive, ok := tunnel["keepalive"].(string); ok {
+				config.Config.Tunnel.Keepalive = keepalive
+			}
+			if compression, ok := tunnel["compression"].(bool); ok {
+				config.Config.Tunnel.Compression = compression
+			}
 		}
 	}
 
 	// Set TLS defaults for version 2.0.0 compatibility
 	config.Config.Security.TLS.MinVersion = "1.2"
 	config.Config.Security.TLS.MaxVersion = "1.3"
+	// Copy auth settings — these were entirely missing
+	if auth, ok := raw["auth"].(map[string]interface{}); ok {
+		if certFile, ok := auth["cert_file"].(string); ok {
+			config.Config.Auth.CertFile = certFile
+		}
+		if keyFile, ok := auth["key_file"].(string); ok {
+			config.Config.Auth.KeyFile = keyFile
+		}
+		if caFile, ok := auth["ca_file"].(string); ok {
+			config.Config.Auth.CAFile = caFile
+		}
+		if authMethod, ok := auth["auth_method"].(string); ok {
+			config.Config.Auth.AuthMethod = authMethod
+		}
+	}
 	config.Metadata.SchemaVersion = "2.0.0"
 
 	// Initialize facade with disabled defaults during upgrade
