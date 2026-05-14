@@ -119,6 +119,13 @@ func (r *RetryManager) immediateRetries(ctx context.Context) (net.Conn, error) {
 			)
 
 			time.Sleep(r.config.ImmediateInterval)
+
+			// Check context after sleep
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			default:
+			}
 		}
 	}
 
@@ -153,6 +160,13 @@ func (r *RetryManager) gradualRetries(ctx context.Context) (net.Conn, error) {
 			if interval > r.config.MaxGradualInterval {
 				interval = r.config.MaxGradualInterval
 			}
+
+			// Check context after sleep
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			default:
+			}
 		}
 	}
 
@@ -182,6 +196,13 @@ func (r *RetryManager) persistentRetries(ctx context.Context) (net.Conn, error) 
 			)
 
 			time.Sleep(r.config.PersistentInterval)
+
+			// Check context after sleep
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			default:
+			}
 		}
 	}
 }

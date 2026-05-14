@@ -69,6 +69,13 @@ func NewManager(config *LimitConfig, logger *zap.Logger) *Manager {
 	if config == nil {
 		config = DefaultLimitConfig()
 	}
+	// Ensure intervals have valid values
+	if config.CheckInterval <= 0 {
+		config.CheckInterval = defaultCheckInterval
+	}
+	if config.CleanupInterval <= 0 {
+		config.CleanupInterval = defaultCleanupInterval
+	}
 
 	m := &Manager{
 		config:  config,
@@ -103,6 +110,15 @@ func (m *Manager) CheckAndReserve(size int64) bool {
 	}
 
 	atomic.AddInt64(&m.stats.current, size)
+
+	// Update max memory tracking
+	for {
+		max := atomic.LoadInt64(&m.stats.max)
+		if size+current <= max || atomic.CompareAndSwapInt64(&m.stats.max, max, size+current) {
+			break
+		}
+	}
+
 	return true
 }
 

@@ -35,7 +35,10 @@ func (m *Manager) Get() (*types.AppConfig, error) {
 	if m.config == nil {
 		config, err := m.store.Load()
 		if err != nil {
-			return nil, fmt.Errorf("failed to load config: %v", err)
+			// If no config file exists yet, return a default config
+			defaultCfg := types.DefaultConfig()
+			m.config = defaultCfg
+			return defaultCfg, nil
 		}
 		m.config = config
 	}

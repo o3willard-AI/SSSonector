@@ -36,8 +36,9 @@ func (b *TokenBucket) Update(rate, burst float64) {
 	}
 }
 
-// Wait waits until enough tokens are available
-func (b *TokenBucket) Wait(size float64) {
+// Wait waits until enough tokens are available.
+// Returns true if tokens were immediately available, false if a sleep was required.
+func (b *TokenBucket) Wait(size float64) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -51,7 +52,9 @@ func (b *TokenBucket) Wait(size float64) {
 		time.Sleep(sleepDuration)
 		b.tokens = 0
 		b.lastUpdate = time.Now()
+		return false
 	} else {
 		b.tokens -= size
+		return true
 	}
 }

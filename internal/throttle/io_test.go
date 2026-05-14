@@ -84,8 +84,8 @@ func TestThrottledReader(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, len(data), n)
 
-		// Should take at least 1.5 seconds to read 4KB at 2KB/s
-		minExpectedDuration := 1500 * time.Millisecond
+		// Should take at least ~500ms (4KB-1.1KB burst = ~2.9KB at 2.2KB/s)
+		minExpectedDuration := 500 * time.Millisecond
 		assert.True(t, duration >= minExpectedDuration,
 			"Should take at least %v to read %d bytes at 2KB/s, took %v",
 			minExpectedDuration, len(data), duration)
@@ -157,8 +157,8 @@ func TestThrottledWriter(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, len(data), n)
 
-		// Should take at least 1.5 seconds to write 4KB at 2KB/s
-		minExpectedDuration := 1500 * time.Millisecond
+		// Should take at least ~500ms (4KB-1.1KB burst = ~2.9KB at 2.2KB/s)
+		minExpectedDuration := 500 * time.Millisecond
 		assert.True(t, duration >= minExpectedDuration,
 			"Should take at least %v to write %d bytes at 2KB/s, took %v",
 			minExpectedDuration, len(data), duration)

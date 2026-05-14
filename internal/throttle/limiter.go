@@ -119,14 +119,32 @@ func (l *Limiter) Wait(isRead bool, size int) error {
 	done := make(chan struct{})
 
 	go func() {
-		bucket.Wait(float64(size))
+		hadToWait := !bucket.Wait(float64(size))
 		close(done)
+		// If rate limiting was applied (tokens weren't immediately available), count it
+		if hadToWait {
+			l.mu.Lock()
+			if isRead {
+				l.inMetrics.LimitHits++
+			} else {
+				l.outMetrics.LimitHits++
+			}
+			l.mu.Unlock()
+		}
 	}()
 
 	select {
 	case <-done:
 		return nil
 	case <-timeout:
+		// Increment limit hits
+		l.mu.Lock()
+		if isRead {
+			l.inMetrics.LimitHits++
+		} else {
+			l.outMetrics.LimitHits++
+		}
+		l.mu.Unlock()
 		err := fmt.Errorf("timeout waiting for %d tokens after %v", size, defaultTimeout)
 		l.logger.Warn("Rate limit wait timeout",
 			zap.Bool("read", isRead),

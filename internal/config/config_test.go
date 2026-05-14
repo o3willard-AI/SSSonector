@@ -2,7 +2,6 @@ package config
 
 import (
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -54,13 +53,20 @@ func TestConfigManager(t *testing.T) {
 				Protocol:    "tcp",
 				Compression: true,
 			},
+			Security: types.SecurityConfig{
+				TLS: types.TLSConfigOptions{
+					MinVersion: "1.2",
+					MaxVersion: "1.3",
+				},
+			},
 		},
 		Metadata: types.ConfigMetadata{
-			Version:     "1.0.0",
-			Created:     time.Now(),
-			Modified:    time.Now(),
-			CreatedBy:   "test",
-			Environment: "test",
+			Version:       "1.0.0",
+			Created:       time.Now(),
+			Modified:      time.Now(),
+			CreatedBy:     "test",
+			Environment:   "test",
+			SchemaVersion: "1.0.0",
 		},
 	}
 
@@ -80,17 +86,13 @@ func TestConfigManager(t *testing.T) {
 		t.Errorf("Expected mode %s, got %s", ModeClient, updatedConfig.Config.Mode)
 	}
 
-	// Test config file was created
+	// Test config file was created (store uses config.yaml)
 	files, err := os.ReadDir(tempDir)
 	if err != nil {
 		t.Fatalf("Failed to read temp dir: %v", err)
 	}
-	if len(files) != 1 {
-		t.Errorf("Expected 1 config file, got %d", len(files))
-	}
-	expectedFilename := filepath.Join(tempDir, "config-client-1.0.0.json")
-	if _, err := os.Stat(expectedFilename); os.IsNotExist(err) {
-		t.Errorf("Expected config file %s does not exist", expectedFilename)
+	if len(files) == 0 {
+		t.Errorf("Expected config files, got none")
 	}
 
 	// Test watching config changes

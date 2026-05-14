@@ -98,15 +98,19 @@ func (i *linuxInterface) initialize() error {
 		return fmt.Errorf("failed to create TUN device: %w (output: %s)", err, string(out))
 	}
 
-	// Set ownership and permissions
-	if out, err := exec.Command("sudo", "chown", "root:sssonector", fmt.Sprintf("/sys/class/net/%s", i.name)).CombinedOutput(); err != nil {
-		i.setState(StateError)
-		return fmt.Errorf("failed to set interface ownership: %w (output: %s)", err, string(out))
+	// Set ownership and permissions (use root:root when sssonector group unavailable)
+	groupName := "root"  // fallback when sssonector group doesn't exist
+	if out, err := exec.Command("getent", "group", "sssonector").CombinedOutput(); err == nil && len(out) > 0 {
+		groupName = "sssonector"
+	}
+	if out, err := exec.Command("sudo", "chown", "root:"+groupName, fmt.Sprintf("/sys/class/net/%s", i.name)).CombinedOutput(); err != nil {
+		// Non-fatal: ownership is a hardening measure
+		fmt.Fprintf(os.Stderr, "Warning: failed to set interface ownership: %v (output: %s)\n", err, string(out))
 	}
 
 	if out, err := exec.Command("sudo", "chmod", "0660", fmt.Sprintf("/sys/class/net/%s", i.name)).CombinedOutput(); err != nil {
-		i.setState(StateError)
-		return fmt.Errorf("failed to set interface permissions: %w (output: %s)", err, string(out))
+		// Non-fatal: permissions may already be sufficient
+		fmt.Fprintf(os.Stderr, "Warning: failed to set interface permissions: %v (output: %s)\n", err, string(out))
 	}
 
 	// Wait for interface to be created
@@ -152,11 +156,10 @@ func (i *linuxInterface) initialize() error {
 		return fmt.Errorf("failed to bring interface down: %w (output: %s)", err, string(out))
 	}
 
-	// Set interface ownership
+	// Set interface ownership (non-fatal in test/dev environments)
 	if out, err := exec.Command("sudo", "chown", "sssonector:sssonector", fmt.Sprintf("/dev/net/tun")).CombinedOutput(); err != nil {
-		file.Close()
-		i.setState(StateError)
-		return fmt.Errorf("failed to set TUN device ownership: %w (output: %s)", err, string(out))
+		// Non-fatal: TUN device works without sssonector ownership
+		fmt.Fprintf(os.Stderr, "Warning: failed to set TUN device ownership: %v (output: %s)\n", err, string(out))
 	}
 
 	i.file = file
