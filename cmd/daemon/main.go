@@ -101,7 +101,9 @@ func main() {
 
 	errChan := make(chan error, 1)
 	go func() {
-		errChan <- tnl.Start()
+		if err := tnl.Start(); err != nil {
+			errChan <- err
+		}
 	}()
 
 	logger.Info("Service started",
