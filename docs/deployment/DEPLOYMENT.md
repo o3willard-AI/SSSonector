@@ -1,5 +1,7 @@
 # SSSonector Deployment Guide
 
+> **Note:** The `sssonectorctl` companion CLI referenced below is not part of the current build. Equivalent operations: `sssonector -help`, `systemctl status sssonector@<instance>`, and the Prometheus endpoint on port 9090.
+
 ## Overview
 
 This guide covers the deployment of SSSonector in various environments, including bare metal, containerized, and cloud deployments.
