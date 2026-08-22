@@ -24,7 +24,7 @@ cd SSSonector
 
 1. Build the binary:
 ```bash
-GOOS=darwin GOARCH=amd64 go build -o build/sssonector-darwin-amd64 ./cmd/tunnel
+GOOS=darwin GOARCH=amd64 go build -o build/sssonector-darwin-amd64 ./cmd/daemon
 ```
 
 2. Create package structure:

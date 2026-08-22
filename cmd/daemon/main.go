@@ -1,3 +1,11 @@
+// Command sssonector is the unified service binary for SSSonector.
+//
+// Usage:
+//
+//	sssonector [flags]              run using the mode from the config file
+//	sssonector server [flags]       force server mode
+//	sssonector client [flags]       force client mode
+//	sssonector -version             print version and exit
 package main
 
 import (
@@ -20,6 +28,7 @@ var (
 
 	configFile = flag.String("config", "/etc/sssonector/config.yaml", "Path to config file")
 	logLevel   = flag.String("log-level", "info", "Log level (debug, info, warn, error)")
+	showVer    = flag.Bool("version", false, "Print version and exit")
 )
 
 func getLogLevel(level string) zapcore.Level {
@@ -37,8 +46,47 @@ func getLogLevel(level string) zapcore.Level {
 	}
 }
 
+// resolveMode determines the run mode. An explicit subcommand wins; otherwise
+// the mode comes from configuration. Ambiguity is fatal: this binary must
+// never guess itself into a listening state.
+func resolveMode(explicit string, cfg *config.AppConfig) (string, error) {
+	if explicit != "" {
+		return explicit, nil
+	}
+	if cfg.Config != nil && cfg.Config.Mode != "" {
+		return cfg.Config.Mode, nil
+	}
+	if cfg.Type != "" {
+		return string(cfg.Type), nil
+	}
+	return "", fmt.Errorf("run mode is not set: provide a 'server' or 'client' subcommand or set tunnel.mode in %s", *configFile)
+}
+
 func main() {
+	flag.Usage = func() {
+		fmt.Fprintln(os.Stderr, "Usage: sssonector [-config PATH] [-log-level LEVEL] [server|client]\n"+
+			"       sssonector -version")
+		flag.PrintDefaults()
+	}
 	flag.Parse()
+
+	if *showVer {
+		fmt.Printf("sssonector %s\n", Version)
+		return
+	}
+
+	var explicitMode string
+	if args := flag.Args(); len(args) > 0 {
+		explicitMode = strings.ToLower(strings.TrimSpace(args[0]))
+		if explicitMode == "version" {
+			fmt.Printf("sssonector %s\n", Version)
+			return
+		}
+		if explicitMode != "server" && explicitMode != "client" {
+			fmt.Fprintf(os.Stderr, "unknown command %q: expected 'server' or 'client'\n", args[0])
+			os.Exit(1)
+		}
+	}
 
 	logConfig := zap.NewProductionConfig()
 	logConfig.Level = zap.NewAtomicLevelAt(getLogLevel(*logLevel))
@@ -52,6 +100,12 @@ func main() {
 	cfg, err := config.LoadConfigFile(*configFile)
 	if err != nil {
 		logger.Error("Failed to load config", zap.Error(err))
+		os.Exit(1)
+	}
+
+	mode, err := resolveMode(explicitMode, cfg)
+	if err != nil {
+		logger.Error("Cannot determine run mode", zap.Error(err))
 		os.Exit(1)
 	}
 
@@ -77,11 +131,6 @@ func main() {
 	var tnl interface {
 		Start() error
 		Stop() error
-	}
-
-	mode := cfg.Config.Mode
-	if mode == "" {
-		mode = string(cfg.Type)
 	}
 
 	switch mode {

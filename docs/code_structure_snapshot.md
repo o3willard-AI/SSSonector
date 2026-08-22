@@ -51,7 +51,7 @@
 - `types.go`: Configuration structures
 - `loader.go`: Configuration loading
 
-### Command Line Interface (`cmd/tunnel/`)
+### Command Line Interface (`cmd/daemon/` -- unified binary)
 - `main.go`: Entry point and flag handling
 - `server.go`: Server mode implementation
 - `client.go`: Client mode implementation

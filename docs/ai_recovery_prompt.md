@@ -48,7 +48,7 @@ Next Steps:
 5. Security hardening
 
 Critical Files:
-- cmd/tunnel/main.go: Entry point and flag handling
+- cmd/daemon/main.go: Unified entry point (subcommands server|client, -version)
 - internal/adapter/interface_linux.go: Linux TUN implementation
 - internal/tunnel/tunnel.go: Core tunnel logic
 - internal/monitor/monitor.go: Monitoring system
