@@ -1,29 +1,26 @@
 # Known Issues
 
-This file tracks currently-true issues only. The previous 798-line roadmap
-described files and phases that no longer exist (or never did); it has been
-retired. Historical context lives in git history.
+This file tracks currently-true issues only.
 
 ## Open
 
-1. **SNMP stack duplication** — `internal/monitor` hand-rolls ~2,100 LoC of
-   ASN.1/PDU handling beside the `gosnmp` dependency. Strangler replacement
-   with a gosnmp-backed exporter is planned; keep interfaces stable until then.
-2. **Config package sprawl** — `internal/config` spans five sub-packages
-   (`types`, `interfaces`, `manager`, `store`, `validator`). Consolidation is
-   planned; public behavior must not change during the move.
-3. **Artifact signing** — releases publish SHA256SUMS verified by installers;
-   cosign keyless signing is the next step.
-4. **Historical private keys were purged from git history** (2026-08-22,
-   owner-approved `git filter-repo` rewrite; `certs/`, release binaries and
-   QA snapshots removed from all branches/tags). Owner confirmed the exposed
-   CA guarded lab deployments only — no production rotation required.
-   Residual hygiene: regenerate the lab CA via `scripts/generate-certs.sh`
-   before the next QA cycle, and reclone any copies made before 2026-08-22.
+1. **Diff coverage on legacy code** — new PRs are gated at ≥80% changed-line
+   coverage (`scripts/diff_coverage.py` in CI), but pre-existing modules
+   (notably `cmd/daemon`, `internal/adapter`, `internal/monitor` system
+   samplers) remain lightly covered overall. Characterization tests should
+   grow opportunistically as those areas change.
+2. **SNMP agent is v2c/community-auth only** — adequate for the lab/QA
+   monitoring contract; SNMPv3 (authPriv) would be required for untrusted
+   networks. Not planned unless a deployment demands it.
 
-## Recently resolved
+## Resolved (2026-08 backlog execution)
 
-- Rate limiting was non-functional end-to-end (wrappers bypassed the limiter).
-- Facade token secret could be derived from the public CA certificate.
-- Dead packages: `internal/{pool,memory,connection}`, `cert/validator`,
-  duplicate validator, phantom `sssonectorctl` build targets.
+- ~~Config package sprawl~~ — `internal/config` consolidated into one package.
+- ~~SNMP stack duplication~~ — wire layer replaced by gosnmp-backed
+  encode + minimal decode; agent now provably interoperates with real SNMP
+  clients (conformance suite). MIB mapping retained.
+- ~~CLI duplication~~ — single entry point `cmd/daemon`; `cmd/tunnel` retired.
+- ~~Artifact signing/SBOM~~ — keyless cosign signatures + CycloneDX SBOM
+  published and verified per release.
+- ~~Mutation campaign~~ — facade/token + throttle at 100% non-equivalent kill
+  rate; methodology in `docs/testing/mutation-testing.md`.
