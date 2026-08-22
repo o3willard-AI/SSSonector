@@ -75,18 +75,53 @@ download_binary() {
     local os=$1
     local arch=$2
     local version=$3
-    
+
     local binary_name="sssonector-${os}-${arch}"
-    local download_url="https://github.com/${REPO}/releases/download/${version}/${binary_name}"
+    local base_url="https://github.com/${REPO}/releases/download/${version}"
+    local download_url="${base_url}/${binary_name}"
+    local sums_url="${base_url}/SHA256SUMS"
     local tmp_file="/tmp/sssonector"
-    
+    local tmp_sums="/tmp/sssonector-SHA256SUMS"
+
     log_step "Downloading SSSonector ${version} for ${os}/${arch}..."
-    
+
+    if ! curl -fsSL "$sums_url" -o "$tmp_sums"; then
+        log_error "Failed to download SHA256SUMS from $sums_url"
+        exit 1
+    fi
+
     if ! curl -fsSL "$download_url" -o "$tmp_file"; then
         log_error "Failed to download binary from $download_url"
         exit 1
     fi
-    
+
+    log_step "Verifying binary checksum..."
+    local expected
+    expected=$(grep " ${binary_name}\$" "$tmp_sums" | awk '{print $1}')
+    if [ -z "$expected" ]; then
+        log_error "No checksum found for ${binary_name} in SHA256SUMS"
+        rm -f "$tmp_file" "$tmp_sums"
+        exit 1
+    fi
+
+    local actual
+    if command -v sha256sum >/dev/null 2>&1; then
+        actual=$(sha256sum "$tmp_file" | awk '{print $1}')
+    elif command -v shasum >/dev/null 2>&1; then
+        actual=$(shasum -a 256 "$tmp_file" | awk '{print $1}')
+    else
+        log_error "No sha256sum or shasum available for verification"
+        rm -f "$tmp_file" "$tmp_sums"
+        exit 1
+    fi
+
+    if [ "$actual" != "$expected" ]; then
+        log_error "Checksum mismatch: expected ${expected}, got ${actual}. Binary NOT installed."
+        rm -f "$tmp_file" "$tmp_sums"
+        exit 1
+    fi
+    rm -f "$tmp_sums"
+
     chmod +x "$tmp_file"
     echo "$tmp_file"
 }

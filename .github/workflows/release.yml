@@ -7,20 +7,19 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to release (e.g., v1.0.0)'
+        description: 'Version to release (e.g. v1.0.0)'
         required: true
         type: string
 
-permissions:
-  contents: write
-
 env:
-  GO_VERSION: '1.21'
+  GO_VERSION: '1.25'
 
 jobs:
   build:
     name: Build ${{ matrix.os }}/${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
     strategy:
       matrix:
         include:
@@ -41,10 +40,10 @@ jobs:
             runner: windows-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@3041bf56c941b39c61721a86cd11f3bb1338122a # v5.2.0
         with:
           go-version: ${{ env.GO_VERSION }}
 
@@ -69,27 +68,59 @@ jobs:
           if [ "${{ matrix.os }}" = "windows" ]; then
             BINARY_NAME="${BINARY_NAME}.exe"
           fi
-          
-          go build -ldflags="-s -w -X main.Version=${{ steps.version.outputs.VERSION }}" \
+
+          go build -trimpath -ldflags="-s -w -X main.Version=${{ steps.version.outputs.VERSION }}" \
             -o "dist/${BINARY_NAME}" \
             ./cmd/daemon
-          
+
           echo "BINARY_NAME=${BINARY_NAME}" >> $GITHUB_ENV
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
         with:
           name: sssonector-${{ matrix.os }}-${{ matrix.arch }}
           path: dist/${{ env.BINARY_NAME }}
           retention-days: 1
 
-  release:
-    name: Create Release
+  verify:
+    name: Smoke-Test Release Candidate
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - name: Download linux/amd64 artifact
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        with:
+          name: sssonector-linux-amd64
+          path: dist
+
+      - name: Verify binary behavior BEFORE publishing
+        run: |
+          chmod +x dist/sssonector-linux-amd64
+          dist/sssonector-linux-amd64 -version 2>&1 | grep -q . || { echo "-version produced no output"; exit 1; }
+          dist/sssonector-linux-amd64 -help >/dev/null 2>&1 || { echo "-help failed"; exit 1; }
+
+  release:
+    name: Create Release
+    needs: [build, verify]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        with:
+          path: dist
+
+      - name: Prepare release assets and checksums
+        run: |
+          cd dist
+          mkdir -p release
+          find . -mindepth 2 -maxdepth 2 -type f -exec mv {} release/ \;
+          cd release
+          sha256sum sssonector-* > SHA256SUMS
+          ls -la
 
       - name: Get version
         id: version
@@ -99,24 +130,6 @@ jobs:
           else
             echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
           fi
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: dist
-
-      - name: Prepare release assets
-        run: |
-          cd dist
-          mkdir -p release
-          
-          for dir in sssonector-*/; do
-            if [ -d "$dir" ]; then
-              mv "${dir}"* release/ 2>/dev/null || true
-            fi
-          done
-          
-          ls -la release/
 
       - name: Generate release notes
         id: notes
@@ -124,9 +137,9 @@ jobs:
           VERSION="${{ steps.version.outputs.VERSION }}"
           cat > release_notes.md << EOF
           ## SSSonector ${VERSION}
-          
+
           ### Download
-          
+
           | Platform | Architecture | Binary |
           |----------|-------------|--------|
           | Linux | amd64 | sssonector-linux-amd64 |
@@ -134,64 +147,40 @@ jobs:
           | macOS | amd64 | sssonector-darwin-amd64 |
           | macOS | arm64 | sssonector-darwin-arm64 |
           | Windows | amd64 | sssonector-windows-amd64.exe |
-          
+
+          All binaries are published with a SHA256SUMS manifest. Verify before use:
+
+              sha256sum -c --ignore-missing SHA256SUMS
+
           ### Install
-          
+
           \`\`\`bash
           curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sudo bash
           \`\`\`
-          
-          Or with environment variables for non-interactive install:
-          
-          \`\`\`bash
-          curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | \
-            sudo SSSONECTOR_MODE=server SSSONECTOR_INSTANCE=my-tunnel SSSONECTOR_ADDRESS=10.0.1.1/24 bash
-          \`\`\`
-          
+
+          The installer verifies binary checksums against the published manifest.
+
           ### Verify
-          
+
           \`\`\`bash
           sssonector -version
           \`\`\`
           EOF
-          
+
           echo "RELEASE_NOTES<<EOF" >> $GITHUB_OUTPUT
           cat release_notes.md >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@6da8fa9354ddfdc4aeace5fc48d7f679b5214090 # v2.4.1
         with:
           tag_name: ${{ steps.version.outputs.VERSION }}
           name: SSSonector ${{ steps.version.outputs.VERSION }}
           body: ${{ steps.notes.outputs.RELEASE_NOTES }}
           draft: false
           prerelease: ${{ contains(steps.version.outputs.VERSION, '-') }}
-          files: dist/release/*
+          files: |
+            dist/release/sssonector-*
+            dist/release/SHA256SUMS
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  test:
-    name: Test Release
-    needs: release
-    runs-on: ubuntu-latest
-    steps:
-      - name: Get version
-        id: version
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
-          else
-            echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Download released binary
-        run: |
-          curl -fsSL "https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.VERSION }}/sssonector-linux-amd64" \
-            -o sssonector
-          chmod +x sssonector
-
-      - name: Verify binary
-        run: |
-          ./sssonector -version || echo "Binary works but -version flag may not be implemented yet"
-          ./sssonector -help || true
