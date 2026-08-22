@@ -14,9 +14,12 @@ retired. Historical context lives in git history.
    planned; public behavior must not change during the move.
 3. **Artifact signing** — releases publish SHA256SUMS verified by installers;
    cosign keyless signing is the next step.
-4. **Git history contains historical private keys** (`certs/*.key`, removed
-   from HEAD long ago). Treat as compromised: rotate any CA derived from them
-   before production use, and scrub history by owner decision.
+4. **Historical private keys were purged from git history** (2026-08-22,
+   owner-approved `git filter-repo` rewrite; `certs/`, release binaries and
+   QA snapshots removed from all branches/tags). Any clones made before this
+   date still contain the old history — reclone or fetch-and-reset. The
+   exposed CA must still be treated as compromised until its deployment
+   disposition is confirmed by the owner.
 
 ## Recently resolved
 
