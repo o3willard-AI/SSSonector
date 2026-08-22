@@ -1,6 +1,7 @@
 package facade
 
 import (
+	"github.com/o3willard-AI/SSSonector/internal/config"
 	"context"
 	"crypto/sha1"
 	"crypto/tls"
@@ -15,7 +16,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/o3willard-AI/SSSonector/internal/config/types"
 	"go.uber.org/zap"
 )
 
@@ -40,8 +40,8 @@ const (
 // It serves a legitimate-looking website on port 443 while also handling
 // tunnel connection upgrades disguised as WebSocket connections.
 type Server struct {
-	config     *types.FacadeConfig
-	authConfig *types.AuthConfig
+	config     *config.FacadeConfig
+	authConfig *config.AuthConfig
 	logger     *zap.Logger
 	httpServer *http.Server
 	listener   net.Listener
@@ -56,7 +56,7 @@ type Server struct {
 }
 
 // NewServer creates a new HTTPS facade server.
-func NewServer(cfg *types.FacadeConfig, authCfg *types.AuthConfig, logger *zap.Logger) (*Server, error) {
+func NewServer(cfg *config.FacadeConfig, authCfg *config.AuthConfig, logger *zap.Logger) (*Server, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("facade config is required")
 	}

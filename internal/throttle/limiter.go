@@ -1,11 +1,11 @@
 package throttle
 
 import (
+	"github.com/o3willard-AI/SSSonector/internal/config"
 	"fmt"
 	"io"
 	"sync"
 
-	"github.com/o3willard-AI/SSSonector/internal/config/types"
 	"go.uber.org/zap"
 )
 
@@ -36,7 +36,7 @@ type LimiterMetrics struct {
 }
 
 // NewLimiter creates a new rate limiter.
-func NewLimiter(cfg *types.AppConfig, reader io.Reader, writer io.Writer, logger *zap.Logger) *Limiter {
+func NewLimiter(cfg *config.AppConfig, reader io.Reader, writer io.Writer, logger *zap.Logger) *Limiter {
 	rate := float64(cfg.Throttle.Rate) * tcpOverheadFactor
 	burst := rate * 0.1 // 100ms worth of data
 
@@ -115,7 +115,7 @@ func (l *Limiter) Wait(isRead bool, size int) error {
 }
 
 // Update updates the limiter configuration (hot reload).
-func (l *Limiter) Update(cfg *types.AppConfig) {
+func (l *Limiter) Update(cfg *config.AppConfig) {
 	rate := float64(cfg.Throttle.Rate) * tcpOverheadFactor
 	burst := rate * 0.1
 

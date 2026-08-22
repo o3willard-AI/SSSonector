@@ -1,5 +1,5 @@
 // Package store provides configuration storage implementations
-package store
+package config
 
 import (
 	"fmt"
@@ -11,7 +11,6 @@ import (
 
 	"gopkg.in/yaml.v2"
 
-	"github.com/o3willard-AI/SSSonector/internal/config/types"
 )
 
 // FileStore implements ConfigStore interface for file-based storage
@@ -25,13 +24,13 @@ func NewFileStore(configDir string) *FileStore {
 }
 
 // Load loads configuration from file
-func (s *FileStore) Load() (*types.AppConfig, error) {
+func (s *FileStore) Load() (*AppConfig, error) {
 	data, err := ioutil.ReadFile(filepath.Join(s.configDir, "config.yaml"))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
 
-	var config types.AppConfig
+	var config AppConfig
 	if err := yaml.Unmarshal(data, &config); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal config: %v", err)
 	}
@@ -40,7 +39,7 @@ func (s *FileStore) Load() (*types.AppConfig, error) {
 }
 
 // Store stores configuration to file
-func (s *FileStore) Store(config *types.AppConfig) error {
+func (s *FileStore) Store(config *AppConfig) error {
 	if err := os.MkdirAll(s.configDir, 0755); err != nil {
 		return fmt.Errorf("failed to create config directory: %v", err)
 	}
@@ -61,7 +60,7 @@ func (s *FileStore) Store(config *types.AppConfig) error {
 }
 
 // ListVersions lists all available configuration versions for a given type
-func (s *FileStore) ListVersions(configType types.Type) ([]string, error) {
+func (s *FileStore) ListVersions(configType Type) ([]string, error) {
 	files, err := ioutil.ReadDir(s.configDir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -77,7 +76,7 @@ func (s *FileStore) ListVersions(configType types.Type) ([]string, error) {
 			if err != nil {
 				continue
 			}
-			var cfg types.AppConfig
+			var cfg AppConfig
 			if err := yaml.Unmarshal(data, &cfg); err != nil {
 				continue
 			}

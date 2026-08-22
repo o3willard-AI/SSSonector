@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/o3willard-AI/SSSonector/internal/config/types"
 )
 
 func TestConfigManager(t *testing.T) {
@@ -33,35 +32,35 @@ func TestConfigManager(t *testing.T) {
 	}
 
 	// Test setting new config
-	newConfig := &types.AppConfig{
+	newConfig := &AppConfig{
 		Type:    TypeClient,
 		Version: "1.0.0",
-		Config: &types.Config{
+		Config: &Config{
 			Mode: ModeClient,
-			Logging: types.LoggingConfig{
+			Logging: LoggingConfig{
 				Level:  "debug",
 				File:   "/var/log/sssonector.log",
 				Format: "json",
 			},
-			Network: types.NetworkConfig{
+			Network: NetworkConfig{
 				Interface:  "tun0",
 				MTU:        1500,
 				Address:    "10.0.0.1",
 				DNSServers: []string{"8.8.8.8"},
 			},
-			Tunnel: types.TunnelConfig{
+			Tunnel: TunnelConfig{
 				Port:        8080,
 				Protocol:    "tcp",
 				Compression: true,
 			},
-			Security: types.SecurityConfig{
-				TLS: types.TLSConfigOptions{
+			Security: SecurityConfig{
+				TLS: TLSConfigOptions{
 					MinVersion: "1.2",
 					MaxVersion: "1.3",
 				},
 			},
 		},
-		Metadata: types.ConfigMetadata{
+		Metadata: ConfigMetadata{
 			Version:       "1.0.0",
 			SchemaVersion: "1.0.0",
 			Created:       time.Now(),

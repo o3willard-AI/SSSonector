@@ -1,6 +1,7 @@
 package facade
 
 import (
+	"github.com/o3willard-AI/SSSonector/internal/config"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -18,7 +19,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/o3willard-AI/SSSonector/internal/config/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -157,21 +157,21 @@ func startTestFacadeServer(t *testing.T, certs *testCerts, tunnelPorts []int) (*
 
 	logger, _ := zap.NewDevelopment()
 
-	facadeConfig := &types.FacadeConfig{
+	facadeConfig := &config.FacadeConfig{
 		Enabled:       true,
 		ListenAddress: "127.0.0.1",
 		ListenPort:    port,
 		TokenTTL:      30 * time.Second,
 		TokenSecret:   testTokenSecret,
 		TunnelPorts:   tunnelPorts,
-		TLS: types.FacadeTLSConfig{
+		TLS: config.FacadeTLSConfig{
 			CertFile: certs.CertFile,
 			KeyFile:  certs.KeyFile,
 			CAFile:   certs.CAFile,
 		},
 	}
 
-	authConfig := &types.AuthConfig{
+	authConfig := &config.AuthConfig{
 		CertFile: certs.CertFile,
 		KeyFile:  certs.KeyFile,
 		CAFile:   certs.CAFile,

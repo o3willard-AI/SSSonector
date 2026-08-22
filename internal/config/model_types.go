@@ -1,5 +1,5 @@
 // Package types provides configuration types for the SSSonector service
-package types
+package config
 
 import (
 	"encoding/json"

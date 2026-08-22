@@ -1,6 +1,7 @@
 package tunnel
 
 import (
+	"github.com/o3willard-AI/SSSonector/internal/config"
 	"context"
 	"fmt"
 	"net"
@@ -10,8 +11,6 @@ import (
 	"time"
 
 	"github.com/o3willard-AI/SSSonector/internal/adapter"
-	"github.com/o3willard-AI/SSSonector/internal/config/interfaces"
-	"github.com/o3willard-AI/SSSonector/internal/config/types"
 	"github.com/o3willard-AI/SSSonector/internal/facade"
 	"github.com/o3willard-AI/SSSonector/internal/monitor"
 	"go.uber.org/zap"
@@ -24,7 +23,7 @@ type Tunnel interface {
 }
 
 // UpdateCertificatePaths updates certificate paths to be absolute
-func UpdateCertificatePaths(cfg *types.AppConfig, baseDir string) error {
+func UpdateCertificatePaths(cfg *config.AppConfig, baseDir string) error {
 	resolvePath := func(path string) string {
 		if path == "" || filepath.IsAbs(path) {
 			return path
@@ -41,8 +40,8 @@ func UpdateCertificatePaths(cfg *types.AppConfig, baseDir string) error {
 
 // Server represents a tunnel server (point-to-point, one client per instance)
 type Server struct {
-	config       *types.AppConfig
-	manager      interfaces.ConfigManager
+	config       *config.AppConfig
+	manager      config.ConfigManager
 	logger       *zap.Logger
 	ln           net.Listener
 	iface        adapter.Interface
@@ -56,7 +55,7 @@ type Server struct {
 }
 
 // NewServer creates a new tunnel server
-func NewServer(cfg *types.AppConfig, manager interfaces.ConfigManager, logger *zap.Logger) *Server {
+func NewServer(cfg *config.AppConfig, manager config.ConfigManager, logger *zap.Logger) *Server {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	var tlsManager *TLSManager
@@ -244,8 +243,8 @@ func (s *Server) Stop() error {
 
 // Client represents a tunnel client
 type Client struct {
-	config       *types.AppConfig
-	manager      interfaces.ConfigManager
+	config       *config.AppConfig
+	manager      config.ConfigManager
 	logger       *zap.Logger
 	iface        adapter.Interface
 	tlsManager   *TLSManager
@@ -261,7 +260,7 @@ type Client struct {
 }
 
 // NewClient creates a new tunnel client
-func NewClient(cfg *types.AppConfig, manager interfaces.ConfigManager, logger *zap.Logger) *Client {
+func NewClient(cfg *config.AppConfig, manager config.ConfigManager, logger *zap.Logger) *Client {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	var tlsManager *TLSManager
@@ -474,12 +473,12 @@ func (c *Client) Stop() error {
 type tunnelImpl struct {
 	conn    net.Conn
 	adapter adapter.Interface
-	config  *types.AppConfig
+	config  *config.AppConfig
 	monitor *monitor.Monitor
 }
 
 // New creates a new tunnel
-func New(conn net.Conn, adapter adapter.Interface, cfg *types.AppConfig, monitor *monitor.Monitor) (Tunnel, error) {
+func New(conn net.Conn, adapter adapter.Interface, cfg *config.AppConfig, monitor *monitor.Monitor) (Tunnel, error) {
 	return &tunnelImpl{
 		conn:    conn,
 		adapter: adapter,

@@ -1,6 +1,7 @@
 package facade
 
 import (
+	"github.com/o3willard-AI/SSSonector/internal/config"
 	"context"
 	"crypto/tls"
 	"fmt"
@@ -9,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/o3willard-AI/SSSonector/internal/config/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -38,22 +38,22 @@ func TestClientDirectConnect(t *testing.T) {
 	certs := generateTestCerts(t)
 	logger, _ := zap.NewDevelopment()
 
-	facadeConfig := &types.FacadeConfig{
+	facadeConfig := &config.FacadeConfig{
 		Enabled:       true,
 		ServerPort:    443,
 		DirectTimeout: 3 * time.Second,
 		TokenSecret:   testTokenSecret,
-		TLS: types.FacadeTLSConfig{
+		TLS: config.FacadeTLSConfig{
 			CAFile: certs.CAFile,
 		},
 	}
 
-	tunnelConfig := &types.TunnelConfig{
+	tunnelConfig := &config.TunnelConfig{
 		ServerAddress: "127.0.0.1",
 		ServerPort:    port,
 	}
 
-	authConfig := &types.AuthConfig{
+	authConfig := &config.AuthConfig{
 		CertFile: certs.CertFile,
 		KeyFile:  certs.KeyFile,
 		CAFile:   certs.CAFile,
@@ -110,25 +110,25 @@ func TestClientFallbackToFacade(t *testing.T) {
 
 	// Configure client to connect to a BLOCKED direct port (use port 1 which is unlikely to be open)
 	// and fall back to the facade
-	facadeConfig := &types.FacadeConfig{
+	facadeConfig := &config.FacadeConfig{
 		Enabled:       true,
 		ServerAddress: "127.0.0.1",
 		ServerPort:    facadePort,
 		DirectTimeout: 1 * time.Second, // Short timeout for faster test
 		TokenSecret:   testTokenSecret,
-		TLS: types.FacadeTLSConfig{
+		TLS: config.FacadeTLSConfig{
 			CertFile: certs.CertFile,
 			KeyFile:  certs.KeyFile,
 			CAFile:   certs.CAFile,
 		},
 	}
 
-	tunnelConfig := &types.TunnelConfig{
+	tunnelConfig := &config.TunnelConfig{
 		ServerAddress: "127.0.0.1",
 		ServerPort:    tunnelPort,
 	}
 
-	authConfig := &types.AuthConfig{
+	authConfig := &config.AuthConfig{
 		CertFile: certs.CertFile,
 		KeyFile:  certs.KeyFile,
 		CAFile:   certs.CAFile,
@@ -139,7 +139,7 @@ func TestClientFallbackToFacade(t *testing.T) {
 
 	// Override the tunnel config to use a port that will fail for direct connect
 	// but the facade will know the correct tunnel port from the token
-	client.tunnelConfig = &types.TunnelConfig{
+	client.tunnelConfig = &config.TunnelConfig{
 		ServerAddress: "127.0.0.1",
 		ServerPort:    tunnelPort,
 	}
@@ -148,7 +148,7 @@ func TestClientFallbackToFacade(t *testing.T) {
 	// by setting an impossibly short direct timeout and a blocked port
 	blockedClient := &Client{
 		facadeConfig: facadeConfig,
-		tunnelConfig: &types.TunnelConfig{
+		tunnelConfig: &config.TunnelConfig{
 			ServerAddress: "192.0.2.1", // RFC 5737 TEST-NET, guaranteed unreachable
 			ServerPort:    tunnelPort,
 		},
@@ -184,21 +184,21 @@ func TestClientNewClientValidation(t *testing.T) {
 	certs := generateTestCerts(t)
 
 	// Nil facade config
-	_, err := NewClient(nil, &types.TunnelConfig{}, &types.AuthConfig{}, logger)
+	_, err := NewClient(nil, &config.TunnelConfig{}, &config.AuthConfig{}, logger)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "facade config is required")
 
 	// Nil tunnel config
-	_, err = NewClient(&types.FacadeConfig{
-		TLS: types.FacadeTLSConfig{CAFile: certs.CAFile},
-	}, nil, &types.AuthConfig{}, logger)
+	_, err = NewClient(&config.FacadeConfig{
+		TLS: config.FacadeTLSConfig{CAFile: certs.CAFile},
+	}, nil, &config.AuthConfig{}, logger)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "tunnel config is required")
 
 	// Nil auth config
-	_, err = NewClient(&types.FacadeConfig{
-		TLS: types.FacadeTLSConfig{CAFile: certs.CAFile},
-	}, &types.TunnelConfig{}, nil, logger)
+	_, err = NewClient(&config.FacadeConfig{
+		TLS: config.FacadeTLSConfig{CAFile: certs.CAFile},
+	}, &config.TunnelConfig{}, nil, logger)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "auth config is required")
 }
@@ -208,15 +208,15 @@ func TestClientDefaultDirectTimeout(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 
 	client, err := NewClient(
-		&types.FacadeConfig{
+		&config.FacadeConfig{
 			Enabled:       true,
 			ServerPort:    443,
 			DirectTimeout: 0, // Should default to 3s
 			TokenSecret:   testTokenSecret,
-			TLS:           types.FacadeTLSConfig{CAFile: certs.CAFile},
+			TLS:           config.FacadeTLSConfig{CAFile: certs.CAFile},
 		},
-		&types.TunnelConfig{ServerAddress: "127.0.0.1", ServerPort: 8443},
-		&types.AuthConfig{CAFile: certs.CAFile},
+		&config.TunnelConfig{ServerAddress: "127.0.0.1", ServerPort: 8443},
+		&config.AuthConfig{CAFile: certs.CAFile},
 		logger,
 	)
 	require.NoError(t, err)

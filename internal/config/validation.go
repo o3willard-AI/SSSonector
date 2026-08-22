@@ -1,5 +1,5 @@
 // Package validator provides configuration validation functionality
-package validator
+package config
 
 import (
 	"fmt"
@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/o3willard-AI/SSSonector/internal/config/types"
 )
 
 // Validator implements ConfigValidator interface
@@ -20,7 +19,7 @@ func NewValidator() *Validator {
 }
 
 // Validate validates the configuration
-func (v *Validator) Validate(config *types.AppConfig) error {
+func (v *Validator) Validate(config *AppConfig) error {
 	if config == nil {
 		return fmt.Errorf("config cannot be nil")
 	}
@@ -102,7 +101,7 @@ func (v *Validator) Validate(config *types.AppConfig) error {
 }
 
 // validateMigration validates configuration migration paths and upgrade logic
-func (v *Validator) validateMigration(config *types.AppConfig) error {
+func (v *Validator) validateMigration(config *AppConfig) error {
 	history := config.Metadata.MigrationHistory
 
 	if len(history) == 0 {
@@ -185,7 +184,7 @@ func (v *Validator) isValidMigrationPath(from, to string, validMigrations map[st
 }
 
 // validateVersionTwoMigration validates specific requirements for migrating to version 2.0.0
-func (v *Validator) validateVersionTwoMigration(config *types.AppConfig) error {
+func (v *Validator) validateVersionTwoMigration(config *AppConfig) error {
 	// Version 2.0.0 requires explicit TLS configuration
 	if config.Config.Security.TLS.MinVersion == "" {
 		return fmt.Errorf("version 2.0.0 migration requires TLS minimum version to be configured")
@@ -200,7 +199,7 @@ func (v *Validator) validateVersionTwoMigration(config *types.AppConfig) error {
 }
 
 // validateMigrationSequence validates the overall migration sequence for consistency
-func (v *Validator) validateMigrationSequence(history []types.MigrationRecord) error {
+func (v *Validator) validateMigrationSequence(history []MigrationRecord) error {
 	// Check for duplicate migrations (same from->to pair)
 	migrationPaths := make(map[string]bool)
 	for _, record := range history {
@@ -234,14 +233,14 @@ func (v *Validator) validateMigrationSequence(history []types.MigrationRecord) e
 
 func (v *Validator) validateMode(mode string) error {
 	switch mode {
-	case types.ModeServer, types.ModeClient:
+	case ModeServer, ModeClient:
 		return nil
 	default:
 		return fmt.Errorf("invalid mode: %s", mode)
 	}
 }
 
-func (v *Validator) validateLogging(config types.LoggingConfig) error {
+func (v *Validator) validateLogging(config LoggingConfig) error {
 	if config.Level == "" {
 		return fmt.Errorf("log level cannot be empty")
 	}
@@ -261,7 +260,7 @@ func (v *Validator) validateLogging(config types.LoggingConfig) error {
 	return nil
 }
 
-func (v *Validator) validateNetwork(config types.NetworkConfig) error {
+func (v *Validator) validateNetwork(config NetworkConfig) error {
 	if config.Interface == "" {
 		return fmt.Errorf("interface cannot be empty")
 	}
@@ -308,7 +307,7 @@ func (v *Validator) ValidateCIDR(cidrStr string) error {
 	return nil
 }
 
-func (v *Validator) validateEnvironmentConfig(config *types.AppConfig) error {
+func (v *Validator) validateEnvironmentConfig(config *AppConfig) error {
 	// Validate environment-specific settings
 	validEnvironments := map[string]bool{
 		"development": true,
@@ -340,7 +339,7 @@ func (v *Validator) validateEnvironmentConfig(config *types.AppConfig) error {
 	return nil
 }
 
-func (v *Validator) validateTunnel(config types.TunnelConfig) error {
+func (v *Validator) validateTunnel(config TunnelConfig) error {
 	if config.Port < 1 || config.Port > 65535 {
 		return fmt.Errorf("invalid port: %d", config.Port)
 	}
@@ -358,7 +357,7 @@ func (v *Validator) validateTunnel(config types.TunnelConfig) error {
 	return nil
 }
 
-func (v *Validator) validateSecurity(config types.SecurityConfig) error {
+func (v *Validator) validateSecurity(config SecurityConfig) error {
 	if config.TLS.MinVersion == "" {
 		return fmt.Errorf("TLS min version cannot be empty")
 	}
@@ -383,7 +382,7 @@ func (v *Validator) validateSecurity(config types.SecurityConfig) error {
 	return nil
 }
 
-func (v *Validator) validateMonitor(config types.MonitorConfig) error {
+func (v *Validator) validateMonitor(config MonitorConfig) error {
 	if !config.Enabled {
 		return nil
 	}
@@ -408,7 +407,7 @@ func (v *Validator) validateMonitor(config types.MonitorConfig) error {
 	return nil
 }
 
-func (v *Validator) validateMetrics(config types.MetricsConfig) error {
+func (v *Validator) validateMetrics(config MetricsConfig) error {
 	if !config.Enabled {
 		return nil
 	}
@@ -428,7 +427,7 @@ func (v *Validator) validateMetrics(config types.MetricsConfig) error {
 	return nil
 }
 
-func (v *Validator) validateThrottle(config types.ThrottleConfig) error {
+func (v *Validator) validateThrottle(config ThrottleConfig) error {
 	if !config.Enabled {
 		return nil
 	}
@@ -444,7 +443,7 @@ func (v *Validator) validateThrottle(config types.ThrottleConfig) error {
 	return nil
 }
 
-func (v *Validator) validateVersion(config *types.AppConfig) error {
+func (v *Validator) validateVersion(config *AppConfig) error {
 	if config.Metadata.SchemaVersion == "" {
 		return fmt.Errorf("schema version cannot be empty")
 	}
@@ -506,7 +505,7 @@ func (v *Validator) validateSemanticVersion(version string) error {
 }
 
 // validateVersionCompatibility checks version-specific compatibility rules
-func (v *Validator) validateVersionCompatibility(config *types.AppConfig, versionInfo struct {
+func (v *Validator) validateVersionCompatibility(config *AppConfig, versionInfo struct {
 	major           int
 	minor           int
 	patch           int
@@ -543,7 +542,7 @@ func (v *Validator) validateVersionCompatibility(config *types.AppConfig, versio
 	return nil
 }
 
-func (v *Validator) validateMigrationHistory(config *types.AppConfig) error {
+func (v *Validator) validateMigrationHistory(config *AppConfig) error {
 	for _, record := range config.Metadata.MigrationHistory {
 		if record.FromVersion == "" {
 			return fmt.Errorf("migration record missing from_version")
@@ -576,7 +575,7 @@ func (v *Validator) validateMigrationHistory(config *types.AppConfig) error {
 	return nil
 }
 
-func (v *Validator) validateSecurityConfig(config *types.AppConfig) error {
+func (v *Validator) validateSecurityConfig(config *AppConfig) error {
 	// Validate certificate file paths
 	if config.Config.Auth.CertFile != "" {
 		// Basic path validation - should be absolute or relative path
@@ -628,7 +627,7 @@ func (v *Validator) validateSecurityConfig(config *types.AppConfig) error {
 	return nil
 }
 
-func (v *Validator) validateThrottleConfig(config *types.AppConfig) error {
+func (v *Validator) validateThrottleConfig(config *AppConfig) error {
 	if !config.Throttle.Enabled {
 		return nil
 	}
@@ -654,12 +653,12 @@ func (v *Validator) validateThrottleConfig(config *types.AppConfig) error {
 	return nil
 }
 
-func (v *Validator) validateFacade(config types.FacadeConfig, mode string) error {
+func (v *Validator) validateFacade(config FacadeConfig, mode string) error {
 	if !config.Enabled {
 		return nil
 	}
 
-	if mode == types.ModeServer {
+	if mode == ModeServer {
 		// Server-side facade validation
 		if config.ListenPort < 1 || config.ListenPort > 65535 {
 			return fmt.Errorf("invalid facade listen port: %d", config.ListenPort)
@@ -683,7 +682,7 @@ func (v *Validator) validateFacade(config types.FacadeConfig, mode string) error
 		}
 	}
 
-	if mode == types.ModeClient {
+	if mode == ModeClient {
 		// Client-side facade validation
 		if config.ServerPort < 1 || config.ServerPort > 65535 {
 			return fmt.Errorf("invalid facade server port: %d", config.ServerPort)
@@ -707,7 +706,7 @@ func (v *Validator) validateFacade(config types.FacadeConfig, mode string) error
 	return nil
 }
 
-func (v *Validator) validateCertificateFilesExist(config *types.AppConfig) error {
+func (v *Validator) validateCertificateFilesExist(config *AppConfig) error {
 	// Enhanced certificate file validation
 	if config.Config.Auth.CertFile != "" {
 		// Check for common path issues

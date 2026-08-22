@@ -1,5 +1,5 @@
 // Package manager provides configuration management functionality
-package manager
+package config
 
 import (
 	"errors"
@@ -7,30 +7,28 @@ import (
 	"io/fs"
 	"sync"
 
-	"github.com/o3willard-AI/SSSonector/internal/config/interfaces"
-	"github.com/o3willard-AI/SSSonector/internal/config/types"
 )
 
 // Manager implements ConfigManager interface
 type Manager struct {
-	store     interfaces.ConfigStore
-	validator interfaces.ConfigValidator
-	config    *types.AppConfig
+	store     ConfigStore
+	validator ConfigValidator
+	config    *AppConfig
 	mu        sync.RWMutex
-	watchers  []chan *types.AppConfig
+	watchers  []chan *AppConfig
 }
 
 // NewManager creates a new Manager instance
-func NewManager(store interfaces.ConfigStore, validator interfaces.ConfigValidator) *Manager {
+func NewManager(store ConfigStore, validator ConfigValidator) *Manager {
 	return &Manager{
 		store:     store,
 		validator: validator,
-		watchers:  make([]chan *types.AppConfig, 0),
+		watchers:  make([]chan *AppConfig, 0),
 	}
 }
 
 // Get returns the current configuration
-func (m *Manager) Get() (*types.AppConfig, error) {
+func (m *Manager) Get() (*AppConfig, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -41,7 +39,7 @@ func (m *Manager) Get() (*types.AppConfig, error) {
 			// first-run and test scenarios behave predictably. Any other
 			// load error (permissions, corruption) still fails loudly.
 			if errors.Is(err, fs.ErrNotExist) {
-				m.config = types.DefaultConfig()
+				m.config = DefaultConfig()
 				return m.config, nil
 			}
 			return nil, fmt.Errorf("failed to load config: %w", err)
@@ -53,7 +51,7 @@ func (m *Manager) Get() (*types.AppConfig, error) {
 }
 
 // Set sets a new configuration
-func (m *Manager) Set(config *types.AppConfig) error {
+func (m *Manager) Set(config *AppConfig) error {
 	if err := m.validator.Validate(config); err != nil {
 		return fmt.Errorf("invalid config: %v", err)
 	}
@@ -71,7 +69,7 @@ func (m *Manager) Set(config *types.AppConfig) error {
 }
 
 // Update updates the current configuration
-func (m *Manager) Update(config *types.AppConfig) error {
+func (m *Manager) Update(config *AppConfig) error {
 	if err := m.validator.Validate(config); err != nil {
 		return fmt.Errorf("invalid config: %v", err)
 	}
@@ -89,8 +87,8 @@ func (m *Manager) Update(config *types.AppConfig) error {
 }
 
 // Watch returns a channel that receives configuration updates
-func (m *Manager) Watch() (<-chan *types.AppConfig, error) {
-	ch := make(chan *types.AppConfig, 1)
+func (m *Manager) Watch() (<-chan *AppConfig, error) {
+	ch := make(chan *AppConfig, 1)
 
 	m.mu.Lock()
 	m.watchers = append(m.watchers, ch)
@@ -117,7 +115,7 @@ func (m *Manager) Close() error {
 }
 
 // notifyWatchers notifies all watchers of a configuration change
-func (m *Manager) notifyWatchers(config *types.AppConfig) {
+func (m *Manager) notifyWatchers(config *AppConfig) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 

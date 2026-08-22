@@ -10,7 +10,6 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/o3willard-AI/SSSonector/internal/config/types"
 )
 
 // ConfigLoader handles loading and upgrading configuration files
@@ -22,7 +21,7 @@ func NewConfigLoader() *ConfigLoader {
 }
 
 // LoadData loads configuration data from raw bytes with automatic version detection and upgrade
-func (l *ConfigLoader) LoadData(data []byte, format string) (*types.AppConfig, error) {
+func (l *ConfigLoader) LoadData(data []byte, format string) (*AppConfig, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("config data is empty")
 	}
@@ -46,7 +45,7 @@ func (l *ConfigLoader) LoadData(data []byte, format string) (*types.AppConfig, e
 
 	// If version is current, parse directly
 	if version == "2.0.0" {
-		var config types.AppConfig
+		var config AppConfig
 		if err := l.parseData(data, format, &config); err != nil {
 			return nil, fmt.Errorf("failed to parse current version config: %v", err)
 		}
@@ -128,8 +127,8 @@ func (l *ConfigLoader) detectVersion(raw map[string]interface{}) (string, error)
 }
 
 // upgradeConfig upgrades configuration from an older version to current version 2.0.0
-func (l *ConfigLoader) upgradeConfig(raw map[string]interface{}, fromVersion string) (*types.AppConfig, error) {
-	var config types.AppConfig
+func (l *ConfigLoader) upgradeConfig(raw map[string]interface{}, fromVersion string) (*AppConfig, error) {
+	var config AppConfig
 
 	switch fromVersion {
 	case "0.0.0":
@@ -149,8 +148,8 @@ func (l *ConfigLoader) upgradeConfig(raw map[string]interface{}, fromVersion str
 }
 
 // upgradeFromLegacy upgrades from unversioned/legacy configuration
-func (l *ConfigLoader) upgradeFromLegacy(raw map[string]interface{}) types.AppConfig {
-	config := types.NewAppConfig(types.TypeServer)
+func (l *ConfigLoader) upgradeFromLegacy(raw map[string]interface{}) AppConfig {
+	config := NewAppConfig(TypeServer)
 
 	// Copy basic fields if they exist
 	if mode, ok := raw["mode"].(string); ok {
@@ -165,8 +164,8 @@ func (l *ConfigLoader) upgradeFromLegacy(raw map[string]interface{}) types.AppCo
 }
 
 // upgradeFrom10 upgrades from version 1.0.0 to 2.0.0
-func (l *ConfigLoader) upgradeFrom10(raw map[string]interface{}) types.AppConfig {
-	config := types.NewAppConfig(types.TypeServer)
+func (l *ConfigLoader) upgradeFrom10(raw map[string]interface{}) AppConfig {
+	config := NewAppConfig(TypeServer)
 
 	// Copy config section
 	if rawConfig, ok := raw["config"].(map[string]interface{}); ok {
@@ -222,7 +221,7 @@ func (l *ConfigLoader) upgradeFrom10(raw map[string]interface{}) types.AppConfig
 	config.Metadata.SchemaVersion = "2.0.0"
 
 	// Initialize facade with disabled defaults during upgrade
-	config.Config.Facade = types.FacadeConfig{
+	config.Config.Facade = FacadeConfig{
 		Enabled: false,
 	}
 
@@ -230,7 +229,7 @@ func (l *ConfigLoader) upgradeFrom10(raw map[string]interface{}) types.AppConfig
 }
 
 // upgradeFrom11 upgrades from version 1.1.0 to 2.0.0
-func (l *ConfigLoader) upgradeFrom11(raw map[string]interface{}) types.AppConfig {
+func (l *ConfigLoader) upgradeFrom11(raw map[string]interface{}) AppConfig {
 	// Start from 1.0.0 upgrade as base
 	config := l.upgradeFrom10(raw)
 
@@ -268,8 +267,8 @@ func (l *ConfigLoader) upgradeFrom11(raw map[string]interface{}) types.AppConfig
 }
 
 // recordMigration adds a migration record to the configuration
-func (l *ConfigLoader) recordMigration(config *types.AppConfig, fromVersion, toVersion, notes string) {
-	record := types.MigrationRecord{
+func (l *ConfigLoader) recordMigration(config *AppConfig, fromVersion, toVersion, notes string) {
+	record := MigrationRecord{
 		FromVersion: fromVersion,
 		ToVersion:   toVersion,
 		Timestamp:   time.Now(),
@@ -281,7 +280,7 @@ func (l *ConfigLoader) recordMigration(config *types.AppConfig, fromVersion, toV
 }
 
 // LoadFile loads configuration from a file with automatic format detection and version upgrading
-func (l *ConfigLoader) LoadFile(filename string) (*types.AppConfig, error) {
+func (l *ConfigLoader) LoadFile(filename string) (*AppConfig, error) {
 	data, err := os.ReadFile(filename)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file %s: %v", filename, err)
@@ -292,6 +291,6 @@ func (l *ConfigLoader) LoadFile(filename string) (*types.AppConfig, error) {
 }
 
 // LoadFromString loads configuration from a string with specified format
-func (l *ConfigLoader) LoadFromString(content, format string) (*types.AppConfig, error) {
+func (l *ConfigLoader) LoadFromString(content, format string) (*AppConfig, error) {
 	return l.LoadData([]byte(content), format)
 }

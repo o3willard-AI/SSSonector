@@ -1,6 +1,7 @@
 package facade
 
 import (
+	"github.com/o3willard-AI/SSSonector/internal/config"
 	"bufio"
 	"context"
 	"crypto/rand"
@@ -14,7 +15,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/o3willard-AI/SSSonector/internal/config/types"
 	"go.uber.org/zap"
 )
 
@@ -38,16 +38,16 @@ type ConnectResult struct {
 // If that fails (typically because a firewall blocks the port), it falls
 // back to establishing the tunnel through the HTTPS facade on port 443.
 type Client struct {
-	facadeConfig  *types.FacadeConfig
-	tunnelConfig  *types.TunnelConfig
-	authConfig    *types.AuthConfig
+	facadeConfig  *config.FacadeConfig
+	tunnelConfig  *config.TunnelConfig
+	authConfig    *config.AuthConfig
 	logger        *zap.Logger
 	secret        []byte
 	directTimeout time.Duration
 }
 
 // NewClient creates a new facade client.
-func NewClient(facadeCfg *types.FacadeConfig, tunnelCfg *types.TunnelConfig, authCfg *types.AuthConfig, logger *zap.Logger) (*Client, error) {
+func NewClient(facadeCfg *config.FacadeConfig, tunnelCfg *config.TunnelConfig, authCfg *config.AuthConfig, logger *zap.Logger) (*Client, error) {
 	if facadeCfg == nil {
 		return nil, fmt.Errorf("facade config is required")
 	}

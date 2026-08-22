@@ -1,11 +1,11 @@
 package tunnel
 
 import (
+	"github.com/o3willard-AI/SSSonector/internal/config"
 	"io"
 	"net"
 	"time"
 
-	"github.com/o3willard-AI/SSSonector/internal/config/types"
 	"github.com/o3willard-AI/SSSonector/internal/throttle"
 	"go.uber.org/zap"
 )
@@ -20,7 +20,7 @@ type Transfer struct {
 }
 
 // NewTransfer creates a new transfer
-func NewTransfer(src, dst net.Conn, cfg *types.AppConfig, logger *zap.Logger) *Transfer {
+func NewTransfer(src, dst net.Conn, cfg *config.AppConfig, logger *zap.Logger) *Transfer {
 	// Create rate limiters for each direction
 	srcToDst := throttle.NewLimiter(cfg, src, dst, logger)
 	dstToSrc := throttle.NewLimiter(cfg, dst, src, logger)
