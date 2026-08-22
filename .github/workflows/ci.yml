@@ -18,6 +18,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
 
       - name: Setup Go
         uses: actions/setup-go@3041bf56c941b39c61721a86cd11f3bb1338122a # v5.2.0
@@ -32,6 +34,13 @@ jobs:
 
       - name: Test
         run: go test -race -count=1 ./...
+
+      - name: Diff coverage gate (>=80% of changed lines)
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch --no-tags origin ${{ github.base_ref }}
+          go test ./... -coverprofile=cover.out > /dev/null
+          python3 scripts/diff_coverage.py --profile cover.out --base FETCH_HEAD
 
   vulnerability-scan:
     name: Vulnerability Scan (govulncheck)
