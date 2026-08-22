@@ -16,10 +16,10 @@ retired. Historical context lives in git history.
    cosign keyless signing is the next step.
 4. **Historical private keys were purged from git history** (2026-08-22,
    owner-approved `git filter-repo` rewrite; `certs/`, release binaries and
-   QA snapshots removed from all branches/tags). Any clones made before this
-   date still contain the old history — reclone or fetch-and-reset. The
-   exposed CA must still be treated as compromised until its deployment
-   disposition is confirmed by the owner.
+   QA snapshots removed from all branches/tags). Owner confirmed the exposed
+   CA guarded lab deployments only — no production rotation required.
+   Residual hygiene: regenerate the lab CA via `scripts/generate-certs.sh`
+   before the next QA cycle, and reclone any copies made before 2026-08-22.
 
 ## Recently resolved
 
