@@ -1,6 +1,7 @@
 package monitor
 
 import (
+	"runtime/debug"
 	"fmt"
 	"net"
 	"runtime"
@@ -188,7 +189,7 @@ func (a *SNMPAgent) handleRequests() {
 			zap.Binary("data", buffer[:n]))
 
 		// Parse incoming SNMP packet
-		request, err := DecodeMessage(buffer[:n])
+		request, err := DecodeSNMP(buffer[:n])
 		a.requestPool.Put(buffer) // Return buffer to pool
 
 		if err != nil {
@@ -221,18 +222,16 @@ func (a *SNMPAgent) handleRequests() {
 				zap.String("received", request.Community),
 				zap.String("expected", a.config.SNMPCommunity))
 
-			// Send back authentication failure
-			response := &SNMPMessage{
+			// Send back authentication failure (response encoding is
+			// delegated to gosnmp so both paths share one wire builder).
+			responseBytes, err := (&gosnmp.SnmpPacket{
 				Version:   request.Version,
 				Community: request.Community,
 				PDUType:   gosnmp.GetResponse,
 				RequestID: request.RequestID,
-				Variables: make([]gosnmp.SnmpPDU, 0),
 				Error:     gosnmp.AuthorizationError,
-				Index:     0,
-			}
-
-			responseBytes, err := EncodeMessage(response)
+				Variables: []gosnmp.SnmpPDU{},
+			}).MarshalMsg()
 			if err == nil {
 				a.logger.Debug("Sending auth failure response",
 					zap.String("remote_addr", remoteAddr.String()),
@@ -269,13 +268,14 @@ func (a *SNMPAgent) handleRequests() {
 	}
 }
 
-func (a *SNMPAgent) processRequest(request *SNMPMessage, remoteAddr *net.UDPAddr) {
+func (a *SNMPAgent) processRequest(request *gosnmp.SnmpPacket, remoteAddr *net.UDPAddr) {
 	start := time.Now()
 	defer func() {
 		if r := recover(); r != nil {
 			a.logger.Error("Panic in processRequest",
 				zap.String("remote_addr", remoteAddr.String()),
-				zap.Any("panic", r))
+				zap.Any("panic", r),
+				zap.ByteString("stack", debug.Stack()))
 			a.stats.mu.Lock()
 			a.stats.lastError = fmt.Sprintf("Panic: %v", r)
 			a.stats.lastErrorTime = time.Now()
@@ -311,14 +311,14 @@ func (a *SNMPAgent) processRequest(request *SNMPMessage, remoteAddr *net.UDPAddr
 		zap.Int("type", int(request.PDUType)),
 		zap.Int("variables", len(request.Variables)))
 
-	response := &SNMPMessage{
-		Version:   request.Version,
-		Community: request.Community,
-		PDUType:   gosnmp.GetResponse,
-		RequestID: request.RequestID,
-		Variables: make([]gosnmp.SnmpPDU, 0, len(request.Variables)),
-		Error:     gosnmp.NoError,
-		Index:     0,
+	response := &gosnmp.SnmpPacket{
+		Version:    request.Version,
+		Community:  request.Community,
+		PDUType:    gosnmp.GetResponse,
+		RequestID:  request.RequestID,
+		Variables:  make([]gosnmp.SnmpPDU, 0, len(request.Variables)),
+		Error:      gosnmp.NoError,
+		ErrorIndex: 0,
 	}
 
 	// Track successful requests
@@ -363,7 +363,7 @@ func (a *SNMPAgent) processRequest(request *SNMPMessage, remoteAddr *net.UDPAddr
 				} else {
 					response.Error = gosnmp.GenErr
 				}
-				response.Index = i
+				response.ErrorIndex = uint8(i)
 				a.logger.Error("Failed to get OID",
 					zap.String("oid", oid),
 					zap.Error(err))
@@ -386,7 +386,17 @@ func (a *SNMPAgent) processRequest(request *SNMPMessage, remoteAddr *net.UDPAddr
 			if entry.Type == "OCTET STRING" {
 				value = entry.Value
 			} else {
-				value = entry.ValueToInt64(entry.Value)
+				// gosnmp's encoder requires the Go type to match the wire
+				// type exactly: int for Integer, uint32 for Gauge32, etc.
+				v := entry.ValueToInt64(entry.Value)
+				switch snmpType {
+				case gosnmp.Counter64:
+					value = uint64(v)
+				case gosnmp.Counter32, gosnmp.Gauge32, gosnmp.TimeTicks:
+					value = uint32(v)
+				default:
+					value = int(v)
+				}
 			}
 
 			result = gosnmp.SnmpPDU{
@@ -418,7 +428,7 @@ func (a *SNMPAgent) processRequest(request *SNMPMessage, remoteAddr *net.UDPAddr
 				} else {
 					response.Error = gosnmp.GenErr
 				}
-				response.Index = i
+				response.ErrorIndex = uint8(i)
 				a.logger.Error("Failed to get next OID",
 					zap.String("oid", oid),
 					zap.Error(err))
@@ -441,7 +451,17 @@ func (a *SNMPAgent) processRequest(request *SNMPMessage, remoteAddr *net.UDPAddr
 			if entry.Type == "OCTET STRING" {
 				value = entry.Value
 			} else {
-				value = entry.ValueToInt64(entry.Value)
+				// gosnmp's encoder requires the Go type to match the wire
+				// type exactly: int for Integer, uint32 for Gauge32, etc.
+				v := entry.ValueToInt64(entry.Value)
+				switch snmpType {
+				case gosnmp.Counter64:
+					value = uint64(v)
+				case gosnmp.Counter32, gosnmp.Gauge32, gosnmp.TimeTicks:
+					value = uint32(v)
+				default:
+					value = int(v)
+				}
 			}
 
 			result = gosnmp.SnmpPDU{
@@ -457,21 +477,22 @@ func (a *SNMPAgent) processRequest(request *SNMPMessage, remoteAddr *net.UDPAddr
 
 		default:
 			response.Error = gosnmp.GenErr
-			response.Index = i
+			response.ErrorIndex = uint8(i)
 			a.logger.Error("Unsupported PDU type",
 				zap.Int("type", int(request.PDUType)))
 			break
 		}
 
 		if response.Error == gosnmp.NoError {
+			result.Name = strings.TrimPrefix(result.Name, ".")
 			response.Variables = append(response.Variables, result)
 		}
 	}
 
 	a.mu.RUnlock()
 
-	// Encode and send response
-	responseBytes, err := EncodeMessage(response)
+	// Encode and send response (single wire builder for the whole agent)
+	responseBytes, err := response.MarshalMsg()
 	if err != nil {
 		a.logger.Error("Error encoding SNMP response", zap.Error(err))
 		return
@@ -490,6 +511,6 @@ func (a *SNMPAgent) processRequest(request *SNMPMessage, remoteAddr *net.UDPAddr
 	a.logger.Info("Sent SNMP response",
 		zap.String("remote_addr", remoteAddr.String()),
 		zap.Int("error", int(response.Error)),
-		zap.Int("index", response.Index),
+		zap.Uint8("index", response.ErrorIndex),
 		zap.Int("variables", len(response.Variables)))
 }

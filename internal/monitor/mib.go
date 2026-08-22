@@ -182,6 +182,10 @@ func (t *MIBTree) addString(oid, name, desc string, value string, access string)
 
 // UpdateMetrics updates all metric values in the MIB tree
 func (t *MIBTree) UpdateMetrics(metrics *Metrics) {
+	// Read through the atomic snapshot so concurrent writers (tunnel data
+	// path, resource sampler) never race the MIB refresh.
+	snap := metrics.Clone()
+	metrics = snap
 	// Create new entries with updated values
 	newEntries := make(map[string]MIBEntry)
 	for oid, entry := range t.entries {

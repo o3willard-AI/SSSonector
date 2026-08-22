@@ -1,6 +1,7 @@
 package monitor
 
 import (
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -16,6 +17,8 @@ const (
 
 // Metrics holds monitoring metrics
 type Metrics struct {
+	// mu guards the plain (non-atomic) fields below.
+	mu sync.RWMutex
 	// Network metrics
 	BytesIn    int64
 	BytesOut   int64
@@ -97,6 +100,8 @@ func (m *Metrics) Reset() {
 
 // Clone creates a copy of the metrics
 func (m *Metrics) Clone() *Metrics {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	return &Metrics{
 		BytesIn:        atomic.LoadInt64(&m.BytesIn),
 		BytesOut:       atomic.LoadInt64(&m.BytesOut),
@@ -140,12 +145,14 @@ func (m *Metrics) UpdateNetworkMetrics(bytesIn, bytesOut, packetsIn, packetsOut 
 	atomic.AddInt64(&m.PacketsOut, packetsOut)
 
 	// Calculate rates
+	m.mu.Lock()
 	elapsed := time.Since(m.LastUpdate).Seconds()
 	if elapsed > 0 {
 		m.ByteRate = float64(bytesIn+bytesOut) / elapsed
 		m.PacketRate = float64(packetsIn+packetsOut) / elapsed
 	}
 	m.LastUpdate = time.Now()
+	m.mu.Unlock()
 }
 
 // UpdateErrorMetrics updates error-related metrics
@@ -153,12 +160,14 @@ func (m *Metrics) UpdateErrorMetrics(errors int64, lastError string, retries, dr
 	atomic.AddInt64(&m.Errors, errors)
 	atomic.AddInt64(&m.RetryCount, retries)
 	atomic.AddInt64(&m.DropCount, drops)
+	m.mu.Lock()
 	m.LastError = lastError
 
 	elapsed := time.Since(m.LastUpdate).Seconds()
 	if elapsed > 0 {
 		m.ErrorRate = float64(errors) / elapsed
 	}
+	m.mu.Unlock()
 }
 
 // UpdatePerformanceMetrics updates performance-related metrics
@@ -166,13 +175,17 @@ func (m *Metrics) UpdatePerformanceMetrics(latency, jitter, rtt int64, packetLos
 	atomic.StoreInt64(&m.Latency, latency)
 	atomic.StoreInt64(&m.Jitter, jitter)
 	atomic.StoreInt64(&m.RTT, rtt)
+	m.mu.Lock()
 	m.PacketLoss = packetLoss
 	m.ReorderingRate = reorderingRate
+	m.mu.Unlock()
 }
 
 // UpdateResourceMetrics updates resource utilization metrics
 func (m *Metrics) UpdateResourceMetrics(cpu float64, memory, bufferSize, queueLen, goroutines int64) {
+	m.mu.Lock()
 	m.CPUUsage = cpu
+	m.mu.Unlock()
 	atomic.StoreInt64(&m.MemoryUsage, memory)
 	atomic.StoreInt64(&m.BufferSize, bufferSize)
 	atomic.StoreInt64(&m.QueueLength, queueLen)
@@ -189,7 +202,9 @@ func (m *Metrics) UpdateConnectionMetrics(conns, maxConns int32, connectTime, di
 
 // UpdateSystemMetrics updates system-wide metrics
 func (m *Metrics) UpdateSystemMetrics(load float64, diskIO, networkIO int64) {
+	m.mu.Lock()
 	m.SystemLoad = load
+	m.mu.Unlock()
 	atomic.StoreInt64(&m.DiskIO, diskIO)
 	atomic.StoreInt64(&m.NetworkIO, networkIO)
 	atomic.StoreInt64(&m.Uptime, int64(time.Since(m.StartTime).Seconds()))
