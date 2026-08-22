@@ -4,107 +4,91 @@ import (
 	"fmt"
 	"io"
 	"sync"
-	"time"
 
 	"github.com/o3willard-AI/SSSonector/internal/config/types"
 	"go.uber.org/zap"
 )
 
-// Limiter implements rate limiting for read/write operations
+// Limiter implements rate limiting for read/write operations.
+//
+// The limiter wraps an io.Reader and io.Writer pair and paces transfers at
+// the configured rate (bytes/second, adjusted by tcpOverheadFactor). The
+// burst cap is 100ms worth of effective rate; buckets start empty so
+// throughput is paced from the first byte.
 type Limiter struct {
-	enabled    bool
-	inBucket   *TokenBucket
-	outBucket  *TokenBucket
-	reader     io.Reader
-	writer     io.Writer
-	logger     *zap.Logger
+	enabled bool
+	inBucket *tokenBucket // read direction (into this process)
+	outBucket *tokenBucket // write direction (out of this process)
+	reader   io.Reader
+	writer   io.Writer
+	logger   *zap.Logger
+
 	mu         sync.RWMutex
 	inMetrics  LimiterMetrics
 	outMetrics LimiterMetrics
-	bufferPool *BufferPool
 }
 
-// LimiterMetrics tracks rate limiting statistics
+// LimiterMetrics tracks rate limiting statistics.
 type LimiterMetrics struct {
-	Rate      float64
-	Burst     float64
-	LimitHits uint64
+	Rate      float64 // effective rate (bytes/second incl. TCP overhead)
+	Burst     float64 // burst cap in bytes (100ms of effective rate)
+	LimitHits uint64  // number of requests that had to wait
 }
 
-// NewLimiter creates a new rate limiter
+// NewLimiter creates a new rate limiter.
 func NewLimiter(cfg *types.AppConfig, reader io.Reader, writer io.Writer, logger *zap.Logger) *Limiter {
+	rate := float64(cfg.Throttle.Rate) * tcpOverheadFactor
+	burst := rate * 0.1 // 100ms worth of data
+
 	l := &Limiter{
 		enabled: cfg.Throttle.Enabled,
 		reader:  reader,
 		writer:  writer,
 		logger:  logger,
+		inBucket:  newTokenBucket(rate, burst),
+		outBucket: newTokenBucket(rate, burst),
+		inMetrics:  LimiterMetrics{Rate: rate, Burst: burst},
+		outMetrics: LimiterMetrics{Rate: rate, Burst: burst},
 	}
-
-	// Initialize token buckets with TCP overhead adjustment
-	rate := float64(cfg.Throttle.Rate) * tcpOverheadFactor
-	burst := float64(cfg.Throttle.Burst) * tcpOverheadFactor
-
-	l.inBucket = NewTokenBucket(rate, burst)
-	l.outBucket = NewTokenBucket(rate, burst)
-
-	// Initialize metrics
-	l.inMetrics = LimiterMetrics{
-		Rate:  rate,
-		Burst: burst,
-	}
-	l.outMetrics = LimiterMetrics{
-		Rate:  rate,
-		Burst: burst,
-	}
-
-	// Initialize buffer pool
-	l.bufferPool = NewBufferPool(logger)
 
 	return l
 }
 
-// Read implements io.Reader
+// Read implements io.Reader. Data is read from the underlying reader and
+// then paced at the configured inbound rate before being returned.
 func (l *Limiter) Read(p []byte) (n int, err error) {
 	if !l.enabled {
 		return l.reader.Read(p)
 	}
 
-	// Get buffer from pool
-	buf := l.GetBuffer(len(p))
-	defer l.PutBuffer(buf)
-
-	// Read into buffer
-	n, err = l.reader.Read(buf)
+	n, err = l.reader.Read(p)
 	if err != nil {
 		return n, err
 	}
-
-	// Wait for tokens
-	if err := l.Wait(true, n); err != nil {
-		return n, err
+	if n > 0 {
+		if werr := l.Wait(true, n); werr != nil {
+			return n, werr
+		}
 	}
-
-	// Copy data to output buffer
-	copy(p, buf[:n])
 	return n, nil
 }
 
-// Write implements io.Writer
+// Write implements io.Writer. The write is paced at the configured outbound
+// rate before the data is handed to the underlying writer.
 func (l *Limiter) Write(p []byte) (n int, err error) {
 	if !l.enabled {
 		return l.writer.Write(p)
 	}
 
-	// Wait for tokens
 	if err := l.Wait(false, len(p)); err != nil {
 		return 0, err
 	}
-
-	// Write data
 	return l.writer.Write(p)
 }
 
-// Wait waits for the specified number of tokens
+// Wait blocks until size bytes are admitted by the direction's bucket,
+// recording a limit hit if any waiting was required. When the limiter is
+// disabled it returns immediately.
 func (l *Limiter) Wait(isRead bool, size int) error {
 	if !l.enabled {
 		return nil
@@ -115,65 +99,57 @@ func (l *Limiter) Wait(isRead bool, size int) error {
 		bucket = l.outBucket
 	}
 
-	timeout := time.After(defaultTimeout)
-	done := make(chan struct{})
-
-	go func() {
-		bucket.Wait(float64(size))
-		close(done)
-	}()
-
-	select {
-	case <-done:
-		return nil
-	case <-timeout:
-		err := fmt.Errorf("timeout waiting for %d tokens after %v", size, defaultTimeout)
+	waited, err := bucket.acquire(float64(size))
+	if waited {
+		l.recordLimitHit(isRead)
+	}
+	if err != nil {
 		l.logger.Warn("Rate limit wait timeout",
 			zap.Bool("read", isRead),
 			zap.Int("size", size),
 			zap.Error(err),
 		)
-		return err
+		return fmt.Errorf("wait for %d tokens: %w", size, err)
 	}
+	return nil
 }
 
-// Update updates the limiter configuration
+// Update updates the limiter configuration (hot reload).
 func (l *Limiter) Update(cfg *types.AppConfig) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	l.enabled = cfg.Throttle.Enabled
 	rate := float64(cfg.Throttle.Rate) * tcpOverheadFactor
-	burst := float64(cfg.Throttle.Burst) * tcpOverheadFactor
+	burst := rate * 0.1
 
 	l.inBucket.Update(rate, burst)
 	l.outBucket.Update(rate, burst)
 
+	l.mu.Lock()
+	l.enabled = cfg.Throttle.Enabled
 	l.inMetrics.Rate = rate
 	l.inMetrics.Burst = burst
 	l.outMetrics.Rate = rate
 	l.outMetrics.Burst = burst
+	l.mu.Unlock()
 
 	l.logger.Info("Updated rate limiter configuration",
-		zap.Bool("enabled", l.enabled),
+		zap.Bool("enabled", cfg.Throttle.Enabled),
 		zap.Float64("rate", rate),
 		zap.Float64("burst", burst),
 	)
 }
 
-// GetMetrics returns current metrics
+// GetMetrics returns current inbound and outbound metrics.
 func (l *Limiter) GetMetrics() (LimiterMetrics, LimiterMetrics) {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 	return l.inMetrics, l.outMetrics
 }
 
-// GetBuffer gets a buffer from the pool
-func (l *Limiter) GetBuffer(size int) []byte {
-	return l.bufferPool.Get(size)
-}
-
-// PutBuffer returns a buffer to the pool
-func (l *Limiter) PutBuffer(buf []byte) {
-	l.bufferPool.Put(buf)
+func (l *Limiter) recordLimitHit(isRead bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if isRead {
+		l.inMetrics.LimitHits++
+	} else {
+		l.outMetrics.LimitHits++
+	}
 }
