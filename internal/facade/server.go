@@ -64,12 +64,8 @@ func NewServer(cfg *types.FacadeConfig, authCfg *types.AuthConfig, logger *zap.L
 		return nil, fmt.Errorf("auth config is required")
 	}
 
-	// Resolve the token secret
-	caFile := cfg.TLS.CAFile
-	if caFile == "" {
-		caFile = authCfg.CAFile
-	}
-	secret, err := ResolveSecret(cfg.TokenSecret, caFile)
+	// Resolve the token secret (explicit configuration is mandatory)
+	secret, err := ResolveSecret(cfg.TokenSecret, "")
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve token secret: %w", err)
 	}

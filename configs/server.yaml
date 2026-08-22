@@ -44,7 +44,7 @@ config:
     listen_port: 443
     # hostname: server.example.com
     web_root: ""             # HTML content for GET / (empty = default page)
-    token_secret: ""         # Shared secret for HMAC tokens (empty = derived from CA cert)
+    token_secret: ""         # REQUIRED for facade auth: high-entropy shared secret (must match client; never derived from public material)
     token_ttl: 30s
     tls:                     # If empty, inherits from auth section
       cert_file: ""

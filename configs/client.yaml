@@ -30,7 +30,7 @@ facade:
   server_port: 443           # Facade server port to connect to
   # server_address: ""       # Defaults to tunnel.server_address
   direct_timeout: 3s         # How long to wait for direct connection
-  token_secret: ""           # Must match server (empty = derived from CA cert)
+  token_secret: ""           # REQUIRED for facade auth: must match server exactly
   tls:                       # If empty, inherits from tunnel cert config
     cert_file: ""
     key_file: ""

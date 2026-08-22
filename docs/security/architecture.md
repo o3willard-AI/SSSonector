@@ -102,7 +102,7 @@ graph TB
 ### HTTPS Facade Security Layer
 - **HMAC Token Authentication**: HMAC-SHA256 signed tokens bind port + timestamp to shared secret
 - **Token Expiry**: Tokens are valid for configurable TTL (default 30s), preventing replay attacks
-- **Secret Derivation**: Shared secret derived from CA certificate SHA-256 hash (no additional config needed)
+- **Explicit Secret**: The HMAC secret must be explicitly configured on both endpoints. Deriving it from the CA certificate is prohibited: the CA certificate is public by design, so any derivation from it would allow token forgery.
 - **Information Hiding**: Invalid requests receive 404 (not 403) to prevent port/capability enumeration
 - **Standard Protocol**: WebSocket upgrade headers are indistinguishable from normal web traffic to DPI
 - **Optional mTLS**: Facade supports `VerifyClientCertIfGiven` for optional client cert verification

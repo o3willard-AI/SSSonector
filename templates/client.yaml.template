@@ -43,7 +43,7 @@ config:
     enabled: false
     server_port: 443
     direct_timeout: 3s
-    token_secret: ""
+    token_secret: ""         # REQUIRED when facade enabled: must match server
     tls:
       cert_file: ""
       key_file: ""

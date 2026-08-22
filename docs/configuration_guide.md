@@ -111,7 +111,7 @@ WebSocket upgrades over a legitimate HTTPS web server.
 - `facade.listen_port`: Port for the facade (default/typical: 443)
 - `facade.hostname`: Server hostname for TLS SNI
 - `facade.web_root`: HTML content for GET / (empty = default "Hello, World" page)
-- `facade.token_secret`: Shared HMAC secret (empty = auto-derived from CA cert)
+- `facade.token_secret`: Shared HMAC secret (**required when the facade is enabled**; must be high-entropy and match the client)
 - `facade.token_ttl`: Token validity duration (default: 30s, min: 5s, max: 120s)
 - `facade.tls.cert_file`, `facade.tls.key_file`, `facade.tls.ca_file`: Optional separate TLS config (empty = inherits from auth section)
 - `facade.tunnel_ports`: List of tunnel ports this facade routes to (required when enabled)
@@ -121,7 +121,7 @@ WebSocket upgrades over a legitimate HTTPS web server.
 - `facade.server_address`: Facade server address (default: same as tunnel.server_address)
 - `facade.server_port`: Facade server port (default: 443)
 - `facade.direct_timeout`: How long to wait for direct connection before fallback (default: 3s)
-- `facade.token_secret`: Must match server (empty = auto-derived from CA cert)
+- `facade.token_secret`: **Required when the facade is enabled; must match server exactly**
 - `facade.tls.cert_file`, `facade.tls.key_file`, `facade.tls.ca_file`: Optional separate TLS config
 
 **Example -- Server with facade:**

@@ -15,6 +15,7 @@ import (
 	"go.uber.org/zap"
 )
 
+
 func TestClientDirectConnect(t *testing.T) {
 	// Start a mock server that the client can directly connect to
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -41,6 +42,7 @@ func TestClientDirectConnect(t *testing.T) {
 		Enabled:       true,
 		ServerPort:    443,
 		DirectTimeout: 3 * time.Second,
+		TokenSecret:   testTokenSecret,
 		TLS: types.FacadeTLSConfig{
 			CAFile: certs.CAFile,
 		},
@@ -113,6 +115,7 @@ func TestClientFallbackToFacade(t *testing.T) {
 		ServerAddress: "127.0.0.1",
 		ServerPort:    facadePort,
 		DirectTimeout: 1 * time.Second, // Short timeout for faster test
+		TokenSecret:   testTokenSecret,
 		TLS: types.FacadeTLSConfig{
 			CertFile: certs.CertFile,
 			KeyFile:  certs.KeyFile,
@@ -209,6 +212,7 @@ func TestClientDefaultDirectTimeout(t *testing.T) {
 			Enabled:       true,
 			ServerPort:    443,
 			DirectTimeout: 0, // Should default to 3s
+			TokenSecret:   testTokenSecret,
 			TLS:           types.FacadeTLSConfig{CAFile: certs.CAFile},
 		},
 		&types.TunnelConfig{ServerAddress: "127.0.0.1", ServerPort: 8443},
@@ -221,8 +225,7 @@ func TestClientDefaultDirectTimeout(t *testing.T) {
 
 func TestComputeWebSocketAcceptRFC(t *testing.T) {
 	// Verify SHA-1(key + GUID) per RFC 6455 Section 4.2.2
-	key := "dGhlIHNhbXBsZSBub25jZQ=="
 	// SHA1("dGhlIHNhbXBsZSBub25jZQ==258EAFA5-E914-47DA-95CA-5631BC565D11") base64-encoded
 	expected := "50Q8AId4CODuYsXtANFhoLtjFt4="
-	assert.Equal(t, expected, computeWebSocketAccept(key))
+	assert.Equal(t, expected, computeWebSocketAccept(rfc6455SampleKey))
 }

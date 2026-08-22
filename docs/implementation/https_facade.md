@@ -131,7 +131,7 @@ config:
     listen_port: 443           # Facade port (typically 443)
     hostname: "server.example.com"  # Server hostname for TLS SNI
     web_root: "hello world"    # Response for GET / (or path to HTML file)
-    token_secret: ""           # Shared secret for HMAC tokens (auto-derived from CA if empty)
+    token_secret: "<high-entropy-secret>"  # REQUIRED for HMAC tokens
     token_ttl: 30s             # Token validity duration
     tls:                       # TLS config for the facade (can differ from tunnel TLS)
       cert_file: ""            # If empty, uses auth.cert_file
@@ -161,7 +161,7 @@ config:
     server_address: ""         # Facade server address (defaults to tunnel.server_address)
     server_port: 443           # Facade port to connect to
     direct_timeout: 3s         # How long to wait for direct connection before fallback
-    token_secret: ""           # Shared secret (must match server; auto-derived from CA if empty)
+    token_secret: "<same-as-server>"       # REQUIRED; must match server exactly
 ```
 
 ## Implementation Plan
@@ -269,8 +269,9 @@ func GenerateToken(port int, secret []byte) (string, error)
 // ValidateToken verifies and extracts the port from a token
 func ValidateToken(token string, secret []byte, ttl time.Duration) (int, error)
 
-// DeriveSecret derives a shared secret from a CA certificate file
-func DeriveSecret(caFile string) ([]byte, error)
+// ResolveSecret resolves the token secret; an explicit token_secret is
+// mandatory (derivation from public material is prohibited)
+func ResolveSecret(tokenSecret string, _ string) ([]byte, error)
 ```
 
 Token structure (binary, then base64-encoded):
@@ -433,7 +434,7 @@ port 443 and routes to all registered tunnel instances via a shared registry.
 - `TestTokenExpiry` -- Expired tokens are rejected
 - `TestTokenTampering` -- Modified tokens are rejected
 - `TestTokenWrongSecret` -- Wrong secret rejects token
-- `TestDeriveSecret` -- Secret derivation from CA certificate
+- `TestResolveSecret` -- Explicit-secret requirement and fail-closed behavior
 
 #### `internal/facade/client_test.go`
 - `TestClientDirectConnect` -- Direct connection succeeds when port is open

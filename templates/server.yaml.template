@@ -45,7 +45,7 @@ config:
     enabled: false
     listen_address: 0.0.0.0
     listen_port: 443
-    token_secret: ""
+    token_secret: ""         # REQUIRED when facade enabled: shared HMAC secret (high-entropy, must match client)
     token_ttl: 30s
     tls:
       cert_file: ""

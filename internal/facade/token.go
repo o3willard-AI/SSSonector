@@ -10,7 +10,6 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"fmt"
-	"os"
 	"time"
 )
 
@@ -110,31 +109,16 @@ func ValidateToken(tokenStr string, secret []byte, ttl time.Duration) (int, erro
 	return port, nil
 }
 
-// DeriveSecret derives a shared secret from a CA certificate file.
-// This allows server and client to derive the same secret without explicit
-// configuration, as long as they share the same CA certificate.
-func DeriveSecret(caFile string) ([]byte, error) {
-	if caFile == "" {
-		return nil, fmt.Errorf("CA file path is empty")
+// ResolveSecret resolves the facade token secret from configuration.
+// The secret MUST be configured explicitly on both server and client.
+// Deriving it from public material such as the CA certificate is not
+// permitted: the CA certificate is distributed to every client by design,
+// so any derivation from it would allow anyone holding the CA file to
+// forge valid tunnel tokens.
+func ResolveSecret(tokenSecret string, _ string) ([]byte, error) {
+	if tokenSecret == "" {
+		return nil, fmt.Errorf("facade token_secret is required: configure a high-entropy shared secret explicitly on both server and client")
 	}
-
-	data, err := os.ReadFile(caFile)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read CA file: %w", err)
-	}
-
-	// SHA-256 hash of the raw CA certificate file contents
-	hash := sha256.Sum256(data)
+	hash := sha256.Sum256([]byte(tokenSecret))
 	return hash[:], nil
-}
-
-// ResolveSecret resolves the token secret from configuration.
-// If tokenSecret is explicitly set, it is used directly (SHA-256 hashed for consistent length).
-// Otherwise, the secret is derived from the CA certificate file.
-func ResolveSecret(tokenSecret string, caFile string) ([]byte, error) {
-	if tokenSecret != "" {
-		hash := sha256.Sum256([]byte(tokenSecret))
-		return hash[:], nil
-	}
-	return DeriveSecret(caFile)
 }

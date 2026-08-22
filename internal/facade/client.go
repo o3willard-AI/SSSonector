@@ -58,12 +58,8 @@ func NewClient(facadeCfg *types.FacadeConfig, tunnelCfg *types.TunnelConfig, aut
 		return nil, fmt.Errorf("auth config is required")
 	}
 
-	// Resolve the token secret (must match server)
-	caFile := facadeCfg.TLS.CAFile
-	if caFile == "" {
-		caFile = authCfg.CAFile
-	}
-	secret, err := ResolveSecret(facadeCfg.TokenSecret, caFile)
+	// Resolve the token secret (must match server; explicit configuration required)
+	secret, err := ResolveSecret(facadeCfg.TokenSecret, "")
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve token secret: %w", err)
 	}
