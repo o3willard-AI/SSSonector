@@ -35,9 +35,10 @@ type Manager struct {
 	certDir           string
 	currentCert       *tls.Certificate
 	certMutex         sync.RWMutex
-	checkInterval     time.Duration // Configurable for testing
-	rotationThreshold time.Duration // Configurable for testing
-	useTemporaryCerts bool          // For testing
+	settingsMu        sync.RWMutex // guards the tunable settings below
+	checkInterval     time.Duration // Configurable via hot reload/tests
+	rotationThreshold time.Duration // Configurable via hot reload/tests
+	useTemporaryCerts bool          // Configurable via hot reload/tests
 	rotationDone      chan struct{} // Signals when rotation is complete
 }
 
@@ -72,19 +73,43 @@ func NewManager(certFile, keyFile, caFile string, isServer bool, skipVerify bool
 	return m, nil
 }
 
-// SetCheckInterval sets the certificate check interval (for testing)
+// SetCheckInterval sets the certificate check interval
 func (m *Manager) SetCheckInterval(d time.Duration) {
+	m.settingsMu.Lock()
 	m.checkInterval = d
+	m.settingsMu.Unlock()
 }
 
-// SetRotationThreshold sets the certificate rotation threshold (for testing)
+// SetRotationThreshold sets the certificate rotation threshold
 func (m *Manager) SetRotationThreshold(d time.Duration) {
+	m.settingsMu.Lock()
 	m.rotationThreshold = d
+	m.settingsMu.Unlock()
 }
 
-// UseTemporaryCerts enables temporary certificate generation (for testing)
+// UseTemporaryCerts enables temporary certificate generation
 func (m *Manager) UseTemporaryCerts(enable bool) {
+	m.settingsMu.Lock()
 	m.useTemporaryCerts = enable
+	m.settingsMu.Unlock()
+}
+
+func (m *Manager) getCheckInterval() time.Duration {
+	m.settingsMu.RLock()
+	defer m.settingsMu.RUnlock()
+	return m.checkInterval
+}
+
+func (m *Manager) getRotationThreshold() time.Duration {
+	m.settingsMu.RLock()
+	defer m.settingsMu.RUnlock()
+	return m.rotationThreshold
+}
+
+func (m *Manager) getUseTemporaryCerts() bool {
+	m.settingsMu.RLock()
+	defer m.settingsMu.RUnlock()
+	return m.useTemporaryCerts
 }
 
 // GetTLSConfig returns a configured TLS configuration
@@ -155,7 +180,7 @@ func (m *Manager) getClientCertificate(*tls.CertificateRequestInfo) (*tls.Certif
 
 // monitorCertificate periodically checks certificate expiration and triggers rotation
 func (m *Manager) monitorCertificate() {
-	ticker := time.NewTicker(m.checkInterval)
+	ticker := time.NewTicker(m.getCheckInterval())
 	defer ticker.Stop()
 
 	for {
@@ -191,8 +216,8 @@ func (m *Manager) monitorCertificate() {
 			}
 
 			// Check if certificate needs rotation
-			if timeUntilExpiry < m.rotationThreshold {
-				log.Printf("Certificate needs rotation (threshold: %v)", m.rotationThreshold)
+			if timeUntilExpiry < m.getRotationThreshold() {
+				log.Printf("Certificate needs rotation (threshold: %v)", m.getRotationThreshold())
 				select {
 				case m.rotateChan <- struct{}{}:
 					// Only rotate if we have enough time before expiration
@@ -220,11 +245,11 @@ func (m *Manager) monitorCertificate() {
 
 // rotateCertificates generates new certificates and updates the manager
 func (m *Manager) rotateCertificates() {
-	log.Printf("Starting certificate rotation (useTemporaryCerts: %v)", m.useTemporaryCerts)
+	log.Printf("Starting certificate rotation (useTemporaryCerts: %v)", m.getUseTemporaryCerts())
 
 	// Generate new certificates
 	var err error
-	if m.useTemporaryCerts {
+	if m.getUseTemporaryCerts() {
 		err = generator.GenerateTemporaryCertificates(m.certDir)
 	} else {
 		err = generator.GenerateCertificates(m.certDir)

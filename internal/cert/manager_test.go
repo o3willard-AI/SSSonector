@@ -3,6 +3,7 @@ package cert
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -10,6 +11,33 @@ import (
 
 	"github.com/o3willard-AI/SSSonector/internal/cert/generator"
 )
+
+// waitForRotation polls the manager until the presented certificate serial
+// changes or the deadline elapses. It tolerates transient read errors while
+// rotation is in progress.
+func waitForRotation(manager *Manager, timeout time.Duration) (*tls.Certificate, error) {
+	initial, err := manager.getCertificate(nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get initial certificate: %w", err)
+	}
+	initialCert, err := x509.ParseCertificate(initial.Certificate[0])
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse initial certificate: %w", err)
+	}
+
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		cert, err := manager.getCertificate(nil)
+		if err == nil {
+			parsed, perr := x509.ParseCertificate(cert.Certificate[0])
+			if perr == nil && parsed.SerialNumber.Cmp(initialCert.SerialNumber) != 0 {
+				return cert, nil
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return nil, fmt.Errorf("rotation not observed within %v", timeout)
+}
 
 func TestCertificateRotation(t *testing.T) {
 	// Create temporary directory for test certificates
@@ -59,17 +87,17 @@ func TestCertificateRotation(t *testing.T) {
 	}
 	initialSerial := initialCert.SerialNumber
 
-	// Wait for certificate rotation
-	time.Sleep(12 * time.Second)
-
-	// Get new certificate serial number
-	newCert, err := manager.getCertificate(nil)
+	// Poll for certificate rotation instead of a blind sleep: the rotation
+	// threshold is 10s, but scheduler/race-detector load can delay the
+	// background check, so allow a generous deadline and finish as soon as
+	// rotation is observed.
+	newCert, err := waitForRotation(manager, 30*time.Second)
 	if err != nil {
-		t.Fatalf("Failed to get new certificate: %v", err)
+		t.Fatalf("Certificate was not rotated in time: %v", err)
 	}
 	rotatedCert, err := x509.ParseCertificate(newCert.Certificate[0])
 	if err != nil {
-		t.Fatalf("Failed to parse new certificate: %v", err)
+		t.Fatalf("Failed to parse rotated certificate: %v", err)
 	}
 	newSerial := rotatedCert.SerialNumber
 
@@ -127,16 +155,15 @@ func TestCertificateExpiration(t *testing.T) {
 	}
 	initialExpiry := x509Cert.NotAfter
 
-	// Wait for certificate to expire
+	// Wait for the certificate to expire (poll with deadline; expiry time
+	// comes from the generated certificate, typically ~15s for temp certs).
 	timeToExpiry := time.Until(initialExpiry)
 	t.Logf("Waiting %v for certificate to expire", timeToExpiry)
-	time.Sleep(timeToExpiry + 1*time.Second)
 
-	// Verify expiration channel is closed
 	select {
 	case <-manager.expireChan:
 		// Expected behavior
-	case <-time.After(2 * time.Second):
+	case <-time.After(timeToExpiry + 5*time.Second):
 		// Get current certificate for debugging
 		cert := manager.currentCert
 		if cert != nil {

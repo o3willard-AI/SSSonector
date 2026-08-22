@@ -28,7 +28,7 @@ func NewFileStore(configDir string) *FileStore {
 func (s *FileStore) Load() (*types.AppConfig, error) {
 	data, err := ioutil.ReadFile(filepath.Join(s.configDir, "config.yaml"))
 	if err != nil {
-		return nil, fmt.Errorf("failed to read config file: %v", err)
+		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
 
 	var config types.AppConfig

@@ -2,7 +2,9 @@
 package manager
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"sync"
 
 	"github.com/o3willard-AI/SSSonector/internal/config/interfaces"
@@ -35,7 +37,14 @@ func (m *Manager) Get() (*types.AppConfig, error) {
 	if m.config == nil {
 		config, err := m.store.Load()
 		if err != nil {
-			return nil, fmt.Errorf("failed to load config: %v", err)
+			// A missing config file is not fatal: start from defaults so
+			// first-run and test scenarios behave predictably. Any other
+			// load error (permissions, corruption) still fails loudly.
+			if errors.Is(err, fs.ErrNotExist) {
+				m.config = types.DefaultConfig()
+				return m.config, nil
+			}
+			return nil, fmt.Errorf("failed to load config: %w", err)
 		}
 		m.config = config
 	}

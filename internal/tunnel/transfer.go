@@ -43,6 +43,11 @@ func (t *Transfer) Start() error {
 	go func() {
 		// Read from src and write to dst through limiter
 		_, err := io.Copy(t.dst, t.srcToDst)
+		// Propagate EOF: half-close the write side so the peer's read
+		// unblocks and the reverse direction can drain and finish.
+		if tc, ok := t.dst.(*net.TCPConn); ok {
+			tc.CloseWrite()
+		}
 		errChan <- err
 	}()
 
@@ -50,6 +55,9 @@ func (t *Transfer) Start() error {
 	go func() {
 		// Read from dst and write to src through limiter
 		_, err := io.Copy(t.src, t.dstToSrc)
+		if tc, ok := t.src.(*net.TCPConn); ok {
+			tc.CloseWrite()
+		}
 		errChan <- err
 	}()
 

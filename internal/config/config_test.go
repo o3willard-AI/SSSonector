@@ -54,10 +54,17 @@ func TestConfigManager(t *testing.T) {
 				Protocol:    "tcp",
 				Compression: true,
 			},
+			Security: types.SecurityConfig{
+				TLS: types.TLSConfigOptions{
+					MinVersion: "1.2",
+					MaxVersion: "1.3",
+				},
+			},
 		},
 		Metadata: types.ConfigMetadata{
-			Version:     "1.0.0",
-			Created:     time.Now(),
+			Version:       "1.0.0",
+			SchemaVersion: "1.0.0",
+			Created:       time.Now(),
 			Modified:    time.Now(),
 			CreatedBy:   "test",
 			Environment: "test",
@@ -88,7 +95,7 @@ func TestConfigManager(t *testing.T) {
 	if len(files) != 1 {
 		t.Errorf("Expected 1 config file, got %d", len(files))
 	}
-	expectedFilename := filepath.Join(tempDir, "config-client-1.0.0.json")
+	expectedFilename := filepath.Join(tempDir, "config.yaml")
 	if _, err := os.Stat(expectedFilename); os.IsNotExist(err) {
 		t.Errorf("Expected config file %s does not exist", expectedFilename)
 	}

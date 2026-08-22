@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 
@@ -342,7 +343,7 @@ func (c *Client) Start() error {
 func (c *Client) connectLoop() {
 	defer c.wg.Done()
 
-	serverAddr := fmt.Sprintf("%s:%d", c.config.Config.Tunnel.ServerAddress, c.config.Config.Tunnel.ServerPort)
+	serverAddr := net.JoinHostPort(c.config.Config.Tunnel.ServerAddress, strconv.Itoa(c.config.Config.Tunnel.ServerPort))
 	retryCount := 0
 	currentDelay := c.retryDelay
 
