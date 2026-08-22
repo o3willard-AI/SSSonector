@@ -42,3 +42,15 @@ logs/
 # Release artifacts
 release.json
 go*.tar.gz
+
+# Compiled binaries and object files (never commit build output; anchored
+# to the repository root so source directories like cmd/tunnel are tracked)
+/sssonector
+/sssonectorctl
+/tunnel
+/tunnel_client
+/main
+*.o
+
+# Local QA deploy snapshots
+qa_deploy_*/
