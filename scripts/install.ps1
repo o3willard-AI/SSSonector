@@ -34,7 +34,6 @@ foreach ($Dir in $Directories) {
 # Copy files
 Write-Host "Installing files..."
 Copy-Item -Path "bin\sssonector.exe" -Destination $BinaryPath -Force
-Copy-Item -Path "bin\sssonectorctl.exe" -Destination (Join-Path $env:ProgramFiles "SSSonector\sssonectorctl.exe") -Force
 
 # Install example config if not exists
 $ConfigFile = Join-Path $ConfigPath "config.yaml"
@@ -122,10 +121,8 @@ Write-Host "2. Install certificates in: $CertPath"
 Write-Host "3. Start service: Start-Service $ServiceName"
 Write-Host "4. Check status: Get-Service $ServiceName"
 Write-Host "5. View logs: Get-EventLog -LogName Application -Source $ServiceName"
-Write-Host "`nControl service with: sssonectorctl [command]"
 
 # Add to PATH if requested
-$AddPath = Read-Host "Add sssonectorctl to PATH? (y/N)"
 if ($AddPath -eq "y") {
     $BinPath = Split-Path $BinaryPath -Parent
     $CurrentPath = [Environment]::GetEnvironmentVariable("Path", "Machine")

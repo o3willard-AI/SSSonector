@@ -11,6 +11,8 @@ services:
     cap_add:
       - NET_ADMIN
       - NET_RAW
+    devices:
+      - /dev/net/tun:/dev/net/tun
     volumes:
       - ./config:/etc/sssonector
       - sssonector-data:/var/lib/sssonector
@@ -20,7 +22,7 @@ services:
     networks:
       - sssonector-net
     healthcheck:
-      test: ["CMD", "sssonectorctl", "health"]
+      test: ["CMD-SHELL", "pgrep sssonector || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3

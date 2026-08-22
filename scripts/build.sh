@@ -4,7 +4,6 @@ set -e
 # Build configuration
 VERSION="1.0.0"
 BINARY_NAME="sssonector"
-BINARY_CONTROL="sssonectorctl"
 PLATFORMS=("linux/amd64" "linux/arm64" "darwin/amd64" "darwin/arm64" "windows/amd64")
 OUTPUT_DIR="build"
 
@@ -42,7 +41,6 @@ for platform in "${PLATFORMS[@]}"; do
     GOOS=$GOOS GOARCH=$GOARCH go build -v \
         -ldflags "-X main.Version=$VERSION" \
         -o "$platform_dir/$control_name" \
-        cmd/sssonectorctl/main.go
     
     # Copy platform-specific service files
     case $GOOS in

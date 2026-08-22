@@ -41,7 +41,6 @@ install -d -m 750 -o "$SERVICE_USER" -g "$SERVICE_GROUP" "$LOG_DIR"
 # Install binaries
 echo "Installing binaries..."
 install -m 755 bin/sssonector "$INSTALL_DIR/sssonector"
-install -m 755 bin/sssonectorctl "$INSTALL_DIR/sssonectorctl"
 
 # Install configuration
 echo "Installing configuration..."
@@ -97,12 +96,11 @@ fi
 if command -v semanage >/dev/null && sestatus | grep -q "enabled"; then
     echo "Setting up SELinux context..."
     semanage fcontext -a -t bin_t "$INSTALL_DIR/sssonector"
-    semanage fcontext -a -t bin_t "$INSTALL_DIR/sssonectorctl"
-    semanage fcontext -a -t etc_t "$CONFIG_DIR(/.*)?"
+        semanage fcontext -a -t etc_t "$CONFIG_DIR(/.*)?"
     semanage fcontext -a -t var_lib_t "$STATE_DIR(/.*)?"
     semanage fcontext -a -t var_run_t "$RUN_DIR(/.*)?"
     semanage fcontext -a -t var_log_t "$LOG_DIR(/.*)?"
-    restorecon -R "$INSTALL_DIR/sssonector" "$INSTALL_DIR/sssonectorctl" \
+    restorecon -R "$INSTALL_DIR/sssonector" \
         "$CONFIG_DIR" "$STATE_DIR" "$RUN_DIR" "$LOG_DIR"
     
     # Add SELinux port context
@@ -118,4 +116,3 @@ echo "3. Start service: systemctl start sssonector"
 echo "4. Check status: systemctl status sssonector"
 echo "5. View logs: journalctl -u sssonector"
 echo
-echo "Control service with: sssonectorctl [command]"

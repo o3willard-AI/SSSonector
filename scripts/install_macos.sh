@@ -51,7 +51,6 @@ install -d -m 750 -o $SERVICE_USER -g $SERVICE_GROUP "$LOG_DIR"
 # Install binaries
 echo "Installing binaries..."
 install -m 755 bin/sssonector "$INSTALL_DIR/sssonector"
-install -m 755 bin/sssonectorctl "$INSTALL_DIR/sssonectorctl"
 
 # Install configuration
 echo "Installing configuration..."
@@ -98,7 +97,6 @@ echo "3. Start service: sudo launchctl start $SERVICE_NAME"
 echo "4. Check status: sudo launchctl list | grep $SERVICE_NAME"
 echo "5. View logs: tail -f $LOG_DIR/service.log"
 echo
-echo "Control service with: sssonectorctl [command]"
 echo
 echo "Service management commands:"
 echo "  Start:   sudo launchctl start $SERVICE_NAME"

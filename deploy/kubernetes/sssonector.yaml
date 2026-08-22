@@ -103,6 +103,8 @@ spec:
           name: snmp
           protocol: UDP
         volumeMounts:
+        - name: dev-net-tun
+          mountPath: /dev/net/tun
         - name: config
           mountPath: /etc/sssonector
         - name: data
@@ -110,16 +112,16 @@ spec:
         livenessProbe:
           exec:
             command:
-            - sssonectorctl
-            - health
+            - pgrep
+            - sssonector
           initialDelaySeconds: 5
           periodSeconds: 30
           timeoutSeconds: 10
         readinessProbe:
           exec:
             command:
-            - sssonectorctl
-            - status
+            - pgrep
+            - sssonector
           initialDelaySeconds: 5
           periodSeconds: 10
         resources:
@@ -130,6 +132,10 @@ spec:
             cpu: "500m"
             memory: "512Mi"
       volumes:
+      - name: dev-net-tun
+        hostPath:
+          path: /dev/net/tun
+          type: CharDevice
       - name: config
         configMap:
           name: sssonector-config
