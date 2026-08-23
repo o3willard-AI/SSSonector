@@ -80,6 +80,12 @@ func NewServer(cfg *config.AppConfig, manager config.ConfigManager, logger *zap.
 
 // Start starts the tunnel server
 func (s *Server) Start() error {
+	if s.tlsManager == nil && !s.activeConfig().Config.Security.AllowPlaintext {
+		return fmt.Errorf(
+			"refusing to start without TLS: certificates are missing or unusable " +
+				"and security.allow_plaintext is not enabled")
+	}
+
 	adapterOpts := adapter.DefaultOptions()
 	adapterOpts.Logger = s.logger.Named("adapter")
 	newAdapter := s.AdapterNew

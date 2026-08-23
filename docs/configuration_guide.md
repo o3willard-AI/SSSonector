@@ -253,9 +253,10 @@ Configuration is validated at startup AND on every SIGHUP reload:
    The error names the offending field and the log line includes the config
    path. Fix the value; nothing is guessed.
 
-2. **No TLS on connections**
-   Missing/unreadable certificate files disable TLS with an ERROR log
-   ("running without TLS"). Provision certs before production use.
+2. **Service refuses to start: "refusing to start without TLS"**
+   Certificates are missing or failed to load and
+   `security.allow_plaintext` is not enabled. Provision valid certs, or set
+   `security.allow_plaintext: true` deliberately for lab use.
 
 3. **SNMP walk returns nothing**
    Check `monitor.type` is `snmp`, `snmp.enabled: true`, firewall allows the

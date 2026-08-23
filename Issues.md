@@ -39,6 +39,11 @@ This file tracks currently-true issues only.
 - ~~Mutation campaign~~ — facade/token + throttle at 100% non-equivalent kill
   rate; methodology in `docs/testing/mutation-testing.md`.
 
+## Resolved (2026-08 reliability track)
+
+- ~~Silent plaintext downgrade~~ — missing/broken certificates now refuse to
+  start unless `security.allow_plaintext` is explicitly enabled; both roles
+  gate before serving or dialing.
 ## Resolved (2026-08 quick-wins batch)
 
 - ~~Limiter hit metrics not exposed~~ — `sssonector_throttle_hits_total{direction}`

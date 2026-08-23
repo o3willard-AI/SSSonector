@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -112,6 +113,7 @@ func loopbackConfig(t *testing.T, dir string, port int) *config.AppConfig {
 	cfg.Config.Tunnel.ListenAddress = "127.0.0.1"
 	cfg.Config.Tunnel.ListenPort = port
 	cfg.Config.Metrics.Enabled = false
+	cfg.Config.Security.AllowPlaintext = true // loopback harness runs plaintext
 	cfg.Throttle.Enabled = false
 	_ = os.MkdirAll(dir, 0o750)
 	return cfg
@@ -387,5 +389,73 @@ func TestClientRetryWiringBacksOffThenGivesUp(t *testing.T) {
 	}
 	if elapsed := time.Since(started); elapsed > 5*time.Second {
 		t.Errorf("giving up took too long: %v", elapsed)
+	}
+}
+
+// TestPlaintextGateRefusesWithoutOptIn proves both roles refuse to start
+// when TLS is unavailable and security.allow_plaintext is not set.
+func TestPlaintextGateRefusesWithoutOptIn(t *testing.T) {
+	port := freePort(t)
+	dir := t.TempDir()
+
+	newCfg := func() *config.AppConfig {
+		cfg := loopbackConfig(t, dir, port) // sets AllowPlaintext=true
+		cfg.Config.Security.AllowPlaintext = false
+		return cfg
+	}
+
+	srvCfg := newCfg()
+	server := NewServer(srvCfg, nil, zap.NewNop(), nil)
+	srvProv, _, _, _ := newLinkedAdapters()
+	server.AdapterNew = srvProv
+
+	err := server.Start()
+	if err == nil {
+		_ = server.Stop()
+		t.Fatal("server started without TLS despite allow_plaintext=false")
+	}
+	if !strings.Contains(err.Error(), "allow_plaintext") {
+		t.Errorf("refusal error should name the knob: %v", err)
+	}
+
+	cliCfg := newCfg()
+	cliCfg.Type = config.TypeClient
+	cliCfg.Config.Mode = "client"
+	cliCfg.Config.Network.Name = "tunc"
+	cliCfg.Config.Network.Interface = "tunc"
+	cliCfg.Config.Tunnel.ServerAddress = "127.0.0.1"
+	cliCfg.Config.Tunnel.ServerPort = port
+	client := NewClient(cliCfg, nil, zap.NewNop(), nil)
+	client.AdapterNew = func(name string, _ *adapter.Options) (adapter.Interface, error) {
+		return &fakeInterface{name: name}, nil
+	}
+	if err := client.Start(); err == nil {
+		_ = client.Stop()
+		t.Fatal("client connected without TLS despite allow_plaintext=false")
+	}
+}
+
+// TestPlaintextGateCoversBrokenCerts proves a configured-but-unusable TLS
+// setup is also gated: it must fail closed instead of logging and serving
+// plaintext anyway.
+func TestPlaintextGateCoversBrokenCerts(t *testing.T) {
+	port := freePort(t)
+	dir := t.TempDir()
+
+	cfg := loopbackConfig(t, dir, port) // AllowPlaintext=true from helper...
+	cfg.Config.Security.AllowPlaintext = false
+	// ...but with cert paths pointing at files that do not exist.
+	cfg.Config.Auth.CertFile = filepath.Join(dir, "missing.crt")
+	cfg.Config.Auth.KeyFile = filepath.Join(dir, "missing.key")
+	cfg.Config.Auth.CAFile = filepath.Join(dir, "missing-ca.crt")
+
+	server := NewServer(cfg, nil, zap.NewNop(), nil)
+	err := server.Start()
+	if err == nil {
+		_ = server.Stop()
+		t.Fatal("broken certs + allow_plaintext=false must refuse to start")
+	}
+	if !strings.Contains(err.Error(), "allow_plaintext") {
+		t.Errorf("refusal should name the override knob: %v", err)
 	}
 }

@@ -177,6 +177,11 @@ type SecurityConfig struct {
 	TLS               TLSConfigOptions        `yaml:"tls" json:"tls"`
 	AuthMethod        string                  `yaml:"auth_method" json:"auth_method"`
 	CertRotation      CertRotation            `yaml:"cert_rotation" json:"cert_rotation"`
+
+	// AllowPlaintext explicitly permits running without TLS when
+	// certificates are missing or unusable. It defaults to false: the
+	// service refuses to start rather than silently downgrading.
+	AllowPlaintext bool `yaml:"allow_plaintext" json:"allow_plaintext"`
 }
 
 // MemoryProtectionsConfig represents memory protection settings
