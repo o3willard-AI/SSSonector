@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io/fs"
 	"sync"
-
 )
 
 // Manager implements ConfigManager interface

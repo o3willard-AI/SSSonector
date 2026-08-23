@@ -50,6 +50,7 @@ func TestMonitorLifecycleWithPrometheus(t *testing.T) {
 	}
 
 	url := "http://" + endpoint + "/metrics"
+	// #nosec G107 -- url is our own loopback metrics listener
 	resp, err := http.Get(url)
 	if err != nil {
 		t.Fatalf("GET /metrics: %v", err)
@@ -64,6 +65,7 @@ func TestMonitorLifecycleWithPrometheus(t *testing.T) {
 	}
 
 	m.UpdateMetrics(42, 7, 0, 0, 1, 2)
+	// #nosec G107 -- url is our own loopback metrics listener
 	resp, err = http.Get(url)
 	if err != nil {
 		t.Fatalf("Second GET /metrics: %v", err)
@@ -82,6 +84,7 @@ func TestMonitorLifecycleWithPrometheus(t *testing.T) {
 	if m.PromEndpoint() != "" {
 		t.Error("Expected Prometheus endpoint cleared after Stop")
 	}
+	// #nosec G107 -- url is our own loopback metrics listener
 	if _, err := http.Get(url); err == nil {
 		t.Error("Expected connection failure after Stop")
 	}

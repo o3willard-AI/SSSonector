@@ -3,14 +3,13 @@ package config
 
 import (
 	"fmt"
-	"io/ioutil"
+
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v2"
-
 )
 
 // FileStore implements ConfigStore interface for file-based storage
@@ -25,7 +24,7 @@ func NewFileStore(configDir string) *FileStore {
 
 // Load loads configuration from file
 func (s *FileStore) Load() (*AppConfig, error) {
-	data, err := ioutil.ReadFile(filepath.Join(s.configDir, "config.yaml"))
+	data, err := os.ReadFile(filepath.Join(s.configDir, "config.yaml"))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
@@ -40,7 +39,7 @@ func (s *FileStore) Load() (*AppConfig, error) {
 
 // Store stores configuration to file
 func (s *FileStore) Store(config *AppConfig) error {
-	if err := os.MkdirAll(s.configDir, 0755); err != nil {
+	if err := os.MkdirAll(s.configDir, 0o750); err != nil {
 		return fmt.Errorf("failed to create config directory: %v", err)
 	}
 
@@ -52,7 +51,7 @@ func (s *FileStore) Store(config *AppConfig) error {
 	filename := "config.yaml"
 	path := filepath.Join(s.configDir, filename)
 
-	if err := ioutil.WriteFile(path, data, 0644); err != nil {
+	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("failed to write config file: %v", err)
 	}
 
@@ -61,7 +60,7 @@ func (s *FileStore) Store(config *AppConfig) error {
 
 // ListVersions lists all available configuration versions for a given type
 func (s *FileStore) ListVersions(configType Type) ([]string, error) {
-	files, err := ioutil.ReadDir(s.configDir)
+	files, err := os.ReadDir(s.configDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return []string{}, nil
@@ -72,7 +71,7 @@ func (s *FileStore) ListVersions(configType Type) ([]string, error) {
 	var versions []string
 	for _, f := range files {
 		if strings.HasSuffix(f.Name(), ".yaml") {
-			data, err := ioutil.ReadFile(filepath.Join(s.configDir, f.Name()))
+			data, err := os.ReadFile(filepath.Join(s.configDir, f.Name()))
 			if err != nil {
 				continue
 			}

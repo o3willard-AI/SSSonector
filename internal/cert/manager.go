@@ -4,7 +4,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
-	"io/ioutil"
+	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -125,7 +125,7 @@ func (m *Manager) getUseTemporaryCerts() bool {
 // GetTLSConfig returns a configured TLS configuration
 func (m *Manager) GetTLSConfig() (*tls.Config, error) {
 	// Load CA certificate
-	caCert, err := ioutil.ReadFile(m.caFile)
+	caCert, err := os.ReadFile(m.caFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read CA certificate: %w", err)
 	}

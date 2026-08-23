@@ -1,7 +1,6 @@
 package facade
 
 import (
-	"github.com/o3willard-AI/SSSonector/internal/config"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -10,6 +9,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"fmt"
+	"github.com/o3willard-AI/SSSonector/internal/config"
 	"io"
 	"math/big"
 	"net"
@@ -28,7 +28,6 @@ import (
 // 1.3. It is published verbatim in the IETF specification (assembled here
 // from parts so secret scanners do not flag it); it is not a credential.
 var rfc6455SampleKey = "dGhlIH" + "NhbXBsZSBub25jZ" + "Q=="
-
 
 // testCerts holds temporary certificate file paths for testing
 type testCerts struct {
@@ -208,6 +207,7 @@ func TestFacadeRootHandler(t *testing.T) {
 	client := &http.Client{
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{
+				MinVersion: tls.VersionTLS12,
 				RootCAs:    certs.CertPool,
 				ServerName: "127.0.0.1",
 			},
@@ -236,6 +236,7 @@ func TestFacade404Handler(t *testing.T) {
 	client := &http.Client{
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{
+				MinVersion: tls.VersionTLS12,
 				RootCAs:    certs.CertPool,
 				ServerName: "127.0.0.1",
 			},
@@ -260,6 +261,7 @@ func TestFacadeConnectWithoutUpgrade(t *testing.T) {
 	client := &http.Client{
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{
+				MinVersion: tls.VersionTLS12,
 				RootCAs:    certs.CertPool,
 				ServerName: "127.0.0.1",
 			},
@@ -283,6 +285,7 @@ func TestFacadeConnectWithoutToken(t *testing.T) {
 
 	// Connect with TLS and send WebSocket upgrade without token
 	tlsConfig := &tls.Config{
+		MinVersion: tls.VersionTLS12,
 		RootCAs:    certs.CertPool,
 		ServerName: "127.0.0.1",
 	}
@@ -324,6 +327,7 @@ func TestFacadeConnectWithInvalidToken(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	tlsConfig := &tls.Config{
+		MinVersion: tls.VersionTLS12,
 		RootCAs:    certs.CertPool,
 		ServerName: "127.0.0.1",
 	}
@@ -391,6 +395,7 @@ func TestFacadeConnectWithValidToken(t *testing.T) {
 
 	// Connect and upgrade
 	tlsConfig := &tls.Config{
+		MinVersion: tls.VersionTLS12,
 		RootCAs:    certs.CertPool,
 		ServerName: "127.0.0.1",
 	}
@@ -456,6 +461,7 @@ func TestFacadeConnectUnconfiguredPort(t *testing.T) {
 	require.NoError(t, err)
 
 	tlsConfig := &tls.Config{
+		MinVersion: tls.VersionTLS12,
 		RootCAs:    certs.CertPool,
 		ServerName: "127.0.0.1",
 	}

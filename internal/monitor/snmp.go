@@ -1,10 +1,10 @@
 package monitor
 
 import (
-	"runtime/debug"
 	"fmt"
 	"net"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -48,7 +48,8 @@ func NewSNMPAgent(cfg *Config, metrics *Metrics, logger *zap.Logger) (*SNMPAgent
 		stats:     &SNMPStats{},
 		requestPool: sync.Pool{
 			New: func() interface{} {
-				return make([]byte, 4096) // Increased buffer size for large packets
+				buf := make([]byte, 4096) // Increased buffer size for large packets
+				return &buf
 			},
 		},
 	}
@@ -164,16 +165,17 @@ func cleanCommunityString(community string) string {
 
 func (a *SNMPAgent) handleRequests() {
 	for {
-		buffer := a.requestPool.Get().([]byte)
+		bufPtr := a.requestPool.Get().(*[]byte)
+		buffer := *bufPtr
 		n, remoteAddr, err := a.conn.ReadFromUDP(buffer)
 
 		if err != nil {
 			if opErr, ok := err.(*net.OpError); ok && opErr.Err.Error() == "use of closed network connection" {
-				a.requestPool.Put(buffer)
+				a.requestPool.Put(bufPtr)
 				return
 			}
 			a.logger.Error("Error reading UDP", zap.Error(err))
-			a.requestPool.Put(buffer)
+			a.requestPool.Put(bufPtr)
 			continue
 		}
 
@@ -190,7 +192,7 @@ func (a *SNMPAgent) handleRequests() {
 
 		// Parse incoming SNMP packet
 		request, err := DecodeSNMP(buffer[:n])
-		a.requestPool.Put(buffer) // Return buffer to pool
+		a.requestPool.Put(bufPtr) // Return buffer to pool
 
 		if err != nil {
 			a.stats.mu.Lock()
@@ -335,6 +337,7 @@ func (a *SNMPAgent) processRequest(request *gosnmp.SnmpPacket, remoteAddr *net.U
 	a.mibTree.UpdateMetrics(a.metrics)
 
 	// Process each variable in the request
+varbindLoop:
 	for i, varBind := range request.Variables {
 		oid := varBind.Name
 		var result gosnmp.SnmpPDU
@@ -480,7 +483,7 @@ func (a *SNMPAgent) processRequest(request *gosnmp.SnmpPacket, remoteAddr *net.U
 			response.ErrorIndex = uint8(i)
 			a.logger.Error("Unsupported PDU type",
 				zap.Int("type", int(request.PDUType)))
-			break
+			break varbindLoop
 		}
 
 		if response.Error == gosnmp.NoError {

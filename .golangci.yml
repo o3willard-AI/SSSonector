@@ -1,0 +1,40 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+formatters:
+  enable:
+    - gofmt
+
+linters:
+  default: none
+  enable:
+    - govet
+    - gosec
+    - unused
+    - staticcheck
+  settings:
+    gosec:
+      # Exclusions are deliberate; each carries a design justification.
+      # Revisit if the underlying design changes.
+      excludes:
+        # Errors that matter on the data path are returned and logged by the
+        # caller (tunnel/facade/monitor all propagate). Remaining sites are
+        # deferred Close() and best-effort stats/logging writes where an
+        # error has no meaningful handler.
+        - G104
+        # Opening cert/key/log/config files whose paths come from config is
+        # the program's purpose. Path hygiene (no '..', no '//', extension
+        # allowlist) is enforced at config-validation time.
+        - G304
+        # TUN management shells out to `sudo ip ...` with config-supplied,
+        # regex-validated interface names (adapter.ValidateInterfaceName).
+        - G204
+        # Metric counter/gauge conversions between signed/unsigned widths;
+        # values are bounded by their producers.
+        - G115
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

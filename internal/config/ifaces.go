@@ -1,9 +1,6 @@
 // Package interfaces defines the core interfaces for configuration management
 package config
 
-import (
-)
-
 // ConfigStore defines the interface for configuration storage
 type ConfigStore interface {
 	// Load loads the latest configuration from storage

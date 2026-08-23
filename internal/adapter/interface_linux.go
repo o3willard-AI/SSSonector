@@ -67,6 +67,9 @@ func New(name string, opts *Options) (Interface, error) {
 	if opts.Logger == nil {
 		opts.Logger = zap.NewNop()
 	}
+	if err := ValidateInterfaceName(name); err != nil {
+		return nil, err
+	}
 	return newLinuxInterface(name, opts)
 }
 
@@ -158,6 +161,8 @@ func (i *linuxInterface) initialize() error {
 		return err
 	}
 
+	// #nosec G103 -- TUN ioctl requires an ifreq struct; the layout is fixed
+	// by the kernel ABI and the interface name is validated in New().
 	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, file.Fd(), uintptr(TUNSETIFF), uintptr(unsafe.Pointer(&ifreq[0])))
 	if errno != 0 {
 		i.opts.Logger.Error("TUNSETIFF ioctl failed",
@@ -178,7 +183,7 @@ func (i *linuxInterface) initialize() error {
 	}
 
 	// Set interface ownership
-	if out, err := exec.Command("sudo", "chown", "sssonector:sssonector", fmt.Sprintf("/dev/net/tun")).CombinedOutput(); err != nil {
+	if out, err := exec.Command("sudo", "chown", "sssonector:sssonector", "/dev/net/tun").CombinedOutput(); err != nil {
 		file.Close()
 		i.setState(StateError)
 		return fmt.Errorf("failed to set TUN device ownership: %w (output: %s)", err, string(out))
@@ -208,6 +213,7 @@ func errnoName(errno syscall.Errno) string {
 func createIfreq(name string) ([]byte, error) {
 	var ifreq [40]byte
 	copy(ifreq[:16], []byte(name))
+	// #nosec G103 -- kernel ABI: flags field lives at offset 16 of ifreq
 	*(*uint16)(unsafe.Pointer(&ifreq[16])) = IFF_TUN | IFF_NO_PI
 	return ifreq[:], nil
 }

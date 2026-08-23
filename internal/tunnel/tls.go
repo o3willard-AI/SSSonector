@@ -40,13 +40,7 @@ func NewTLSManager(config *TLSConfig, logger *zap.Logger) (*TLSManager, error) {
 		return nil, fmt.Errorf("logger is required")
 	}
 
-	// Check if using test mode
-	skipVerify := false
-	if config.CertFile != "" {
-		if strings.Contains(config.CertFile, "/tmp/") {
-			skipVerify = true
-		}
-	}
+	skipVerify := config.CertFile != "" && strings.Contains(config.CertFile, "/tmp/")
 
 	manager, err := cert.NewManager(config.CertFile, config.KeyFile, config.CAFile, false, skipVerify, logger)
 	if err != nil {
@@ -98,7 +92,6 @@ func (t *TLSManager) GetServerConfig() (*tls.Config, error) {
 	config := GetTLSSecurityLevel(t.config.SecurityLevel, baseConfig)
 
 	// Additional server-specific settings
-	config.PreferServerCipherSuites = true     // Server chooses cipher suite
 	config.DynamicRecordSizingDisabled = false // Enable dynamic record sizing for better performance
 	config.SessionTicketsDisabled = true       // Disable session tickets for perfect forward secrecy
 
@@ -135,10 +128,7 @@ func (t *TLSManager) getServerCertManager() (*cert.Manager, error) {
 		return t.serverCertManager, nil
 	}
 
-	skipVerify := false
-	if t.config.CertFile != "" && strings.Contains(t.config.CertFile, "/tmp/") {
-		skipVerify = true
-	}
+	skipVerify := t.config.CertFile != "" && strings.Contains(t.config.CertFile, "/tmp/")
 
 	manager, err := cert.NewManager(t.config.CertFile, t.config.KeyFile, t.config.CAFile, true, skipVerify, t.logger)
 	if err != nil {

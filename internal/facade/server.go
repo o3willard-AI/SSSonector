@@ -1,13 +1,13 @@
 package facade
 
 import (
-	"github.com/o3willard-AI/SSSonector/internal/config"
 	"context"
-	"crypto/sha1"
+	"crypto/sha1" // #nosec G505 -- mandated by RFC 6455 Section 4.2.2
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
 	"fmt"
+	"github.com/o3willard-AI/SSSonector/internal/config"
 	"net"
 	"net/http"
 	"os"
@@ -25,6 +25,7 @@ const (
 	websocketGUID = "258EAFA5-E914-47DA-95CA-5631BC565D11"
 
 	// tunnelTokenHeader is the HTTP header carrying the HMAC-signed tunnel token
+	// #nosec G101 -- header name, not a credential
 	tunnelTokenHeader = "X-Tunnel-Token"
 
 	// defaultWebRoot is the default content returned for GET /
@@ -410,7 +411,7 @@ func isWebSocketUpgrade(r *http.Request) bool {
 
 // computeWebSocketAccept computes the Sec-WebSocket-Accept value per RFC 6455.
 func computeWebSocketAccept(key string) string {
-	h := sha1.New()
+	h := sha1.New() // #nosec G401,G505 -- SHA-1 is mandated by RFC 6455 Section 4.2.2
 	h.Write([]byte(key + websocketGUID))
 	return base64.StdEncoding.EncodeToString(h.Sum(nil))
 }

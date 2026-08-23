@@ -168,9 +168,8 @@ func TestSignalDrivenReloadEndToEnd(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		prev := zapcore.InfoLevel
 		for range hupChan {
-			prev = applyReload(zap.NewNop(), path, "", false, prev, &atom, fake)
+			applyReload(zap.NewNop(), path, "", false, zapcore.InfoLevel, &atom, fake)
 			return
 		}
 	}()

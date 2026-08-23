@@ -2,9 +2,22 @@ package adapter
 
 import (
 	"fmt"
+	"regexp"
 
 	"go.uber.org/zap"
 )
+
+// validInterfaceName guards shell-out commands against injection through
+// config-supplied names. Linux limits interface names to IFNAMSIZ-1 bytes.
+var validInterfaceName = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,15}$`)
+
+// ValidateInterfaceName enforces the kernel's interface-name constraints
+func ValidateInterfaceName(name string) error {
+	if !validInterfaceName.MatchString(name) {
+		return fmt.Errorf("invalid interface name %q (allowed: alphanumerics, dot, underscore, hyphen; max 15 chars)", name)
+	}
+	return nil
+}
 
 // InterfaceState represents the possible states of a network interface
 type InterfaceState int

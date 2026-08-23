@@ -163,7 +163,7 @@ func verifyValidityPeriod(cert *x509.Certificate) error {
 // MoveCertificates copies certificates to the target directory if needed
 func (l *CertificateLocator) MoveCertificates(sourceCertPath, sourceKeyPath, targetDir string) error {
 	// Create target directory if it doesn't exist
-	if err := os.MkdirAll(targetDir, 0755); err != nil {
+	if err := os.MkdirAll(targetDir, 0o750); err != nil {
 		return fmt.Errorf("failed to create target directory: %v", err)
 	}
 
@@ -192,7 +192,7 @@ func copyFile(source, dest string) error {
 		return fmt.Errorf("failed to read source file: %v", err)
 	}
 
-	if err := os.WriteFile(dest, input, 0644); err != nil {
+	if err := os.WriteFile(dest, input, 0o600); err != nil {
 		return fmt.Errorf("failed to write destination file: %v", err)
 	}
 

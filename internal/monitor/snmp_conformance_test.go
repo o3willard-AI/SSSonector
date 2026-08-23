@@ -54,14 +54,14 @@ func newClient(addr, community string) *gosnmp.GoSNMP {
 	host, portStr, _ := net.SplitHostPort(addr)
 	port, _ := strconv.Atoi(portStr)
 	return &gosnmp.GoSNMP{
-		Target:     host,
-		Port:       uint16(port),
-		Community:  community,
-		Version:    gosnmp.Version2c,
-		Timeout:    2 * time.Second,
-		Retries:    1,
-		MaxOids:    gosnmp.MaxOids,
-		Transport:  "udp",
+		Target:    host,
+		Port:      uint16(port),
+		Community: community,
+		Version:   gosnmp.Version2c,
+		Timeout:   2 * time.Second,
+		Retries:   1,
+		MaxOids:   gosnmp.MaxOids,
+		Transport: "udp",
 	}
 }
 
@@ -80,10 +80,10 @@ func TestSNMPGetConformance(t *testing.T) {
 	defer client.Conn.Close()
 
 	result, err := client.Get([]string{
-		maxConnsOID,       // INTEGER 10
-		tunnelStatusOID,   // INTEGER 1
-		rateUpOID,         // Gauge32 10240
-		bytesInOID,        // Counter64 (snapshot value)
+		maxConnsOID,     // INTEGER 10
+		tunnelStatusOID, // INTEGER 1
+		rateUpOID,       // Gauge32 10240
+		bytesInOID,      // Counter64 (snapshot value)
 	})
 	if err != nil {
 		t.Fatalf("Get: %v", err)

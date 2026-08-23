@@ -138,13 +138,14 @@ func generateEndEntityCert(certDir, name string, ca *x509.Certificate, caKey *rs
 	}
 
 	// Add IP SANs for server and client certificates
-	if name == "server" {
+	switch name {
+	case "server":
 		template.IPAddresses = []net.IP{
 			net.ParseIP("127.0.0.1"),      // localhost
 			net.ParseIP("192.168.50.210"), // server IP
 			net.ParseIP("192.168.50.211"), // client IP
 		}
-	} else if name == "client" {
+	case "client":
 		template.IPAddresses = []net.IP{
 			net.ParseIP("127.0.0.1"),      // localhost
 			net.ParseIP("192.168.50.210"), // server IP
@@ -163,13 +164,14 @@ func generateEndEntityCert(certDir, name string, ca *x509.Certificate, caKey *rs
 // saveCertAndKey saves a certificate and private key to disk
 func saveCertAndKey(certDir, name string, certBytes []byte, key *rsa.PrivateKey) error {
 	// Create directory if it doesn't exist
-	if err := os.MkdirAll(certDir, 0755); err != nil {
+	if err := os.MkdirAll(certDir, 0o750); err != nil {
 		return fmt.Errorf("failed to create certificate directory %s: %v", certDir, err)
 	}
 
 	// Save certificate
 	certFile := filepath.Join(certDir, name+".crt")
-	certOut, err := os.OpenFile(certFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	// #nosec G302 -- certificates are public material; 0644 is conventional
+	certOut, err := os.OpenFile(certFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
 	if err != nil {
 		return fmt.Errorf("failed to open %s for writing: %v", certFile, err)
 	}

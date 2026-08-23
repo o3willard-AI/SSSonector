@@ -1,7 +1,6 @@
 package facade
 
 import (
-	"github.com/o3willard-AI/SSSonector/internal/config"
 	"bufio"
 	"context"
 	"crypto/rand"
@@ -9,6 +8,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"fmt"
+	"github.com/o3willard-AI/SSSonector/internal/config"
 	"net"
 	"net/http"
 	"os"

@@ -1,10 +1,10 @@
 package facade
 
 import (
-	"github.com/o3willard-AI/SSSonector/internal/config"
 	"context"
 	"crypto/tls"
 	"fmt"
+	"github.com/o3willard-AI/SSSonector/internal/config"
 	"io"
 	"net"
 	"testing"
@@ -14,7 +14,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
-
 
 func TestClientDirectConnect(t *testing.T) {
 	// Start a mock server that the client can directly connect to

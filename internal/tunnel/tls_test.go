@@ -2,7 +2,7 @@ package tunnel
 
 import (
 	"crypto/tls"
-	"io/ioutil"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -187,7 +187,7 @@ func TestTLSHandshake(t *testing.T) {
 	defer tlsConn.Close()
 
 	// Read test data
-	data, err := ioutil.ReadAll(tlsConn)
+	data, err := io.ReadAll(tlsConn)
 	if err != nil {
 		t.Fatalf("Failed to read data: %v", err)
 	}

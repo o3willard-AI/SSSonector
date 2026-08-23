@@ -173,7 +173,6 @@ func TestValidateTokenFutureTimestampWithinSkew(t *testing.T) {
 	assert.Equal(t, 8443, port)
 }
 
-
 func TestValidateTokenTamperedTimestamp(t *testing.T) {
 	secret := []byte("test-secret")
 

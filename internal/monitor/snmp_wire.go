@@ -38,8 +38,7 @@ var errMalformed = errors.New("malformed SNMP packet")
 type berTLV struct {
 	tag    byte
 	value  []byte
-	full   []byte // including header, for nested parsing helpers
-	header int    // length of header bytes
+	header int // length of header bytes
 }
 
 func berRead(data []byte, offset int) (berTLV, error) {
@@ -177,13 +176,13 @@ func DecodeSNMP(data []byte) (*gosnmp.SnmpPacket, error) {
 	}
 
 	packet := &gosnmp.SnmpPacket{
-		Version:      ver,
-		Community:    string(community),
-		PDUType:      gosnmp.PDUType(pduTLV.tag),
-		RequestID:    uint32(reqID),
-		Error:        gosnmp.SNMPError(errStatus),
-		ErrorIndex:   uint8(errIndex),
-		Variables:    make([]gosnmp.SnmpPDU, 0, 8),
+		Version:       ver,
+		Community:     string(community),
+		PDUType:       gosnmp.PDUType(pduTLV.tag),
+		RequestID:     uint32(reqID),
+		Error:         gosnmp.SNMPError(errStatus),
+		ErrorIndex:    uint8(errIndex),
+		Variables:     make([]gosnmp.SnmpPDU, 0, 8),
 		SecurityModel: gosnmp.UserSecurityModel,
 	}
 
