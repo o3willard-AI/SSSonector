@@ -90,12 +90,6 @@ cp -r docs/config "$OUTPUT_DIR/docs/"
 cp -r docs/implementation "$OUTPUT_DIR/docs/"
 cp README.md LICENSE CHANGELOG.md "$OUTPUT_DIR/"
 
-# Copy Kubernetes manifests
-if [ -d "deploy/kubernetes" ]; then
-    echo "Copying Kubernetes manifests..."
-    cp -r deploy/kubernetes "$OUTPUT_DIR/"
-fi
-
 # Create release bundle
 echo "Creating release bundle..."
 cd "$OUTPUT_DIR"

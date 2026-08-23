@@ -17,9 +17,12 @@ This file tracks currently-true issues only.
 4. **Docker image tags unpinned** — `monitoring/docker-compose.yml` uses
    `:latest` for prometheus/snmp-exporter/grafana (pre-existing P3 hygiene;
    pin when the stack is next exercised).
-5. **K8s prometheus config assumes in-cluster service name** —
-   `monitoring/prometheus/prometheus.yml` scrapes `sssonector:9090` and uses
-   pod-annotation relabeling; align it if/when the Helm/k8s path is revived.
+5. **Kubernetes deployment artifacts pruned** — the manifest shipped a
+   legacy JSON ConfigMap the current loader cannot parse, and the k8s
+   prometheus config assumed in-cluster conventions nothing established.
+   Deleted until a real k8s deployment exists; revival needs a v2-schema
+   config, TUN device mapping + NET_ADMIN (or the netlink privilege rework),
+   and probes on `/healthz`.
 6. **SNMP agent is v2c/community-auth only** — adequate for the lab/QA
    monitoring contract; SNMPv3 (authPriv) would be required for untrusted
    networks. Not planned unless a deployment demands it.

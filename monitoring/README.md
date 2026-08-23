@@ -83,7 +83,7 @@ To import additional dashboards: Grafana -> Dashboards -> Import.
 
 When the metrics endpoint is enabled, `/healthz` (same port as `/metrics`)
 answers with `{"status":"ok","mode":...,"tunnel_state":...,"uptime_seconds":N}`.
-Point systemd/k8s probes there instead of process-name checks.
+Point systemd probes there instead of process-name checks.
 
 ## Testing
 

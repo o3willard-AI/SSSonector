@@ -33,7 +33,7 @@ prepare:
 
 # Build for all platforms
 .PHONY: build
-build: prepare deps build-linux build-windows build-darwin build-docker build-security docs k8s
+build: prepare deps build-linux build-windows build-darwin build-docker build-security docs
 	@for file in README.md LICENSE CHANGELOG.md; do \
 		if [ -f $$file ]; then \
 			echo "Copying $$file..."; \
@@ -155,19 +155,9 @@ docs:
 		cp -r docs/implementation ${BUILD_DIR}/; \
 	fi
 
-# Kubernetes manifests (if available)
-.PHONY: k8s
-k8s:
-	@if [ -d deploy/kubernetes ]; then \
-		echo "Copying Kubernetes manifests..."; \
-		cp -r deploy/kubernetes ${BUILD_DIR}/; \
-	else \
-		echo "Kubernetes manifests not found, skipping"; \
-	fi
-
 # Release bundle
 .PHONY: release
-release: build build-security docs k8s
+release: build build-security docs
 	cp README.md ${BUILD_DIR}/
 	cp LICENSE ${BUILD_DIR}/
 	cp CHANGELOG.md ${BUILD_DIR}/
