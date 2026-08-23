@@ -23,7 +23,11 @@ This file tracks currently-true issues only.
 6. **SNMP agent is v2c/community-auth only** — adequate for the lab/QA
    monitoring contract; SNMPv3 (authPriv) would be required for untrusted
    networks. Not planned unless a deployment demands it.
-7. **Coverage gaps in platform-specific code** — `internal/adapter` platform
+7. **Zero-downtime server restart not implemented** — restarts rely on fast
+   client auto-reconnect (~1–2 s default). Decision record
+   (`docs/zero_downtime_restart_decision.md`) recommends systemd socket
+   activation only if a deployment demands sub-second listener failover.
+8. **Coverage gaps in platform-specific code** — `internal/adapter` platform
    backends and OS-coupled monitor collectors cannot be integration-tested in
    unprivileged CI; they are exercised via QA runs on TUN-capable hosts.
 
