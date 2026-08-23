@@ -171,6 +171,8 @@ Certificate paths may be absolute or relative to the config file location.
   `snmp.address:snmp.port` (see [SNMP Monitoring](snmp_monitoring.md))
 - `metrics.enabled` + `metrics.interval` control how often live data-path
   counters are sampled into those endpoints
+- `/healthz` is served next to `/metrics` for liveness/readiness probes;
+  it reports run mode and current tunnel state
 
 ### Throttle Configuration
 - `enabled`: enable/disable rate limiting (hot-reloadable)

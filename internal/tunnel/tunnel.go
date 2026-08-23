@@ -536,6 +536,12 @@ func (c *Client) startMetricsSampler() {
 					&c.lastSeenHitsIn, &c.lastSeenHitsOut,
 					&c.mu)
 				c.monitor.UpdateThrottleMetrics(inH, outH, rate, burst)
+
+				state := "connecting"
+				if c.activeConns.Load() > 0 {
+					state = "connected"
+				}
+				c.monitor.SetHealth("client", state)
 			}
 		}
 	}()

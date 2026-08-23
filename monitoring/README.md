@@ -79,6 +79,12 @@ cumulative errors, error rate over 5 minutes, and CPU usage.
 
 To import additional dashboards: Grafana -> Dashboards -> Import.
 
+## Health Probes
+
+When the metrics endpoint is enabled, `/healthz` (same port as `/metrics`)
+answers with `{"status":"ok","mode":...,"tunnel_state":...,"uptime_seconds":N}`.
+Point systemd/k8s probes there instead of process-name checks.
+
 ## Testing
 
 ```bash

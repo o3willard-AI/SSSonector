@@ -1,6 +1,7 @@
 package monitor
 
 import (
+	"encoding/json"
 	"io"
 	"net"
 	"net/http"
@@ -169,5 +170,46 @@ func TestThrottleMetricsExposed(t *testing.T) {
 	snap := m.GetMetrics()
 	if snap.ThrottleHitsIn != 3 || snap.ThrottleHitsOut != 9 {
 		t.Errorf("GetMetrics hits = %d/%d, want 3/9", snap.ThrottleHitsIn, snap.ThrottleHitsOut)
+	}
+}
+
+func TestHealthzReportsState(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve port: %v", err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	ln.Close()
+
+	m, err := New(zap.NewNop(), &Config{PromEnabled: true, PromPort: port})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.Start()
+	defer m.Stop()
+
+	m.SetHealth("server", "connected")
+
+	resp, err := http.Get("http://127.0.0.1:" + strconv.Itoa(port) + "/healthz") // #nosec G107 -- own loopback listener
+	if err != nil {
+		t.Fatalf("GET /healthz: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	var parsed struct {
+		Status        string `json:"status"`
+		Mode          string `json:"mode"`
+		TunnelState   string `json:"tunnel_state"`
+		UptimeSeconds int64  `json:"uptime_seconds"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		t.Fatalf("invalid JSON from /healthz: %v\n%s", err, body)
+	}
+	if parsed.Status != "ok" || parsed.Mode != "server" || parsed.TunnelState != "connected" {
+		t.Errorf("unexpected health payload: %+v", parsed)
+	}
+	if parsed.UptimeSeconds < 0 {
+		t.Error("uptime should be non-negative")
 	}
 }

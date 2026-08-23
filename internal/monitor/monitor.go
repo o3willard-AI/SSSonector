@@ -36,6 +36,9 @@ type Monitor struct {
 	mu         sync.RWMutex
 	shutdownCh chan struct{}
 	shutdownWg sync.WaitGroup
+
+	healthMode        string
+	healthTunnelState string
 }
 
 // New creates a new monitor instance. The logger is owned by the caller
@@ -151,6 +154,7 @@ func (m *Monitor) startPrometheus() error {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc(path, m.handleMetrics)
+	mux.HandleFunc("/healthz", m.handleHealthz)
 
 	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", m.config.PromPort))
 	if err != nil {
@@ -179,6 +183,27 @@ func (m *Monitor) startPrometheus() error {
 		zap.String("path", path),
 	)
 	return nil
+}
+
+// SetHealth records the run mode and current tunnel state surfaced by /healthz
+func (m *Monitor) SetHealth(mode, tunnelState string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.healthMode = mode
+	m.healthTunnelState = tunnelState
+}
+
+// handleHealthz answers liveness/readiness probes with process and tunnel state
+func (m *Monitor) handleHealthz(w http.ResponseWriter, r *http.Request) {
+	m.mu.RLock()
+	mode := m.healthMode
+	tunnel := m.healthTunnelState
+	started := m.startTime
+	m.mu.RUnlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, `{"status":"ok","mode":%q,"tunnel_state":%q,"uptime_seconds":%d}`+"\n",
+		mode, tunnel, time.Since(started)/time.Second)
 }
 
 // handleMetrics renders current metrics in Prometheus text exposition format
