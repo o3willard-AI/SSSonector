@@ -111,8 +111,8 @@ func TestSNMPGetConformance(t *testing.T) {
 	assertPDU(1, tunnelStatusOID, gosnmp.Integer, nil)
 	assertPDU(2, rateUpOID, gosnmp.Gauge32, nil)
 	assertPDU(3, bytesInOID, gosnmp.Counter64, nil)
-	if got := asUint(result.Variables[0].Value); got != 10 {
-		t.Errorf("maxConnections = %v, want 10", result.Variables[0].Value)
+	if got := asUint(result.Variables[0].Value); got != 1 {
+		t.Errorf("maxConnections = %v, want 1 (point-to-point)", result.Variables[0].Value)
 	}
 
 	if got := asUint(result.Variables[1].Value); got != 1 {

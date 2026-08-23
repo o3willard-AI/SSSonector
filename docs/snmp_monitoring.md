@@ -53,7 +53,7 @@ All OIDs are relative to the enterprise root `.1.3.6.1.4.1.54321`.
 
 | OID | Name | Type | Description |
 |---|---|---|---|
-| .3.1 | maxConnections | Integer | read-write (not applied at runtime) |
+| .3.1 | maxConnections | Integer | read-only, fixed at 1 (point-to-point product) |
 | .3.2 | uploadRate | Gauge32 | Effective upload pacing rate in kbps (0 when throttling disabled) |
 | .3.3 | downloadRate | Gauge32 | Effective download pacing rate in kbps |
 | .3.4 | rateLimitHitsIn | Counter64 | Inbound requests that had to wait for tokens |

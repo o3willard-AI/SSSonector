@@ -177,6 +177,17 @@ subsequent retries immediately (see [Hot Reload](hot_reload.md)).
 Both are per-connection settings: restart required. See
 [Dead-Peer Detection](dead_peer_detection.md) for the design rationale.
 
+### Server Concurrency (point-to-point)
+
+SSSonector servers are **point-to-point**: exactly one client connection is
+served at a time. While a tunnel is live the listener keeps accepting, and a
+second client waits in the TCP backlog; when the active connection ends, the
+waiting connection takes over automatically. Scale-out is by *instances* —
+one daemon (and one TUN device) per client, optionally behind distinct
+facade `tunnel_ports`.
+
+The MIB reports this contract as `maxConnections = 1`.
+
 ### Logging Configuration
 - `level`: one of debug, info, warn, error, fatal (required)
 - `format`: `json` (default) or `console`

@@ -92,7 +92,8 @@ func NewMIBTree(metrics *Metrics) *MIBTree {
 	tree.addCounter64(startTimeOID, "startTime", "Service start time", metrics.StartTime.Unix(), "read-only")
 
 	// Configuration
-	tree.addInteger(maxConnsOID, "maxConnections", "Maximum allowed connections", 10, "read-write")
+	// Point-to-point product: exactly one concurrent tunnel client.
+	tree.addInteger(maxConnsOID, "maxConnections", "Maximum allowed connections", 1, "read-only")
 	tree.addGauge32(rateUpOID, "uploadRate", "Effective upload rate in kbps", 0, "read-write")
 	tree.addGauge32(rateDownOID, "downloadRate", "Effective download rate in kbps", 0, "read-write")
 

@@ -51,7 +51,6 @@ func TestConfigManager(t *testing.T) {
 			Tunnel: TunnelConfig{
 				ServerAddress: "192.168.1.1",
 				ServerPort:    8080,
-				Compression:   true,
 			},
 			Security: SecurityConfig{
 				TLS: TLSConfigOptions{

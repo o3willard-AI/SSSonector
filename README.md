@@ -6,6 +6,7 @@ SSSonector (**Secure SSL Connector**) is a high-performance, secure tunnel servi
 
 ### Core Features
 - Secure TLS-based tunneling with mutual certificate authentication
+- Point-to-point design: one daemon instance per client link
 - **HTTPS Facade** for firewall traversal -- tunnel traffic disguised as standard HTTPS/WebSocket on port 443
 - Cross-platform support (Linux, Windows, macOS)
 - High-performance data transfer with optimized buffer management

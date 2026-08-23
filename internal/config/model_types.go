@@ -138,7 +138,6 @@ type TunnelConfig struct {
 	ServerAddress string `yaml:"server_address" json:"server_address"`
 	ServerPort    int    `yaml:"server_port" json:"server_port"`
 	Port          int    `yaml:"port" json:"port"`
-	Compression   bool   `yaml:"compression" json:"compression"`
 
 	Reconnect ReconnectConfig `yaml:"reconnect" json:"reconnect"`
 
