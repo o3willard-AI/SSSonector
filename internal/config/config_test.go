@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -33,7 +34,7 @@ func TestConfigManager(t *testing.T) {
 	// Test setting new config
 	newConfig := &AppConfig{
 		Type:    TypeClient,
-		Version: "1.0.0",
+		Version: "2.0.0",
 		Config: &Config{
 			Mode: ModeClient,
 			Logging: LoggingConfig{
@@ -60,8 +61,8 @@ func TestConfigManager(t *testing.T) {
 			},
 		},
 		Metadata: ConfigMetadata{
-			Version:       "1.0.0",
-			SchemaVersion: "1.0.0",
+			Version:       "2.0.0",
+			SchemaVersion: CurrentSchemaVersion,
 			Created:       time.Now(),
 			Modified:      time.Now(),
 			CreatedBy:     "test",
@@ -211,5 +212,40 @@ func TestValidateEnvironmentAcceptsQA(t *testing.T) {
 	cfg.Metadata.Environment = "narnia"
 	if err := v.validateEnvironmentConfig(cfg); err == nil {
 		t.Error("unknown environment should fail")
+	}
+}
+
+func TestLoadDataRequiresCurrentSchema(t *testing.T) {
+	l := NewConfigLoader()
+
+	current := `
+metadata:
+  schema_version: "2.0.0"
+  environment: qa
+type: client
+config:
+  mode: client
+  security:
+    tls:
+      min_version: "1.2"
+`
+	cfg, err := l.LoadFromString(current, "yaml")
+	if err != nil {
+		t.Fatalf("current schema rejected: %v", err)
+	}
+	if cfg.Config.Mode != ModeClient {
+		t.Errorf("mode = %q, want client", cfg.Config.Mode)
+	}
+
+	legacy := `
+metadata:
+  schema_version: "1.0.0"
+throttle:
+  enabled: true
+`
+	if _, err := l.LoadFromString(legacy, "yaml"); err == nil {
+		t.Error("legacy schema must be rejected")
+	} else if !strings.Contains(err.Error(), "unsupported schema version") {
+		t.Errorf("error should name the schema version problem, got: %v", err)
 	}
 }

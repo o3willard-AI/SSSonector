@@ -66,25 +66,15 @@ type AppConfig struct {
 
 // ConfigMetadata represents configuration metadata
 type ConfigMetadata struct {
-	Version          string            `yaml:"version" json:"version"`
-	Created          time.Time         `yaml:"created" json:"created"`
-	Modified         time.Time         `yaml:"modified" json:"modified"`
-	CreatedBy        string            `yaml:"created_by" json:"created_by"`
-	CreatedAt        time.Time         `yaml:"created_at" json:"created_at"`
-	UpdatedAt        time.Time         `yaml:"updated_at" json:"updated_at"`
-	Environment      string            `yaml:"environment" json:"environment"`
-	Region           string            `yaml:"region" json:"region"`
-	SchemaVersion    string            `yaml:"schema_version" json:"schema_version"`
-	MigrationHistory []MigrationRecord `yaml:"migration_history" json:"migration_history"`
-}
-
-// MigrationRecord represents a configuration migration event
-type MigrationRecord struct {
-	FromVersion string    `yaml:"from_version" json:"from_version"`
-	ToVersion   string    `yaml:"to_version" json:"to_version"`
-	Timestamp   time.Time `yaml:"timestamp" json:"timestamp"`
-	Status      string    `yaml:"status" json:"status"`
-	Notes       string    `yaml:"notes" json:"notes"`
+	Version       string    `yaml:"version" json:"version"`
+	Created       time.Time `yaml:"created" json:"created"`
+	Modified      time.Time `yaml:"modified" json:"modified"`
+	CreatedBy     string    `yaml:"created_by" json:"created_by"`
+	CreatedAt     time.Time `yaml:"created_at" json:"created_at"`
+	UpdatedAt     time.Time `yaml:"updated_at" json:"updated_at"`
+	Environment   string    `yaml:"environment" json:"environment"`
+	Region        string    `yaml:"region" json:"region"`
+	SchemaVersion string    `yaml:"schema_version" json:"schema_version"`
 }
 
 // Config represents the main configuration structure
@@ -148,9 +138,7 @@ type TunnelConfig struct {
 	ServerAddress string `yaml:"server_address" json:"server_address"`
 	ServerPort    int    `yaml:"server_port" json:"server_port"`
 	Port          int    `yaml:"port" json:"port"`
-	Protocol      string `yaml:"protocol" json:"protocol"`
 	Compression   bool   `yaml:"compression" json:"compression"`
-	Keepalive     string `yaml:"keepalive" json:"keepalive"`
 }
 
 // SecurityConfig represents security configuration
@@ -288,9 +276,9 @@ func NewAppConfig(configType Type) *AppConfig {
 	return &AppConfig{
 		Type:    configType,
 		Config:  &Config{Mode: string(configType)},
-		Version: "1.0.0",
+		Version: "2.0.0",
 		Metadata: ConfigMetadata{
-			Version:       "1.0.0",
+			Version:       "2.0.0",
 			Created:       time.Now(),
 			Modified:      time.Now(),
 			CreatedBy:     "system",
@@ -298,16 +286,7 @@ func NewAppConfig(configType Type) *AppConfig {
 			UpdatedAt:     time.Now(),
 			Environment:   "development",
 			Region:        "local",
-			SchemaVersion: "1.0.0",
-			MigrationHistory: []MigrationRecord{
-				{
-					FromVersion: "0.0.0",
-					ToVersion:   "1.0.0",
-					Timestamp:   time.Now(),
-					Status:      "completed",
-					Notes:       "Initial configuration schema",
-				},
-			},
+			SchemaVersion: CurrentSchemaVersion,
 		},
 		Throttle: ThrottleConfig{
 			Enabled: false,

@@ -13,8 +13,6 @@ config:
   tunnel:
     listen_address: 0.0.0.0
     listen_port: 8443
-    protocol: tcp
-    compression: false
   security:
     tls:
       min_version: "1.2"

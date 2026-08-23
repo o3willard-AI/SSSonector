@@ -17,8 +17,6 @@ config:
   tunnel:
     server_address: "192.168.50.210"
     server_port: 8443
-    protocol: tcp
-    compression: false
   auth:
     cert_file: "certs/client.crt"
     key_file: "certs/client.key"

@@ -253,8 +253,10 @@ Configuration is validated at startup AND on every SIGHUP reload:
 
 ## Best Practices
 
-- Keep `metadata.schema_version: "2.0.0"` in every config so the loader
-  parses it directly instead of running legacy upgrade heuristics
+- `metadata.schema_version: "2.0.0"` is REQUIRED. The loader accepts only
+  the current schema and rejects anything else explicitly — configs written
+  for v1.x must be migrated by hand (the old lossy auto-upgraders were
+  removed because they silently discarded settings)
 - Prefer explicit values over defaults for anything security-relevant
 - Test config changes with `-log-level debug` first
 - Restrict config file permissions; the facade token secret lives there

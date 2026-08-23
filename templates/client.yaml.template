@@ -15,8 +15,6 @@ config:
   tunnel:
     server_address: {{SERVER_ADDRESS}}
     server_port: {{SERVER_PORT}}
-    protocol: tcp
-    compression: false
   auth:
     cert_file: /etc/sssonector/instances/{{INSTANCE_NAME}}/certs/client.crt
     key_file: /etc/sssonector/instances/{{INSTANCE_NAME}}/certs/client.key
