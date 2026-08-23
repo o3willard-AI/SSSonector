@@ -1,8 +1,8 @@
 package throttle
 
 import (
-	"github.com/o3willard-AI/SSSonector/internal/config"
 	"fmt"
+	"github.com/o3willard-AI/SSSonector/internal/config"
 	"io"
 	"sync"
 
@@ -12,16 +12,16 @@ import (
 // Limiter implements rate limiting for read/write operations.
 //
 // The limiter wraps an io.Reader and io.Writer pair and paces transfers at
-// the configured rate (bytes/second, adjusted by tcpOverheadFactor). The
+// the configured rate (bytes/second, adjusted by TCPOverheadFactor). The
 // burst cap is 100ms worth of effective rate; buckets start empty so
 // throughput is paced from the first byte.
 type Limiter struct {
-	enabled bool
-	inBucket *tokenBucket // read direction (into this process)
+	enabled   bool
+	inBucket  *tokenBucket // read direction (into this process)
 	outBucket *tokenBucket // write direction (out of this process)
-	reader   io.Reader
-	writer   io.Writer
-	logger   *zap.Logger
+	reader    io.Reader
+	writer    io.Writer
+	logger    *zap.Logger
 
 	mu         sync.RWMutex
 	inMetrics  LimiterMetrics
@@ -36,22 +36,29 @@ type LimiterMetrics struct {
 }
 
 // NewLimiter creates a new rate limiter.
-func NewLimiter(cfg *config.AppConfig, reader io.Reader, writer io.Writer, logger *zap.Logger) *Limiter {
-	rate := float64(cfg.Throttle.Rate) * tcpOverheadFactor
+func NewLimiter(cfg *config.AppConfig, reader io.Reader, writer io.Writer, logger *zap.Logger) (*Limiter, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("config is required")
+	}
+	if logger == nil {
+		return nil, fmt.Errorf("logger is required")
+	}
+
+	rate := float64(cfg.Throttle.Rate) * TCPOverheadFactor
 	burst := rate * 0.1 // 100ms worth of data
 
 	l := &Limiter{
-		enabled: cfg.Throttle.Enabled,
-		reader:  reader,
-		writer:  writer,
-		logger:  logger,
-		inBucket:  newTokenBucket(rate, burst),
-		outBucket: newTokenBucket(rate, burst),
+		enabled:    cfg.Throttle.Enabled,
+		reader:     reader,
+		writer:     writer,
+		logger:     logger,
+		inBucket:   newTokenBucket(rate, burst),
+		outBucket:  newTokenBucket(rate, burst),
 		inMetrics:  LimiterMetrics{Rate: rate, Burst: burst},
 		outMetrics: LimiterMetrics{Rate: rate, Burst: burst},
 	}
 
-	return l
+	return l, nil
 }
 
 // Read implements io.Reader. Data is read from the underlying reader and
@@ -116,7 +123,7 @@ func (l *Limiter) Wait(isRead bool, size int) error {
 
 // Update updates the limiter configuration (hot reload).
 func (l *Limiter) Update(cfg *config.AppConfig) {
-	rate := float64(cfg.Throttle.Rate) * tcpOverheadFactor
+	rate := float64(cfg.Throttle.Rate) * TCPOverheadFactor
 	burst := rate * 0.1
 
 	l.inBucket.Update(rate, burst)
@@ -135,6 +142,11 @@ func (l *Limiter) Update(cfg *config.AppConfig) {
 		zap.Float64("rate", rate),
 		zap.Float64("burst", burst),
 	)
+}
+
+// IsEnabled reports whether pacing is currently active
+func (l *Limiter) IsEnabled() bool {
+	return l.enabled
 }
 
 // GetMetrics returns current inbound and outbound metrics.

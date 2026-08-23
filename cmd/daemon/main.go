@@ -18,33 +18,20 @@ import (
 	"syscall"
 
 	"github.com/o3willard-AI/SSSonector/internal/config"
+	"github.com/o3willard-AI/SSSonector/internal/monitor"
 	"github.com/o3willard-AI/SSSonector/internal/tunnel"
 	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 )
 
 var (
 	Version = "dev"
 
 	configFile = flag.String("config", "/etc/sssonector/config.yaml", "Path to config file")
-	logLevel   = flag.String("log-level", "info", "Log level (debug, info, warn, error)")
+	logLevel   = flag.String("log-level", "", "Log level override (debug, info, warn, error, fatal); defaults to logging.level from config, or info")
 	showVer    = flag.Bool("version", false, "Print version and exit")
-)
 
-func getLogLevel(level string) zapcore.Level {
-	switch strings.ToLower(level) {
-	case "debug":
-		return zapcore.DebugLevel
-	case "info":
-		return zapcore.InfoLevel
-	case "warn":
-		return zapcore.WarnLevel
-	case "error":
-		return zapcore.ErrorLevel
-	default:
-		return zapcore.InfoLevel
-	}
-}
+	activeLogLevel *zap.AtomicLevel
+)
 
 // resolveMode determines the run mode. An explicit subcommand wins; otherwise
 // the mode comes from configuration. Ambiguity is fatal: this binary must
@@ -70,6 +57,13 @@ func main() {
 	}
 	flag.Parse()
 
+	logLevelSet := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "log-level" {
+			logLevelSet = true
+		}
+	})
+
 	if *showVer {
 		fmt.Printf("sssonector %s\n", Version)
 		return
@@ -88,20 +82,61 @@ func main() {
 		}
 	}
 
-	logConfig := zap.NewProductionConfig()
-	logConfig.Level = zap.NewAtomicLevelAt(getLogLevel(*logLevel))
-	logger, err := logConfig.Build()
+	bootLevel, err := resolveLogLevel(*logLevel, logLevelSet, "")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Invalid -log-level: %v\n", err)
+		os.Exit(1)
+	}
+	bootLogger, _, err := buildLogger(bootLevel, "json", "")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to initialize bootstrap logger: %v\n", err)
+		os.Exit(1)
+	}
+	defer bootLogger.Sync()
+
+	cfg, err := config.LoadConfigFile(*configFile)
+	if err != nil {
+		bootLogger.Error("Failed to load config",
+			zap.String("config", *configFile),
+			zap.Error(err))
+		os.Exit(1)
+	}
+	if err := config.NewValidator().Validate(cfg); err != nil {
+		bootLogger.Error("Config validation failed",
+			zap.String("config", *configFile),
+			zap.Error(err))
+		os.Exit(1)
+	}
+
+	cfgLevel, cfgFormat, cfgFile := "", "", ""
+	if cfg.Config != nil {
+		cfgLevel = cfg.Config.Logging.Level
+		cfgFormat = cfg.Config.Logging.Format
+		cfgFile = cfg.Config.Logging.File
+	}
+
+	logLevelResolved, err := resolveLogLevel(*logLevel, logLevelSet, cfgLevel)
+	if err != nil {
+		bootLogger.Error("Invalid logging.level in config", zap.Error(err))
+		os.Exit(1)
+	}
+
+	logger, logLevelAtom, err := buildLogger(logLevelResolved, cfgFormat, cfgFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to initialize logger: %v\n", err)
 		os.Exit(1)
 	}
 	defer logger.Sync()
-
-	cfg, err := config.LoadConfigFile(*configFile)
-	if err != nil {
-		logger.Error("Failed to load config", zap.Error(err))
-		os.Exit(1)
+	activeLogLevel = logLevelAtom
+	effectiveFormat := cfgFormat
+	if effectiveFormat == "" {
+		effectiveFormat = "json"
 	}
+	logger.Info("Logging configured",
+		zap.String("level", logLevelResolved.String()),
+		zap.String("format", effectiveFormat),
+		zap.String("file", cfgFile),
+	)
 
 	mode, err := resolveMode(explicitMode, cfg)
 	if err != nil {
@@ -128,6 +163,40 @@ func main() {
 
 	configManager := config.CreateManager(filepath.Dir(*configFile))
 
+	var mon *monitor.Monitor
+	if cfg.Config != nil && (cfg.Config.Monitor.Enabled || cfg.Config.SNMP.Enabled || cfg.Config.Metrics.Enabled) {
+		monCfg := &monitor.Config{
+			SNMPEnabled:   cfg.Config.SNMP.Enabled,
+			SNMPAddress:   cfg.Config.SNMP.Address,
+			SNMPPort:      cfg.Config.SNMP.Port,
+			SNMPCommunity: cfg.Config.SNMP.Community,
+			PromEnabled:   cfg.Config.Monitor.Prometheus.Enabled && strings.EqualFold(cfg.Config.Monitor.Type, "prometheus"),
+			PromPort:      cfg.Config.Monitor.Prometheus.Port,
+			PromPath:      cfg.Config.Monitor.Prometheus.Path,
+		}
+		if monCfg.SNMPAddress == "" {
+			monCfg.SNMPAddress = "0.0.0.0"
+		}
+		if monCfg.SNMPCommunity == "" {
+			monCfg.SNMPCommunity = "public"
+		}
+
+		m, err := monitor.New(logger.Named("monitor"), monCfg)
+		if err != nil {
+			logger.Error("Failed to create monitor", zap.Error(err))
+			os.Exit(1)
+		}
+		if err := m.Start(); err != nil {
+			logger.Warn("Monitor started in degraded state", zap.Error(err))
+		}
+		mon = m
+		defer func() {
+			if mon != nil {
+				mon.Stop()
+			}
+		}()
+	}
+
 	var tnl interface {
 		Start() error
 		Stop() error
@@ -136,10 +205,10 @@ func main() {
 	switch mode {
 	case "server":
 		logger.Info("Starting in server mode")
-		tnl = tunnel.NewServer(cfg, configManager, logger)
+		tnl = tunnel.NewServer(cfg, configManager, logger, mon)
 	case "client":
 		logger.Info("Starting in client mode")
-		tnl = tunnel.NewClient(cfg, configManager, logger)
+		tnl = tunnel.NewClient(cfg, configManager, logger, mon)
 	default:
 		logger.Error("Unknown mode", zap.String("mode", mode))
 		os.Exit(1)
@@ -147,6 +216,23 @@ func main() {
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	prevLogLevel := logLevelResolved
+	var reloadable tunnel.Reloadable
+	if r, ok := tnl.(tunnel.Reloadable); ok {
+		reloadable = r
+	}
+	reload := func() {
+		prevLogLevel = applyReload(logger, *configFile, *logLevel, logLevelSet, prevLogLevel, activeLogLevel, reloadable)
+	}
+
+	hupChan := make(chan os.Signal, 1)
+	signal.Notify(hupChan, syscall.SIGHUP)
+	go func() {
+		for range hupChan {
+			reload()
+		}
+	}()
 
 	errChan := make(chan error, 1)
 	go func() {

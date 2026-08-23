@@ -21,11 +21,14 @@ func TestLimiterWithTCPOverhead(t *testing.T) {
 
 	reader := bytes.NewReader(make([]byte, 2000))
 	writer := &bytes.Buffer{}
-	limiter := NewLimiter(cfg, reader, writer, logger)
+	limiter, err := NewLimiter(cfg, reader, writer, logger)
+	if err != nil {
+		t.Fatalf("Failed to create limiter: %v", err)
+	}
 
 	// Test that effective rate includes TCP overhead
 	inMetrics, _ := limiter.GetMetrics()
-	expectedRate := float64(cfg.Throttle.Rate) * tcpOverheadFactor
+	expectedRate := float64(cfg.Throttle.Rate) * TCPOverheadFactor
 	if inMetrics.Rate != expectedRate {
 		t.Errorf("Expected effective rate %f, got %f", expectedRate, inMetrics.Rate)
 	}
@@ -51,11 +54,14 @@ func TestLimiterRateEnforcement(t *testing.T) {
 	data := make([]byte, 300)
 	reader := bytes.NewReader(data)
 	writer := &bytes.Buffer{}
-	limiter := NewLimiter(cfg, reader, writer, logger)
+	limiter, err := NewLimiter(cfg, reader, writer, logger)
+	if err != nil {
+		t.Fatalf("Failed to create limiter: %v", err)
+	}
 
 	// Test read rate limiting
 	start := time.Now()
-	err := limiter.Wait(true, 200) // Wait for 200 bytes
+	err = limiter.Wait(true, 200) // Wait for 200 bytes
 	elapsed := time.Since(start)
 
 	if err != nil {
@@ -83,11 +89,14 @@ func TestLimiterTimeout(t *testing.T) {
 	data := make([]byte, 1000)
 	reader := bytes.NewReader(data)
 	writer := &bytes.Buffer{}
-	limiter := NewLimiter(cfg, reader, writer, logger)
+	limiter, err := NewLimiter(cfg, reader, writer, logger)
+	if err != nil {
+		t.Fatalf("Failed to create limiter: %v", err)
+	}
 
 	// Try to read more data than possible within timeout
 	start := time.Now()
-	err := limiter.Wait(true, 1000)
+	err = limiter.Wait(true, 1000)
 	elapsed := time.Since(start)
 
 	if err == nil || elapsed < defaultTimeout {
@@ -109,7 +118,10 @@ func TestLimiterMetrics(t *testing.T) {
 	data := make([]byte, 200)
 	reader := bytes.NewReader(data)
 	writer := &bytes.Buffer{}
-	limiter := NewLimiter(cfg, reader, writer, logger)
+	limiter, err := NewLimiter(cfg, reader, writer, logger)
+	if err != nil {
+		t.Fatalf("Failed to create limiter: %v", err)
+	}
 
 	// Trigger rate limiting
 	_ = limiter.Wait(true, 150)
@@ -122,7 +134,7 @@ func TestLimiterMetrics(t *testing.T) {
 
 	// Test rate values
 	baseRate := float64(cfg.Throttle.Rate)
-	expectedEffectiveRate := baseRate * tcpOverheadFactor
+	expectedEffectiveRate := baseRate * TCPOverheadFactor
 	if inMetrics.Rate != expectedEffectiveRate {
 		t.Errorf("Expected effective rate %f, got %f", expectedEffectiveRate, inMetrics.Rate)
 	}
@@ -140,7 +152,10 @@ func TestLimiterUpdate(t *testing.T) {
 
 	reader := bytes.NewReader(make([]byte, 2000))
 	writer := &bytes.Buffer{}
-	limiter := NewLimiter(cfg, reader, writer, logger)
+	limiter, err := NewLimiter(cfg, reader, writer, logger)
+	if err != nil {
+		t.Fatalf("Failed to create limiter: %v", err)
+	}
 
 	// Update configuration
 	newCfg := &config.AppConfig{
@@ -153,7 +168,7 @@ func TestLimiterUpdate(t *testing.T) {
 	limiter.Update(newCfg)
 
 	inMetrics, _ := limiter.GetMetrics()
-	expectedRate := float64(newCfg.Throttle.Rate) * tcpOverheadFactor
+	expectedRate := float64(newCfg.Throttle.Rate) * TCPOverheadFactor
 	if inMetrics.Rate != expectedRate {
 		t.Errorf("Expected updated rate %f, got %f", expectedRate, inMetrics.Rate)
 	}
@@ -177,11 +192,14 @@ func TestLimiterDisabled(t *testing.T) {
 	data := make([]byte, 2000)
 	reader := bytes.NewReader(data)
 	writer := &bytes.Buffer{}
-	limiter := NewLimiter(cfg, reader, writer, logger)
+	limiter, err := NewLimiter(cfg, reader, writer, logger)
+	if err != nil {
+		t.Fatalf("Failed to create limiter: %v", err)
+	}
 
 	// Wait should complete immediately when disabled
 	start := time.Now()
-	err := limiter.Wait(true, 1500)
+	err = limiter.Wait(true, 1500)
 	elapsed := time.Since(start)
 
 	if err != nil {
@@ -198,13 +216,16 @@ func TestLimiterDisabled(t *testing.T) {
 func TestLimiterWritePathPacesThroughWriter(t *testing.T) {
 	var buf bytes.Buffer
 	logger, _ := zap.NewDevelopment()
-	limiter := NewLimiter(&config.AppConfig{
+	limiter, err := NewLimiter(&config.AppConfig{
 		Throttle: config.ThrottleConfig{
 			Enabled: true,
 			Rate:    2 * 1024, // effective 2252.8 B/s
 			Burst:   1024,
 		},
 	}, nil, &buf, logger)
+	if err != nil {
+		t.Fatalf("Failed to create limiter: %v", err)
+	}
 
 	data := make([]byte, 4*1024)
 	start := time.Now()
@@ -227,13 +248,16 @@ func TestLimiterWritePathPacesThroughWriter(t *testing.T) {
 func TestLimiterReadPathPacesThroughReader(t *testing.T) {
 	payload := make([]byte, 4096)
 	logger, _ := zap.NewDevelopment()
-	limiter := NewLimiter(&config.AppConfig{
+	limiter, err := NewLimiter(&config.AppConfig{
 		Throttle: config.ThrottleConfig{
 			Enabled: true,
 			Rate:    2 * 1024,
 			Burst:   1024,
 		},
 	}, bytes.NewReader(payload), nil, logger)
+	if err != nil {
+		t.Fatalf("Failed to create limiter: %v", err)
+	}
 
 	total := 0
 	start := time.Now()
@@ -271,10 +295,13 @@ func TestTimeoutThresholdBoundary(t *testing.T) {
 			Burst:   1000,
 		},
 	}
-	limiter := NewLimiter(cfg, bytes.NewReader(nil), &bytes.Buffer{}, logger)
+	limiter, err := NewLimiter(cfg, bytes.NewReader(nil), &bytes.Buffer{}, logger)
+	if err != nil {
+		t.Fatalf("Failed to create limiter: %v", err)
+	}
 
 	start := time.Now()
-	err := limiter.Wait(true, 1000)
+	err = limiter.Wait(true, 1000)
 	elapsed := time.Since(start)
 
 	if err == nil {

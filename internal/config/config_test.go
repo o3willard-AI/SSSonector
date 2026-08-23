@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
-
 )
 
 func TestConfigManager(t *testing.T) {
@@ -45,13 +44,13 @@ func TestConfigManager(t *testing.T) {
 			Network: NetworkConfig{
 				Interface:  "tun0",
 				MTU:        1500,
-				Address:    "10.0.0.1",
+				Address:    "10.0.0.1/24",
 				DNSServers: []string{"8.8.8.8"},
 			},
 			Tunnel: TunnelConfig{
-				Port:        8080,
-				Protocol:    "tcp",
-				Compression: true,
+				ServerAddress: "192.168.1.1",
+				ServerPort:    8080,
+				Compression:   true,
 			},
 			Security: SecurityConfig{
 				TLS: TLSConfigOptions{
@@ -64,9 +63,9 @@ func TestConfigManager(t *testing.T) {
 			Version:       "1.0.0",
 			SchemaVersion: "1.0.0",
 			Created:       time.Now(),
-			Modified:    time.Now(),
-			CreatedBy:   "test",
-			Environment: "test",
+			Modified:      time.Now(),
+			CreatedBy:     "test",
+			Environment:   "test",
 		},
 	}
 
@@ -123,5 +122,94 @@ func TestConfigManager(t *testing.T) {
 	// Test closing manager
 	if err := manager.Close(); err != nil {
 		t.Fatalf("Failed to close manager: %v", err)
+	}
+}
+
+func TestValidateLoggingFormat(t *testing.T) {
+	v := NewValidator()
+
+	valid := []string{"", "json", "console", "JSON"}
+	for _, format := range valid {
+		cfg := DefaultConfig()
+		cfg.Config.Logging = LoggingConfig{Level: "info", Format: format}
+		if err := v.validateLogging(cfg.Config.Logging); err != nil {
+			t.Errorf("validateLogging(format=%q) unexpected error: %v", format, err)
+		}
+	}
+
+	invalid := []string{"xml", "logfmt", "text"}
+	for _, format := range invalid {
+		cfg := DefaultConfig()
+		cfg.Config.Logging = LoggingConfig{Level: "info", Format: format}
+		if err := v.validateLogging(cfg.Config.Logging); err == nil {
+			t.Errorf("validateLogging(format=%q) expected error, got nil", format)
+		}
+	}
+}
+
+func TestValidateNetworkRequiresCIDR(t *testing.T) {
+	v := NewValidator()
+
+	valid := []string{"10.0.0.1/24", "192.168.50.10/32"}
+	for _, addr := range valid {
+		cfg := NetworkConfig{Interface: "tun0", MTU: 1500, Address: addr}
+		if err := v.validateNetwork(cfg); err != nil {
+			t.Errorf("validateNetwork(address=%q) unexpected error: %v", addr, err)
+		}
+	}
+
+	invalid := []string{"10.0.0.1", "not-an-ip", "10.0.0.1/99"}
+	for _, addr := range invalid {
+		cfg := NetworkConfig{Interface: "tun0", MTU: 1500, Address: addr}
+		if err := v.validateNetwork(cfg); err == nil {
+			t.Errorf("validateNetwork(address=%q) expected error, got nil", addr)
+		}
+	}
+}
+
+func TestValidateTunnelModeAware(t *testing.T) {
+	v := NewValidator()
+
+	serverCfg := TunnelConfig{ListenPort: 8443}
+	if err := v.validateTunnel("server", serverCfg); err != nil {
+		t.Errorf("valid server tunnel rejected: %v", err)
+	}
+	if err := v.validateTunnel("server", TunnelConfig{}); err == nil {
+		t.Error("server without listen_port should fail")
+	}
+
+	clientCfg := TunnelConfig{ServerAddress: "203.0.113.5", ServerPort: 8443}
+	if err := v.validateTunnel("client", clientCfg); err != nil {
+		t.Errorf("valid client tunnel rejected: %v", err)
+	}
+	if err := v.validateTunnel("client", TunnelConfig{ServerPort: 8443}); err == nil {
+		t.Error("client without server_address should fail")
+	}
+	if err := v.validateTunnel("client", TunnelConfig{ServerAddress: "203.0.113.5"}); err == nil {
+		t.Error("client without server_port should fail")
+	}
+
+	if err := v.validateTunnel("banana", serverCfg); err == nil {
+		t.Error("unknown mode should fail")
+	}
+}
+
+func TestValidateEnvironmentAcceptsQA(t *testing.T) {
+	v := NewValidator()
+	cfg := DefaultConfig()
+	cfg.Metadata.Environment = "qa"
+	cfg.Config.Security.TLS.MinVersion = "1.2"
+	if err := v.validateEnvironmentConfig(cfg); err != nil {
+		t.Errorf("qa environment should be accepted: %v", err)
+	}
+
+	cfg.Metadata.Environment = "staging"
+	if err := v.validateEnvironmentConfig(cfg); err != nil {
+		t.Errorf("staging environment should be accepted: %v", err)
+	}
+
+	cfg.Metadata.Environment = "narnia"
+	if err := v.validateEnvironmentConfig(cfg); err == nil {
+		t.Error("unknown environment should fail")
 	}
 }

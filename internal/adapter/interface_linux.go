@@ -13,6 +13,8 @@ import (
 	"syscall"
 	"time"
 	"unsafe"
+
+	"go.uber.org/zap"
 )
 
 const (
@@ -62,6 +64,9 @@ func New(name string, opts *Options) (Interface, error) {
 	if opts == nil {
 		opts = DefaultOptions()
 	}
+	if opts.Logger == nil {
+		opts.Logger = zap.NewNop()
+	}
 	return newLinuxInterface(name, opts)
 }
 
@@ -83,17 +88,28 @@ func (i *linuxInterface) initialize() error {
 	if !i.transitionState(StateUninitialized, StateInitializing) {
 		return ErrInvalidStateTransition
 	}
+	i.opts.Logger.Info("Initializing TUN interface", zap.String("name", i.name))
 
 	// First, check if interface already exists and remove it
 	if _, err := os.Stat(fmt.Sprintf("/sys/class/net/%s", i.name)); err == nil {
+		i.opts.Logger.Info("Removing pre-existing interface", zap.String("name", i.name))
 		if out, err := exec.Command("sudo", "ip", "tuntap", "del", "dev", i.name, "mode", "tun").CombinedOutput(); err != nil {
-			fmt.Printf("Warning: Failed to remove existing interface: %v (output: %s)\n", err, string(out))
+			i.opts.Logger.Warn("Failed to remove existing interface",
+				zap.String("name", i.name),
+				zap.Error(err),
+				zap.String("output", string(out)),
+			)
 		}
 		time.Sleep(time.Second) // Wait for interface to be removed
 	}
 
 	// Create TUN device
 	if out, err := exec.Command("sudo", "ip", "tuntap", "add", "dev", i.name, "mode", "tun").CombinedOutput(); err != nil {
+		i.opts.Logger.Error("Failed to create TUN device",
+			zap.String("name", i.name),
+			zap.Error(err),
+			zap.String("output", string(out)),
+		)
 		i.setState(StateError)
 		return fmt.Errorf("failed to create TUN device: %w (output: %s)", err, string(out))
 	}
@@ -127,6 +143,10 @@ func (i *linuxInterface) initialize() error {
 	// Open TUN device
 	file, err := os.OpenFile("/dev/net/tun", os.O_RDWR, 0)
 	if err != nil {
+		i.opts.Logger.Error("Failed to open TUN device file",
+			zap.String("path", "/dev/net/tun"),
+			zap.Error(err),
+		)
 		i.setState(StateError)
 		return fmt.Errorf("failed to open /dev/net/tun: %w", err)
 	}
@@ -140,6 +160,11 @@ func (i *linuxInterface) initialize() error {
 
 	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, file.Fd(), uintptr(TUNSETIFF), uintptr(unsafe.Pointer(&ifreq[0])))
 	if errno != 0 {
+		i.opts.Logger.Error("TUNSETIFF ioctl failed",
+			zap.String("name", i.name),
+			zap.Uint("errno", uint(errno)),
+			zap.String("errno_name", errnoName(errno)),
+		)
 		file.Close()
 		i.setState(StateError)
 		return fmt.Errorf("failed to create TUN interface: %v", errno)
@@ -162,7 +187,22 @@ func (i *linuxInterface) initialize() error {
 	i.file = file
 	i.mtu = 1500 // Default MTU
 	i.setState(StateReady)
+	i.opts.Logger.Info("TUN interface initialized", zap.String("name", i.name))
 	return nil
+}
+
+// errnoName maps a syscall.Errno to its symbolic name for log readability
+func errnoName(errno syscall.Errno) string {
+	if s, ok := map[syscall.Errno]string{
+		syscall.EPERM:  "EPERM",
+		syscall.ENOENT: "ENOENT",
+		syscall.EBUSY:  "EBUSY",
+		syscall.EINVAL: "EINVAL",
+		syscall.ENOTTY: "ENOTTY",
+	}[errno]; ok {
+		return s
+	}
+	return errno.Error()
 }
 
 func createIfreq(name string) ([]byte, error) {
@@ -177,8 +217,18 @@ func (i *linuxInterface) Configure(cfg *Config) error {
 		return fmt.Errorf("%w: current state %s", ErrInterfaceNotReady, state)
 	}
 
+	i.opts.Logger.Info("Configuring TUN interface",
+		zap.String("name", cfg.Name),
+		zap.String("address", cfg.Address),
+		zap.Int("mtu", cfg.MTU),
+	)
+
 	// Parse IP address and network to validate format
 	if _, _, err := net.ParseCIDR(cfg.Address); err != nil {
+		i.opts.Logger.Error("Invalid TUN address format",
+			zap.String("address", cfg.Address),
+			zap.Error(err),
+		)
 		i.setState(StateError)
 		return fmt.Errorf("invalid address format: %w", err)
 	}
@@ -192,6 +242,11 @@ func (i *linuxInterface) Configure(cfg *Config) error {
 			break
 		} else {
 			lastErr = err
+			i.opts.Logger.Warn("TUN configuration attempt failed",
+				zap.Int("attempt", attempt+1),
+				zap.Int("max_attempts", i.opts.RetryAttempts),
+				zap.Error(err),
+			)
 			time.Sleep(time.Duration(i.opts.RetryDelay) * time.Millisecond)
 		}
 	}
@@ -205,6 +260,11 @@ func (i *linuxInterface) Configure(cfg *Config) error {
 	i.mtu = cfg.MTU
 	i.isUp = true
 
+	i.opts.Logger.Info("TUN interface configured",
+		zap.String("name", i.name),
+		zap.String("address", i.address),
+		zap.Int("mtu", i.mtu),
+	)
 	return nil
 }
 
@@ -235,7 +295,10 @@ func (i *linuxInterface) applyConfiguration(cfg *Config) error {
 		if err != nil {
 			return fmt.Errorf("failed to validate interface configuration: %w (output: %s)", err, string(out))
 		}
-		fmt.Printf("Interface %s configuration: %s\n", i.name, string(out))
+		i.opts.Logger.Debug("Interface configuration verified",
+			zap.String("name", i.name),
+			zap.String("output", string(out)),
+		)
 	}
 
 	return nil
@@ -276,6 +339,7 @@ func (i *linuxInterface) Cleanup() error {
 	if !i.transitionState(StateReady, StateStopping) {
 		return ErrInvalidStateTransition
 	}
+	i.opts.Logger.Info("Cleaning up TUN interface", zap.String("name", i.name))
 
 	// Create cleanup channel with timeout
 	done := make(chan error, 1)
@@ -287,12 +351,21 @@ func (i *linuxInterface) Cleanup() error {
 	select {
 	case err := <-done:
 		if err != nil {
+			i.opts.Logger.Error("TUN interface cleanup failed",
+				zap.String("name", i.name),
+				zap.Error(err),
+			)
 			i.setState(StateError)
 			return err
 		}
 		i.setState(StateStopped)
+		i.opts.Logger.Info("TUN interface cleaned up", zap.String("name", i.name))
 		return nil
 	case <-time.After(time.Duration(i.opts.CleanupTimeout) * time.Millisecond):
+		i.opts.Logger.Error("TUN interface cleanup timed out",
+			zap.String("name", i.name),
+			zap.Int("timeout_ms", i.opts.CleanupTimeout),
+		)
 		i.setState(StateError)
 		return ErrCleanupTimeout
 	}

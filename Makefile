@@ -48,14 +48,14 @@ build-linux: build-linux-amd64 build-linux-arm64
 
 .PHONY: build-linux-amd64
 build-linux-amd64: prepare
-	GOOS=linux GOARCH=amd64 ${GO_BUILD} -o ${BUILD_DIR}/linux/amd64/${BINARY_NAME} ./cmd/daemon/main.go
+	GOOS=linux GOARCH=amd64 ${GO_BUILD} -o ${BUILD_DIR}/linux/amd64/${BINARY_NAME} ./cmd/daemon
 	cp init/systemd/sssonector.service ${BUILD_DIR}/linux/amd64/
 	cp scripts/install.sh ${BUILD_DIR}/linux/amd64/
 	tar czf ${BUILD_DIR}/packages/${BINARY_NAME}-${VERSION}-linux-amd64.tar.gz -C ${BUILD_DIR}/linux/amd64 .
 
 .PHONY: build-linux-arm64
 build-linux-arm64: prepare
-	GOOS=linux GOARCH=arm64 ${GO_BUILD} -o ${BUILD_DIR}/linux/arm64/${BINARY_NAME} ./cmd/daemon/main.go
+	GOOS=linux GOARCH=arm64 ${GO_BUILD} -o ${BUILD_DIR}/linux/arm64/${BINARY_NAME} ./cmd/daemon
 	cp init/systemd/sssonector.service ${BUILD_DIR}/linux/arm64/
 	cp scripts/install.sh ${BUILD_DIR}/linux/arm64/
 	tar czf ${BUILD_DIR}/packages/${BINARY_NAME}-${VERSION}-linux-arm64.tar.gz -C ${BUILD_DIR}/linux/arm64 .
@@ -66,7 +66,7 @@ build-windows: build-windows-amd64
 
 .PHONY: build-windows-amd64
 build-windows-amd64: prepare
-	GOOS=windows GOARCH=amd64 ${GO_BUILD} -o ${BUILD_DIR}/windows/amd64/${BINARY_NAME}.exe ./cmd/daemon/main.go
+	GOOS=windows GOARCH=amd64 ${GO_BUILD} -o ${BUILD_DIR}/windows/amd64/${BINARY_NAME}.exe ./cmd/daemon
 	cp scripts/install.ps1 ${BUILD_DIR}/windows/amd64/
 	zip -j ${BUILD_DIR}/packages/${BINARY_NAME}-${VERSION}-windows-amd64.zip ${BUILD_DIR}/windows/amd64/*
 
@@ -76,14 +76,14 @@ build-darwin: build-darwin-amd64 build-darwin-arm64
 
 .PHONY: build-darwin-amd64
 build-darwin-amd64: prepare
-	GOOS=darwin GOARCH=amd64 ${GO_BUILD} -o ${BUILD_DIR}/darwin/amd64/${BINARY_NAME} ./cmd/daemon/main.go
+	GOOS=darwin GOARCH=amd64 ${GO_BUILD} -o ${BUILD_DIR}/darwin/amd64/${BINARY_NAME} ./cmd/daemon
 	cp init/launchd/com.o3willard.sssonector.plist ${BUILD_DIR}/darwin/amd64/
 	cp scripts/install_macos.sh ${BUILD_DIR}/darwin/amd64/
 	tar czf ${BUILD_DIR}/packages/${BINARY_NAME}-${VERSION}-darwin-amd64.tar.gz -C ${BUILD_DIR}/darwin/amd64 .
 
 .PHONY: build-darwin-arm64
 build-darwin-arm64: prepare
-	GOOS=darwin GOARCH=arm64 ${GO_BUILD} -o ${BUILD_DIR}/darwin/arm64/${BINARY_NAME} ./cmd/daemon/main.go
+	GOOS=darwin GOARCH=arm64 ${GO_BUILD} -o ${BUILD_DIR}/darwin/arm64/${BINARY_NAME} ./cmd/daemon
 	cp init/launchd/com.o3willard.sssonector.plist ${BUILD_DIR}/darwin/arm64/
 	cp scripts/install_macos.sh ${BUILD_DIR}/darwin/arm64/
 	tar czf ${BUILD_DIR}/packages/${BINARY_NAME}-${VERSION}-darwin-arm64.tar.gz -C ${BUILD_DIR}/darwin/arm64 .

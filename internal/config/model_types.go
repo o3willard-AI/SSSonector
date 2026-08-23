@@ -224,6 +224,7 @@ type MetricsConfig struct {
 // SNMPConfig represents SNMP monitoring configuration
 type SNMPConfig struct {
 	Enabled   bool   `yaml:"enabled" json:"enabled"`
+	Address   string `yaml:"address" json:"address"`
 	Port      int    `yaml:"port" json:"port"`
 	Community string `yaml:"community" json:"community"`
 }

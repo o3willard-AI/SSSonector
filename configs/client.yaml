@@ -1,37 +1,65 @@
-mode: "client"
-
-network:
-  interface: "tun0"
-  address: "10.0.0.2/24"
-  mtu: 1500
-
-tunnel:
-  cert_file: "certs/client.crt"
-  key_file: "certs/client.key"
-  ca_file: "certs/ca.crt"
-  server_address: "192.168.50.210"
-  server_port: 8443
-  upload_kbps: 10240
-  download_kbps: 10240
-
-monitor:
-  log_file: "client.log"
-  snmp_enabled: true
-  snmp_port: 10162
-  snmp_community: "public"
-  snmp_address: "0.0.0.0"
-
-# HTTPS Facade fallback for firewall traversal
-# When enabled, the client first tries a direct connection to server_port.
-# If that fails (e.g., port blocked by firewall), it falls back to connecting
-# through the HTTPS facade on port 443 using a WebSocket upgrade.
-facade:
+metadata:
+  schema_version: "2.0.0"
+  environment: development
+  region: local
+mode: client
+config:
+  mode: client
+  logging:
+    level: info
+    format: json
+    file: ""
+  network:
+    name: tun0
+    interface: tun0
+    mtu: 1500
+    address: 10.0.0.2/24
+  tunnel:
+    server_address: "192.168.50.210"
+    server_port: 8443
+    protocol: tcp
+    compression: false
+  auth:
+    cert_file: "certs/client.crt"
+    key_file: "certs/client.key"
+    ca_file: "certs/ca.crt"
+  security:
+    tls:
+      min_version: "1.2"
+      max_version: "1.3"
+    auth_method: certificate
+  monitor:
+    enabled: true
+    type: snmp
+    interval: 10s
+    prometheus:
+      enabled: false
+      port: 9090
+      path: /metrics
+  metrics:
+    enabled: true
+    interval: 5s
+    buffer_size: 1000
+  snmp:
+    enabled: true
+    address: "0.0.0.0"
+    port: 10162
+    community: "public"
+  # HTTPS Facade fallback for firewall traversal
+  # When enabled, the client first tries a direct connection to server_port.
+  # If that fails (e.g., port blocked by firewall), it falls back to connecting
+  # through the HTTPS facade on port 443 using a WebSocket upgrade.
+  facade:
+    enabled: false
+    server_port: 443           # Facade server port to connect to
+    # server_address: ""       # Defaults to tunnel.server_address
+    direct_timeout: 3s         # How long to wait for direct connection
+    token_secret: ""           # REQUIRED for facade auth: must match server exactly
+    tls:                       # If empty, inherits from tunnel cert config
+      cert_file: ""
+      key_file: ""
+      ca_file: ""
+throttle:
   enabled: false
-  server_port: 443           # Facade server port to connect to
-  # server_address: ""       # Defaults to tunnel.server_address
-  direct_timeout: 3s         # How long to wait for direct connection
-  token_secret: ""           # REQUIRED for facade auth: must match server exactly
-  tls:                       # If empty, inherits from tunnel cert config
-    cert_file: ""
-    key_file: ""
-    ca_file: ""
+  rate: 1048576
+  burst: 104858          # accepted but unused: burst is always 100ms of effective rate

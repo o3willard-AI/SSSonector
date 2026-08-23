@@ -1,50 +1,51 @@
 package monitor
 
 import (
+	"context"
 	"fmt"
-	"os"
+	"net"
+	"net/http"
 	"runtime"
 	"sync"
 	"time"
 
 	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 )
 
 // Config holds monitoring configuration
 type Config struct {
-	LogFile       string
 	SNMPEnabled   bool
+	SNMPAddress   string
 	SNMPPort      int
 	SNMPCommunity string
-	SNMPAddress   string
+	PromEnabled   bool
+	PromPort      int
+	PromPath      string
 }
 
-// Monitor handles system monitoring and logging
+// Monitor handles system monitoring and metrics exposition
 type Monitor struct {
 	logger     *zap.Logger
 	config     *Config
 	metrics    *Metrics
 	snmpAgent  *SNMPAgent
+	promSrv    *http.Server
+	promLn     net.Listener
 	sysMetrics *SystemMetricsCollector
 	startTime  time.Time
 	mu         sync.RWMutex
 	shutdownCh chan struct{}
 	shutdownWg sync.WaitGroup
-	isTestMode bool
 }
 
-// New creates a new monitor instance
-func New(cfg *Config) (*Monitor, error) {
-	// Create logger configuration
-	logConfig := zap.NewProductionConfig()
-	logConfig.OutputPaths = []string{cfg.LogFile}
-	logConfig.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
-
-	// Create logger
-	logger, err := logConfig.Build()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create logger: %w", err)
+// New creates a new monitor instance. The logger is owned by the caller
+// (the daemon's configured zap logger); the monitor no longer builds its own.
+func New(logger *zap.Logger, cfg *Config) (*Monitor, error) {
+	if logger == nil {
+		return nil, fmt.Errorf("logger is required")
+	}
+	if cfg == nil {
+		return nil, fmt.Errorf("monitor config is required")
 	}
 
 	m := &Monitor{
@@ -54,11 +55,11 @@ func New(cfg *Config) (*Monitor, error) {
 		sysMetrics: NewSystemMetricsCollector(),
 		startTime:  time.Now(),
 		shutdownCh: make(chan struct{}),
-		isTestMode: os.Getenv("TEMP_DIR") != "",
 	}
 
 	// Initialize SNMP agent if enabled
 	if cfg.SNMPEnabled {
+		var err error
 		m.snmpAgent, err = NewSNMPAgent(cfg, m.metrics, logger)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create SNMP agent: %w", err)
@@ -68,26 +69,23 @@ func New(cfg *Config) (*Monitor, error) {
 	return m, nil
 }
 
-// Logger returns the monitor's logger instance
-func (m *Monitor) Logger() *zap.Logger {
-	return m.logger
-}
-
-// Start initializes monitoring
+// Start initializes monitoring. Endpoint bind failures are logged and do not
+// prevent the rest of monitoring from running (degraded, non-fatal).
 func (m *Monitor) Start() error {
 	if m.config.SNMPEnabled && m.snmpAgent != nil {
 		if err := m.snmpAgent.Start(); err != nil {
-			return fmt.Errorf("failed to start SNMP agent: %w", err)
+			m.logger.Error("Failed to start SNMP agent", zap.Error(err))
+		} else {
+			m.logger.Info("SNMP monitoring started",
+				zap.String("address", m.config.SNMPAddress),
+				zap.Int("port", m.config.SNMPPort))
 		}
-		m.logger.Info("SNMP monitoring started",
-			zap.String("address", m.config.SNMPAddress),
-			zap.Int("port", m.config.SNMPPort))
 	}
 
-	// Start certificate expiration monitor in test mode
-	if m.isTestMode {
-		m.shutdownWg.Add(1)
-		go m.monitorCertExpiration()
+	if m.config.PromEnabled && m.config.PromPort > 0 {
+		if err := m.startPrometheus(); err != nil {
+			m.logger.Error("Failed to start Prometheus endpoint", zap.Error(err))
+		}
 	}
 
 	// Start system metrics collection
@@ -107,6 +105,18 @@ func (m *Monitor) Stop() {
 		close(m.shutdownCh)
 	}
 
+	if m.promSrv != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := m.promSrv.Shutdown(ctx); err != nil {
+			m.logger.Error("Prometheus endpoint shutdown error", zap.Error(err))
+		}
+		m.mu.Lock()
+		m.promSrv = nil
+		m.promLn = nil
+		m.mu.Unlock()
+	}
+
 	if m.config.SNMPEnabled && m.snmpAgent != nil {
 		m.snmpAgent.Stop()
 		m.logger.Info("SNMP monitoring stopped")
@@ -114,25 +124,104 @@ func (m *Monitor) Stop() {
 
 	m.shutdownWg.Wait()
 
-	// Close and sync logger
+	// Sync errors from console/stdout sinks are benign (EINVAL on Linux);
+	// surface anything else at debug level only.
 	if err := m.logger.Sync(); err != nil {
-		m.logger.Error("Failed to sync logger", zap.Error(err))
+		m.logger.Debug("Logger sync returned error", zap.Error(err))
 	}
 }
 
-// Info logs an info message
-func (m *Monitor) Info(msg string, fields ...zap.Field) {
-	m.logger.Info(msg, fields...)
+// PromEndpoint returns the address the Prometheus endpoint is serving on,
+// or an empty string when it is disabled or not yet started.
+func (m *Monitor) PromEndpoint() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.promLn == nil {
+		return ""
+	}
+	return m.promLn.Addr().String()
 }
 
-// Error logs an error message
-func (m *Monitor) Error(msg string, fields ...zap.Field) {
-	m.logger.Error(msg, fields...)
+// startPrometheus binds and serves the /metrics text exposition endpoint
+func (m *Monitor) startPrometheus() error {
+	path := m.config.PromPath
+	if path == "" {
+		path = "/metrics"
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc(path, m.handleMetrics)
+
+	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", m.config.PromPort))
+	if err != nil {
+		return fmt.Errorf("failed to bind Prometheus listener on port %d: %w", m.config.PromPort, err)
+	}
+
+	srv := &http.Server{
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	m.mu.Lock()
+	m.promLn = ln
+	m.promSrv = srv
+	m.mu.Unlock()
+
+	m.shutdownWg.Add(1)
+	go func() {
+		defer m.shutdownWg.Done()
+		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
+			m.logger.Error("Prometheus endpoint server error", zap.Error(err))
+		}
+	}()
+
+	m.logger.Info("Prometheus metrics endpoint started",
+		zap.String("address", ln.Addr().String()),
+		zap.String("path", path),
+	)
+	return nil
 }
 
-// Warn logs a warning message
-func (m *Monitor) Warn(msg string, fields ...zap.Field) {
-	m.logger.Warn(msg, fields...)
+// handleMetrics renders current metrics in Prometheus text exposition format
+func (m *Monitor) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	snap := m.GetMetrics()
+
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	fmt.Fprintf(w, "# HELP sssonector_bytes_in_total Total bytes received from tunnel peers.\n")
+	fmt.Fprintf(w, "# TYPE sssonector_bytes_in_total counter\n")
+	fmt.Fprintf(w, "sssonector_bytes_in_total %d\n", snap.BytesIn)
+	fmt.Fprintf(w, "# HELP sssonector_bytes_out_total Total bytes sent to tunnel peers.\n")
+	fmt.Fprintf(w, "# TYPE sssonector_bytes_out_total counter\n")
+	fmt.Fprintf(w, "sssonector_bytes_out_total %d\n", snap.BytesOut)
+	fmt.Fprintf(w, "# HELP sssonector_packets_in_total Total packets received.\n")
+	fmt.Fprintf(w, "# TYPE sssonector_packets_in_total counter\n")
+	fmt.Fprintf(w, "sssonector_packets_in_total %d\n", snap.PacketsIn)
+	fmt.Fprintf(w, "# HELP sssonector_packets_out_total Total packets sent.\n")
+	fmt.Fprintf(w, "# TYPE sssonector_packets_out_total counter\n")
+	fmt.Fprintf(w, "sssonector_packets_out_total %d\n", snap.PacketsOut)
+	fmt.Fprintf(w, "# HELP sssonector_errors_total Total errors recorded.\n")
+	fmt.Fprintf(w, "# TYPE sssonector_errors_total counter\n")
+	fmt.Fprintf(w, "sssonector_errors_total %d\n", snap.Errors)
+	fmt.Fprintf(w, "# HELP sssonector_byte_rate Current byte throughput per second.\n")
+	fmt.Fprintf(w, "# TYPE sssonector_byte_rate gauge\n")
+	fmt.Fprintf(w, "sssonector_byte_rate %f\n", snap.ByteRate)
+	fmt.Fprintf(w, "# HELP sssonector_connections_active Currently active tunnel connections.\n")
+	fmt.Fprintf(w, "# TYPE sssonector_connections_active gauge\n")
+	fmt.Fprintf(w, "sssonector_connections_active %d\n", snap.Connections)
+	fmt.Fprintf(w, "# HELP sssonector_connections_peak Peak concurrent tunnel connections.\n")
+	fmt.Fprintf(w, "# TYPE sssonector_connections_peak gauge\n")
+	fmt.Fprintf(w, "sssonector_connections_peak %d\n", snap.MaxConnections)
+	fmt.Fprintf(w, "# HELP sssonector_cpu_usage_percent Process CPU usage percentage.\n")
+	fmt.Fprintf(w, "# TYPE sssonector_cpu_usage_percent gauge\n")
+	fmt.Fprintf(w, "sssonector_cpu_usage_percent %f\n", snap.CPUUsage)
+	fmt.Fprintf(w, "# HELP sssonector_memory_alloc_bytes Bytes allocated by the process heap.\n")
+	fmt.Fprintf(w, "# TYPE sssonector_memory_alloc_bytes gauge\n")
+	fmt.Fprintf(w, "sssonector_memory_alloc_bytes %d\n", snap.MemoryUsage)
+	fmt.Fprintf(w, "# HELP sssonector_goroutines Current goroutine count.\n")
+	fmt.Fprintf(w, "# TYPE sssonector_goroutines gauge\n")
+	fmt.Fprintf(w, "sssonector_goroutines %d\n", snap.GoroutineNum)
+	fmt.Fprintf(w, "# HELP sssonector_uptime_seconds Process uptime in seconds.\n")
+	fmt.Fprintf(w, "# TYPE sssonector_uptime_seconds gauge\n")
+	fmt.Fprintf(w, "sssonector_uptime_seconds %d\n", time.Since(m.startTime)/time.Second)
 }
 
 // UpdateMetrics updates monitoring metrics
@@ -150,23 +239,6 @@ func (m *Monitor) GetMetrics() *Metrics {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.metrics.Clone()
-}
-
-// monitorCertExpiration monitors certificate expiration in test mode
-func (m *Monitor) monitorCertExpiration() {
-	defer m.shutdownWg.Done()
-
-	// Wait for 15 seconds in test mode
-	select {
-	case <-time.After(15 * time.Second):
-		m.logger.Info("Test mode: certificate expired, shutting down")
-		// Use platform-specific process termination
-		if err := killProcess(os.Getpid()); err != nil {
-			m.logger.Error("Failed to kill process", zap.Error(err))
-		}
-	case <-m.shutdownCh:
-		return
-	}
 }
 
 // collectSystemMetrics periodically collects system-wide metrics

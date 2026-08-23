@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
-
 )
 
 // ConfigLoader handles loading and upgrading configuration files
@@ -201,6 +200,9 @@ func (l *ConfigLoader) upgradeFrom10(raw map[string]interface{}) AppConfig {
 			}
 			if file, ok := logging["file"].(string); ok {
 				config.Config.Logging.File = file
+			}
+			if format, ok := logging["format"].(string); ok {
+				config.Config.Logging.Format = format
 			}
 		}
 

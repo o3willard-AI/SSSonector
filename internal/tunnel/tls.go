@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/o3willard-AI/SSSonector/internal/cert"
+	"go.uber.org/zap"
 )
 
 // TLSConfig holds TLS configuration
@@ -22,12 +25,19 @@ type TLSConfig struct {
 type TLSManager struct {
 	certManager *cert.Manager
 	config      *TLSConfig
+	logger      *zap.Logger
+
+	mu                sync.Mutex
+	serverCertManager *cert.Manager
 }
 
 // NewTLSManager creates a new TLS manager
-func NewTLSManager(config *TLSConfig) (*TLSManager, error) {
+func NewTLSManager(config *TLSConfig, logger *zap.Logger) (*TLSManager, error) {
 	if config == nil {
 		return nil, fmt.Errorf("TLS config is required")
+	}
+	if logger == nil {
+		return nil, fmt.Errorf("logger is required")
 	}
 
 	// Check if using test mode
@@ -38,7 +48,7 @@ func NewTLSManager(config *TLSConfig) (*TLSManager, error) {
 		}
 	}
 
-	manager, err := cert.NewManager(config.CertFile, config.KeyFile, config.CAFile, false, skipVerify)
+	manager, err := cert.NewManager(config.CertFile, config.KeyFile, config.CAFile, false, skipVerify, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create certificate manager: %w", err)
 	}
@@ -46,6 +56,7 @@ func NewTLSManager(config *TLSConfig) (*TLSManager, error) {
 	return &TLSManager{
 		certManager: manager,
 		config:      config,
+		logger:      logger,
 	}, nil
 }
 
@@ -73,18 +84,9 @@ func (t *TLSManager) GetClientConfig() (*tls.Config, error) {
 
 // GetServerConfig returns TLS configuration for server mode
 func (t *TLSManager) GetServerConfig() (*tls.Config, error) {
-	// Check if using test mode
-	skipVerify := false
-	if t.config.CertFile != "" {
-		if strings.Contains(t.config.CertFile, "/tmp/") {
-			skipVerify = true
-		}
-	}
-
-	// Create new manager with server mode
-	manager, err := cert.NewManager(t.config.CertFile, t.config.KeyFile, t.config.CAFile, true, skipVerify)
+	manager, err := t.getServerCertManager()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create server certificate manager: %w", err)
+		return nil, err
 	}
 
 	baseConfig, err := manager.GetTLSConfig()
@@ -122,4 +124,45 @@ func (t *TLSManager) WrapConn(conn net.Conn, isServer bool) (net.Conn, error) {
 		return tls.Server(conn, tlsConfig), nil
 	}
 	return tls.Client(conn, tlsConfig), nil
+}
+
+// getServerCertManager lazily creates and caches the server-role certificate
+// manager so repeated handshakes reuse one rotation monitor.
+func (t *TLSManager) getServerCertManager() (*cert.Manager, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.serverCertManager != nil {
+		return t.serverCertManager, nil
+	}
+
+	skipVerify := false
+	if t.config.CertFile != "" && strings.Contains(t.config.CertFile, "/tmp/") {
+		skipVerify = true
+	}
+
+	manager, err := cert.NewManager(t.config.CertFile, t.config.KeyFile, t.config.CAFile, true, skipVerify, t.logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create server certificate manager: %w", err)
+	}
+	t.serverCertManager = manager
+	return manager, nil
+}
+
+// SetCertTunables pushes hot-reloaded timing settings into every live
+// certificate manager (client- and server-role). Zero values are ignored.
+func (t *TLSManager) SetCertTunables(checkInterval, rotationThreshold time.Duration) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	for _, m := range []*cert.Manager{t.certManager, t.serverCertManager} {
+		if m == nil {
+			continue
+		}
+		if checkInterval > 0 {
+			m.SetCheckInterval(checkInterval)
+		}
+		if rotationThreshold > 0 {
+			m.SetRotationThreshold(rotationThreshold)
+		}
+	}
 }

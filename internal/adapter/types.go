@@ -1,6 +1,10 @@
 package adapter
 
-import "fmt"
+import (
+	"fmt"
+
+	"go.uber.org/zap"
+)
 
 // InterfaceState represents the possible states of a network interface
 type InterfaceState int
@@ -66,6 +70,7 @@ type Options struct {
 	RetryDelay     int // milliseconds
 	CleanupTimeout int // milliseconds
 	ValidateState  bool
+	Logger         *zap.Logger
 }
 
 // DefaultOptions provides sensible defaults for interface options

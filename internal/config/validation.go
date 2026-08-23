@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
 )
 
 // Validator implements ConfigValidator interface
@@ -73,7 +72,7 @@ func (v *Validator) Validate(config *AppConfig) error {
 		return fmt.Errorf("invalid network config: %v", err)
 	}
 
-	if err := v.validateTunnel(config.Config.Tunnel); err != nil {
+	if err := v.validateTunnel(config.Config.Mode, config.Config.Tunnel); err != nil {
 		return fmt.Errorf("invalid tunnel config: %v", err)
 	}
 
@@ -257,6 +256,16 @@ func (v *Validator) validateLogging(config LoggingConfig) error {
 		return fmt.Errorf("invalid log level: %s", config.Level)
 	}
 
+	if config.Format != "" {
+		validFormats := map[string]bool{
+			"json":    true,
+			"console": true,
+		}
+		if !validFormats[strings.ToLower(config.Format)] {
+			return fmt.Errorf("invalid log format: %s", config.Format)
+		}
+	}
+
 	return nil
 }
 
@@ -270,7 +279,7 @@ func (v *Validator) validateNetwork(config NetworkConfig) error {
 	}
 
 	if config.Address != "" {
-		if ip := net.ParseIP(config.Address); ip == nil {
+		if _, _, err := net.ParseCIDR(config.Address); err != nil {
 			return fmt.Errorf("invalid IP address: %s", config.Address)
 		}
 	}
@@ -314,6 +323,7 @@ func (v *Validator) validateEnvironmentConfig(config *AppConfig) error {
 		"staging":     true,
 		"production":  true,
 		"test":        true,
+		"qa":          true,
 	}
 
 	if !validEnvironments[config.Metadata.Environment] {
@@ -339,19 +349,21 @@ func (v *Validator) validateEnvironmentConfig(config *AppConfig) error {
 	return nil
 }
 
-func (v *Validator) validateTunnel(config TunnelConfig) error {
-	if config.Port < 1 || config.Port > 65535 {
-		return fmt.Errorf("invalid port: %d", config.Port)
-	}
-
-	validProtocols := map[string]bool{
-		"tcp":  true,
-		"udp":  true,
-		"quic": true,
-	}
-
-	if !validProtocols[strings.ToLower(config.Protocol)] {
-		return fmt.Errorf("invalid protocol: %s", config.Protocol)
+func (v *Validator) validateTunnel(mode string, config TunnelConfig) error {
+	switch strings.ToLower(mode) {
+	case "server":
+		if config.ListenPort < 1 || config.ListenPort > 65535 {
+			return fmt.Errorf("invalid listen_port: %d", config.ListenPort)
+		}
+	case "client":
+		if config.ServerAddress == "" {
+			return fmt.Errorf("server_address cannot be empty in client mode")
+		}
+		if config.ServerPort < 1 || config.ServerPort > 65535 {
+			return fmt.Errorf("invalid server_port: %d", config.ServerPort)
+		}
+	default:
+		return fmt.Errorf("unknown mode: %s", mode)
 	}
 
 	return nil
@@ -412,16 +424,8 @@ func (v *Validator) validateMetrics(config MetricsConfig) error {
 		return nil
 	}
 
-	if config.Address == "" {
-		return fmt.Errorf("metrics address cannot be empty when metrics are enabled")
-	}
-
 	if config.Interval.Seconds() < 1 {
 		return fmt.Errorf("invalid metrics interval: %v", config.Interval)
-	}
-
-	if config.BufferSize < 1 {
-		return fmt.Errorf("invalid metrics buffer size: %d", config.BufferSize)
 	}
 
 	return nil
@@ -436,9 +440,8 @@ func (v *Validator) validateThrottle(config ThrottleConfig) error {
 		return fmt.Errorf("invalid rate: %f", config.Rate)
 	}
 
-	if config.Burst <= 0 {
-		return fmt.Errorf("invalid burst: %d", config.Burst)
-	}
+	// burst is accepted for schema compatibility but unused: the limiter
+	// derives it as 100ms of the effective rate, so it is not validated.
 
 	return nil
 }

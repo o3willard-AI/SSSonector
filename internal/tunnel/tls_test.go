@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/o3willard-AI/SSSonector/internal/cert/generator"
+	"go.uber.org/zap"
 )
 
 func TestTLSSecurityLevels(t *testing.T) {
@@ -66,7 +67,7 @@ func TestTLSSecurityLevels(t *testing.T) {
 				SecurityLevel: tt.securityLevel,
 			}
 
-			manager, err := NewTLSManager(config)
+			manager, err := NewTLSManager(config, zap.NewNop())
 			if err != nil {
 				t.Fatalf("Failed to create TLS manager: %v", err)
 			}
@@ -122,7 +123,7 @@ func TestTLSHandshake(t *testing.T) {
 		CAFile:        filepath.Join(tempDir, "ca.crt"),
 		SecurityLevel: SecurityModern,
 	}
-	serverManager, err := NewTLSManager(serverConfig)
+	serverManager, err := NewTLSManager(serverConfig, zap.NewNop())
 	if err != nil {
 		t.Fatalf("Failed to create server TLS manager: %v", err)
 	}
@@ -134,7 +135,7 @@ func TestTLSHandshake(t *testing.T) {
 		CAFile:        filepath.Join(tempDir, "ca.crt"),
 		SecurityLevel: SecurityModern,
 	}
-	clientManager, err := NewTLSManager(clientConfig)
+	clientManager, err := NewTLSManager(clientConfig, zap.NewNop())
 	if err != nil {
 		t.Fatalf("Failed to create client TLS manager: %v", err)
 	}

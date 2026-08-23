@@ -1,6 +1,7 @@
 package tunnel
 
 import (
+	"fmt"
 	"github.com/o3willard-AI/SSSonector/internal/config"
 	"io"
 	"net"
@@ -20,10 +21,16 @@ type Transfer struct {
 }
 
 // NewTransfer creates a new transfer
-func NewTransfer(src, dst net.Conn, cfg *config.AppConfig, logger *zap.Logger) *Transfer {
+func NewTransfer(src, dst net.Conn, cfg *config.AppConfig, logger *zap.Logger) (*Transfer, error) {
 	// Create rate limiters for each direction
-	srcToDst := throttle.NewLimiter(cfg, src, dst, logger)
-	dstToSrc := throttle.NewLimiter(cfg, dst, src, logger)
+	srcToDst, err := throttle.NewLimiter(cfg, src, dst, logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create forward limiter: %w", err)
+	}
+	dstToSrc, err := throttle.NewLimiter(cfg, dst, src, logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create reverse limiter: %w", err)
+	}
 
 	return &Transfer{
 		src:      src,
@@ -31,7 +38,7 @@ func NewTransfer(src, dst net.Conn, cfg *config.AppConfig, logger *zap.Logger) *
 		srcToDst: srcToDst,
 		dstToSrc: dstToSrc,
 		logger:   logger,
-	}
+	}, nil
 }
 
 // Start starts the transfer
@@ -45,8 +52,8 @@ func (t *Transfer) Start() error {
 		_, err := io.Copy(t.dst, t.srcToDst)
 		// Propagate EOF: half-close the write side so the peer's read
 		// unblocks and the reverse direction can drain and finish.
-		if tc, ok := t.dst.(*net.TCPConn); ok {
-			tc.CloseWrite()
+		if cw, ok := t.dst.(closeWriter); ok {
+			cw.CloseWrite()
 		}
 		errChan <- err
 	}()
@@ -55,8 +62,8 @@ func (t *Transfer) Start() error {
 	go func() {
 		// Read from dst and write to src through limiter
 		_, err := io.Copy(t.src, t.dstToSrc)
-		if tc, ok := t.src.(*net.TCPConn); ok {
-			tc.CloseWrite()
+		if cw, ok := t.src.(closeWriter); ok {
+			cw.CloseWrite()
 		}
 		errChan <- err
 	}()
@@ -74,6 +81,18 @@ func (t *Transfer) Start() error {
 	t.dst.Close()
 
 	return err
+}
+
+// UpdateConfig pushes a reloaded configuration into both directional
+// limiters so live transfers pick up new rates without restart.
+func (t *Transfer) UpdateConfig(cfg *config.AppConfig) {
+	t.srcToDst.Update(cfg)
+	t.dstToSrc.Update(cfg)
+}
+
+// limiters exposes the directional limiters for white-box tests
+func (t *Transfer) limiters() (*throttle.Limiter, *throttle.Limiter) {
+	return t.srcToDst, t.dstToSrc
 }
 
 // Stop stops the transfer

@@ -5,12 +5,12 @@ import (
 	"crypto/x509"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/o3willard-AI/SSSonector/internal/cert/generator"
+	"go.uber.org/zap"
 )
 
 const (
@@ -29,13 +29,14 @@ type Manager struct {
 	caFile            string
 	isServer          bool
 	skipVerify        bool
+	logger            *zap.Logger
 	expireChan        chan struct{}
 	rotateChan        chan struct{}
 	stopChan          chan struct{}
 	certDir           string
 	currentCert       *tls.Certificate
 	certMutex         sync.RWMutex
-	settingsMu        sync.RWMutex // guards the tunable settings below
+	settingsMu        sync.RWMutex  // guards the tunable settings below
 	checkInterval     time.Duration // Configurable via hot reload/tests
 	rotationThreshold time.Duration // Configurable via hot reload/tests
 	useTemporaryCerts bool          // Configurable via hot reload/tests
@@ -43,13 +44,17 @@ type Manager struct {
 }
 
 // NewManager creates a new certificate manager
-func NewManager(certFile, keyFile, caFile string, isServer bool, skipVerify bool) (*Manager, error) {
+func NewManager(certFile, keyFile, caFile string, isServer bool, skipVerify bool, logger *zap.Logger) (*Manager, error) {
+	if logger == nil {
+		return nil, fmt.Errorf("logger is required")
+	}
 	m := &Manager{
 		certFile:          certFile,
 		keyFile:           keyFile,
 		caFile:            caFile,
 		isServer:          isServer,
 		skipVerify:        skipVerify,
+		logger:            logger,
 		expireChan:        make(chan struct{}),
 		rotateChan:        make(chan struct{}, 1), // Buffer size 1
 		stopChan:          make(chan struct{}),
@@ -104,6 +109,11 @@ func (m *Manager) getRotationThreshold() time.Duration {
 	m.settingsMu.RLock()
 	defer m.settingsMu.RUnlock()
 	return m.rotationThreshold
+}
+
+// CheckInterval returns the currently configured check interval
+func (m *Manager) CheckInterval() time.Duration {
+	return m.getCheckInterval()
 }
 
 func (m *Manager) getUseTemporaryCerts() bool {
@@ -178,74 +188,95 @@ func (m *Manager) getClientCertificate(*tls.CertificateRequestInfo) (*tls.Certif
 	return m.currentCert, nil
 }
 
-// monitorCertificate periodically checks certificate expiration and triggers rotation
+// monitorCertificate periodically checks certificate expiration and triggers rotation.
+// The check interval is re-read before every cycle so runtime updates
+// (hot reload/tests) take effect deterministically on the next tick.
 func (m *Manager) monitorCertificate() {
-	ticker := time.NewTicker(m.getCheckInterval())
-	defer ticker.Stop()
+	timer := time.NewTimer(m.getCheckInterval())
+	defer timer.Stop()
 
 	for {
 		select {
 		case <-m.stopChan:
 			return
-		case <-ticker.C:
-			cert := m.currentCert
-			if cert == nil {
-				log.Printf("No current certificate")
-				continue
-			}
+		case <-timer.C:
+			m.checkCertificate()
+			timer.Reset(m.getCheckInterval())
+		}
+	}
+}
 
-			x509Cert, err := x509.ParseCertificate(cert.Certificate[0])
-			if err != nil {
-				log.Printf("Error parsing certificate: %v", err)
-				continue
-			}
+// checkCertificate performs a single expiration/rotation evaluation
+func (m *Manager) checkCertificate() {
+	cert := m.currentCert
+	if cert == nil {
+		m.logger.Warn("No current certificate")
+		return
+	}
 
-			timeUntilExpiry := time.Until(x509Cert.NotAfter)
-			log.Printf("Certificate expires in %v (serial: %v)", timeUntilExpiry, x509Cert.SerialNumber)
+	x509Cert, err := x509.ParseCertificate(cert.Certificate[0])
+	if err != nil {
+		m.logger.Error("Failed to parse current certificate", zap.Error(err))
+		return
+	}
 
-			// Check if certificate has expired
-			if timeUntilExpiry <= 0 {
-				log.Printf("Certificate has expired")
+	timeUntilExpiry := time.Until(x509Cert.NotAfter)
+	m.logger.Info("Certificate status",
+		zap.Duration("expires_in", timeUntilExpiry),
+		zap.String("serial", x509Cert.SerialNumber.String()),
+	)
+
+	// Check if certificate has expired
+	if timeUntilExpiry <= 0 {
+		m.logger.Error("Certificate has expired",
+			zap.String("serial", x509Cert.SerialNumber.String()),
+		)
+		select {
+		case <-m.expireChan:
+			// Already closed
+		default:
+			close(m.expireChan)
+		}
+		return
+	}
+
+	// Check if certificate needs rotation
+	if timeUntilExpiry < m.getRotationThreshold() {
+		m.logger.Info("Certificate needs rotation",
+			zap.Duration("time_to_expiry", timeUntilExpiry),
+			zap.Duration("threshold", m.getRotationThreshold()),
+		)
+		select {
+		case m.rotateChan <- struct{}{}:
+			// Only rotate if we have enough time before expiration
+			if timeUntilExpiry > minRotationWindow {
+				m.rotateCertificates()
+				<-m.rotationDone // Wait for rotation to complete
+			} else {
+				m.logger.Warn("Skipping rotation due to imminent expiration",
+					zap.Duration("time_to_expiry", timeUntilExpiry),
+					zap.Duration("min_rotation_window", minRotationWindow),
+				)
+				<-m.rotateChan // Clear the rotation signal
+				// Close expiration channel since we're too close to expiry
 				select {
 				case <-m.expireChan:
 					// Already closed
 				default:
 					close(m.expireChan)
 				}
-				return
 			}
-
-			// Check if certificate needs rotation
-			if timeUntilExpiry < m.getRotationThreshold() {
-				log.Printf("Certificate needs rotation (threshold: %v)", m.getRotationThreshold())
-				select {
-				case m.rotateChan <- struct{}{}:
-					// Only rotate if we have enough time before expiration
-					if timeUntilExpiry > minRotationWindow {
-						m.rotateCertificates()
-						<-m.rotationDone // Wait for rotation to complete
-					} else {
-						log.Printf("Skipping rotation due to imminent expiration")
-						<-m.rotateChan // Clear the rotation signal
-						// Close expiration channel since we're too close to expiry
-						select {
-						case <-m.expireChan:
-							// Already closed
-						default:
-							close(m.expireChan)
-						}
-					}
-				default:
-					log.Printf("Rotation already in progress")
-				}
-			}
+		default:
+			m.logger.Warn("Rotation already in progress")
 		}
 	}
 }
 
 // rotateCertificates generates new certificates and updates the manager
 func (m *Manager) rotateCertificates() {
-	log.Printf("Starting certificate rotation (useTemporaryCerts: %v)", m.getUseTemporaryCerts())
+	m.logger.Info("Starting certificate rotation",
+		zap.Bool("use_temporary_certs", m.getUseTemporaryCerts()),
+	)
 
 	// Generate new certificates
 	var err error
@@ -255,7 +286,7 @@ func (m *Manager) rotateCertificates() {
 		err = generator.GenerateCertificates(m.certDir)
 	}
 	if err != nil {
-		log.Printf("Failed to generate new certificates: %v", err)
+		m.logger.Error("Failed to generate new certificates", zap.Error(err))
 		m.rotationDone <- struct{}{} // Signal completion even on error
 		return
 	}
@@ -263,7 +294,7 @@ func (m *Manager) rotateCertificates() {
 	// Load new certificate
 	newCert, err := tls.LoadX509KeyPair(m.certFile, m.keyFile)
 	if err != nil {
-		log.Printf("Failed to load new certificate: %v", err)
+		m.logger.Error("Failed to load new certificate", zap.Error(err))
 		m.rotationDone <- struct{}{} // Signal completion even on error
 		return
 	}
@@ -271,31 +302,24 @@ func (m *Manager) rotateCertificates() {
 	// Parse new certificate for logging
 	x509Cert, err := x509.ParseCertificate(newCert.Certificate[0])
 	if err != nil {
-		log.Printf("Failed to parse new certificate: %v", err)
+		m.logger.Error("Failed to parse new certificate", zap.Error(err))
 		m.rotationDone <- struct{}{} // Signal completion even on error
 		return
 	}
-	log.Printf("Generated new certificate with serial: %v", x509Cert.SerialNumber)
+	m.logger.Info("Generated new certificate",
+		zap.String("serial", x509Cert.SerialNumber.String()),
+	)
 
 	// Update certificate atomically
 	m.certMutex.Lock()
 	m.currentCert = &newCert
 	m.certMutex.Unlock()
 
-	log.Printf("Certificate rotation completed successfully")
+	m.logger.Info("Certificate rotation completed successfully")
 	m.rotationDone <- struct{}{} // Signal completion
 }
 
 // Stop stops the certificate manager
 func (m *Manager) Stop() {
 	close(m.stopChan)
-}
-
-// NewTLSConfig is a convenience function to create a TLS configuration
-func NewTLSConfig(certFile, keyFile, caFile string, isServer bool, skipVerify bool) (*tls.Config, error) {
-	manager, err := NewManager(certFile, keyFile, caFile, isServer, skipVerify)
-	if err != nil {
-		return nil, err
-	}
-	return manager.GetTLSConfig()
 }

@@ -55,8 +55,9 @@ config:
 throttle:
   enabled: false
   rate: 1048576
-  burst: 104858
+  burst: 104858          # accepted but unused: burst is always 100ms of effective rate
 metadata:
+  schema_version: "2.0.0"
   version: 1.0.0
   environment: qa
   region: local

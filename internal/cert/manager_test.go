@@ -10,6 +10,9 @@ import (
 	"time"
 
 	"github.com/o3willard-AI/SSSonector/internal/cert/generator"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 // waitForRotation polls the manager until the presented certificate serial
@@ -59,6 +62,7 @@ func TestCertificateRotation(t *testing.T) {
 		filepath.Join(tempDir, "ca.crt"),
 		true,
 		false,
+		zap.NewNop(),
 	)
 	if err != nil {
 		t.Fatalf("Failed to create certificate manager: %v", err)
@@ -132,6 +136,7 @@ func TestCertificateExpiration(t *testing.T) {
 		filepath.Join(tempDir, "ca.crt"),
 		true,
 		false,
+		zap.NewNop(),
 	)
 	if err != nil {
 		t.Fatalf("Failed to create certificate manager: %v", err)
@@ -225,10 +230,117 @@ func TestCertificateValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := NewManager(tt.certFile, tt.keyFile, tt.caFile, tt.isServer, false)
+			_, err := NewManager(tt.certFile, tt.keyFile, tt.caFile, tt.isServer, false, zap.NewNop())
 			if (err != nil) != tt.wantError {
 				t.Errorf("NewManager() error = %v, wantError %v", err, tt.wantError)
 			}
 		})
+	}
+}
+
+func TestNewManagerRequiresLogger(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "cert-nologger-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	if err := generator.GenerateTemporaryCertificates(tempDir); err != nil {
+		t.Fatalf("Failed to generate certificates: %v", err)
+	}
+
+	_, err = NewManager(
+		filepath.Join(tempDir, "server.crt"),
+		filepath.Join(tempDir, "server.key"),
+		filepath.Join(tempDir, "ca.crt"),
+		true,
+		false,
+		nil,
+	)
+	if err == nil {
+		t.Fatal("NewManager() with nil logger should fail, got nil error")
+	}
+}
+
+func TestManagerEmitsStructuredCertLogs(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "cert-logs-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	if err := generator.GenerateTemporaryCertificates(tempDir); err != nil {
+		t.Fatalf("Failed to generate certificates: %v", err)
+	}
+
+	core, observed := observer.New(zapcore.InfoLevel)
+	manager, err := NewManager(
+		filepath.Join(tempDir, "server.crt"),
+		filepath.Join(tempDir, "server.key"),
+		filepath.Join(tempDir, "ca.crt"),
+		true,
+		false,
+		zap.New(core),
+	)
+	if err != nil {
+		t.Fatalf("Failed to create certificate manager: %v", err)
+	}
+	defer manager.Stop()
+
+	// Threshold 0 keeps this evaluation on the status-report path; the
+	// drainer guards against the rotation path blocking on rotationDone
+	// if the temporary certificate expires mid-test.
+	manager.SetRotationThreshold(0)
+	drained := make(chan struct{})
+	defer close(drained)
+	go func() {
+		for {
+			select {
+			case <-manager.rotationDone:
+			case <-drained:
+				return
+			}
+		}
+	}()
+
+	manager.checkCertificate()
+
+	entries := observed.All()
+	if len(entries) == 0 {
+		t.Fatal("Expected at least one log entry from checkCertificate, got none")
+	}
+
+	foundStatus := false
+	for _, e := range entries {
+		if e.Message != "Certificate status" {
+			continue
+		}
+		foundStatus = true
+
+		var expiresIn zapcore.Field
+		for _, f := range e.Context {
+			if f.Key == "expires_in" {
+				expiresIn = f
+			}
+		}
+		if expiresIn.Key != "expires_in" {
+			t.Error("Certificate status entry missing expires_in field")
+		} else if expiresIn.Type != zapcore.DurationType {
+			t.Errorf("expires_in field should be a duration, got type %v", expiresIn.Type)
+		}
+
+		serialOK := false
+		for _, f := range e.Context {
+			if f.Key == "serial" && f.String != "" {
+				serialOK = true
+			}
+		}
+		if !serialOK {
+			t.Error("Certificate status entry missing non-empty serial field")
+		}
+	}
+
+	if !foundStatus {
+		t.Fatalf("Expected a 'Certificate status' entry, got: %+v", entries)
 	}
 }
