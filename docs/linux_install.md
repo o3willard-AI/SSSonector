@@ -89,78 +89,66 @@ sudo make install
 
 ## Configuration Examples
 
+Complete reference examples live in `configs/` and `templates/`. The
+current schema requires `metadata.schema_version: "2.0.0"`; configs are
+validated at startup and unknown or invalid values abort startup rather
+than being ignored.
+
 ### Example 1: Basic Server Setup
 ```yaml
-mode: "server"
-network:
-  interface: "tun0"
-  address: "10.0.0.1/24"
-  mtu: 1500
-tunnel:
-  cert_file: "/etc/sssonector/certs/server.crt"
-  key_file: "/etc/sssonector/certs/server.key"
-  ca_file: "/etc/sssonector/certs/ca.crt"
-  listen_address: "0.0.0.0"
-  listen_port: 8443
-monitor:
-  enabled: true
-  log_file: "/var/log/sssonector/server.log"
+metadata:
+  schema_version: "2.0.0"
+  environment: production
+type: server
+config:
+  mode: server
+  logging:
+    level: info
+    format: json
+  network:
+    name: tun0
+    interface: tun0
+    address: "10.0.0.1/24"
+    mtu: 1500
+  tunnel:
+    listen_address: "0.0.0.0"
+    listen_port: 8443
+  auth:
+    cert_file: "/etc/sssonector/certs/server.crt"
+    key_file: "/etc/sssonector/certs/server.key"
+    ca_file: "/etc/sssonector/certs/ca.crt"
 ```
 
 ### Example 2: High-Performance Client Setup
 ```yaml
-mode: "client"
-network:
-  interface: "tun0"
-  address: "10.0.0.2/24"
-  mtu: 9000  # Jumbo frames
-tunnel:
-  cert_file: "/etc/sssonector/certs/client.crt"
-  key_file: "/etc/sssonector/certs/client.key"
-  ca_file: "/etc/sssonector/certs/ca.crt"
-  server_address: "server.example.com"
-  server_port: 8443
-monitor:
-  enabled: true
-  log_file: "/var/log/sssonector/client.log"
-  snmp_enabled: true
-  snmp_port: 10161
+metadata:
+  schema_version: "2.0.0"
+  environment: production
+type: client
+config:
+  mode: client
+  logging:
+    level: info
+    format: json
+  network:
+    name: tun0
+    interface: tun0
+    address: "10.0.0.2/24"
+    mtu: 9000  # Jumbo frames
+  tunnel:
+    server_address: "server.example.com"
+    server_port: 8443
+  auth:
+    cert_file: "/etc/sssonector/certs/client.crt"
+    key_file: "/etc/sssonector/certs/client.key"
+    ca_file: "/etc/sssonector/certs/ca.crt"
 throttle:
   enabled: true
-  rate_limit: 1000000000  # 1 Gbps
-  burst_limit: 1200000000 # 1.2 Gbps burst
+  rate: 909090909  # ~1 Gbps effective after the 1.1 TCP overhead factor
 ```
 
-### Example 3: Load-Balanced Server Setup
-```yaml
-mode: "server"
-network:
-  interface: "tun0"
-  address: "10.0.0.1/24"
-  mtu: 1500
-tunnel:
-  cert_file: "/etc/sssonector/certs/server.crt"
-  key_file: "/etc/sssonector/certs/server.key"
-  ca_file: "/etc/sssonector/certs/ca.crt"
-  listen_address: "0.0.0.0"
-  listen_port: 8443
-  max_clients: 1000
-  client_queue_size: 5000
-monitor:
-  enabled: true
-  log_file: "/var/log/sssonector/server.log"
-  snmp_enabled: true
-  snmp_port: 10161
-  metrics_interval: 10
-throttle:
-  enabled: true
-  rate_limit: 10000000000  # 10 Gbps
-  burst_limit: 12000000000 # 12 Gbps burst
-buffer:
-  read_size: 65536
-  write_size: 65536
-  pool_size: 1024
-```
+See the [Configuration Guide](configuration_guide.md) for monitoring,
+SNMP, Prometheus, facade, and hot-reload options.
 
 ## Systemd Service Setup
 

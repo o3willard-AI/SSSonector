@@ -71,7 +71,10 @@
       "id": 1,
       "options": {
         "legend": {
-          "calcs": ["mean", "max"],
+          "calcs": [
+            "mean",
+            "max"
+          ],
           "displayMode": "table",
           "placement": "bottom",
           "showLegend": true
@@ -87,7 +90,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "rate(sssonector_bytes_received[5m])",
+          "expr": "rate(sssonector_bytes_in_total[5m])",
           "legendFormat": "Bytes Received",
           "refId": "A"
         },
@@ -96,7 +99,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "rate(sssonector_bytes_sent[5m])",
+          "expr": "rate(sssonector_bytes_out_total[5m])",
           "legendFormat": "Bytes Sent",
           "refId": "B"
         }
@@ -132,7 +135,7 @@
               }
             ]
           },
-          "unit": "µs"
+          "unit": "\u00b5s"
         },
         "overrides": []
       },
@@ -146,7 +149,9 @@
       "options": {
         "orientation": "auto",
         "reduceOptions": {
-          "calcs": ["lastNotNull"],
+          "calcs": [
+            "lastNotNull"
+          ],
           "fields": "",
           "values": false
         },
@@ -160,11 +165,11 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sssonector_latency",
+          "expr": "sssonector_errors_total",
           "refId": "A"
         }
       ],
-      "title": "Latency",
+      "title": "Errors (cumulative)",
       "type": "gauge"
     },
     {
@@ -229,7 +234,10 @@
       "id": 3,
       "options": {
         "legend": {
-          "calcs": ["mean", "max"],
+          "calcs": [
+            "mean",
+            "max"
+          ],
           "displayMode": "table",
           "placement": "bottom",
           "showLegend": true
@@ -245,12 +253,12 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "rate(sssonector_packets_lost[5m])",
+          "expr": "rate(sssonector_errors_total[5m])",
           "legendFormat": "Packets Lost",
           "refId": "A"
         }
       ],
-      "title": "Packet Loss",
+      "title": "Error Rate (5m)",
       "type": "timeseries"
     },
     {
@@ -297,7 +305,9 @@
       "options": {
         "orientation": "auto",
         "reduceOptions": {
-          "calcs": ["lastNotNull"],
+          "calcs": [
+            "lastNotNull"
+          ],
           "fields": "",
           "values": false
         },
@@ -311,7 +321,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sssonector_cpu_usage",
+          "expr": "sssonector_cpu_usage_percent",
           "refId": "A"
         }
       ],
@@ -322,7 +332,10 @@
   "refresh": "5s",
   "schemaVersion": 38,
   "style": "dark",
-  "tags": ["SSSonector", "monitoring"],
+  "tags": [
+    "SSSonector",
+    "monitoring"
+  ],
   "templating": {
     "list": []
   },

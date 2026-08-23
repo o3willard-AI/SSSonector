@@ -75,51 +75,37 @@ go build -o sssonector.exe .\cmd\tunnel
 
 ## Configuration Examples
 
-### Example 1: Basic Client Setup
+Complete reference examples live in `configs/` and `templates/`. The
+current schema requires `metadata.schema_version: "2.0.0"`; configs are
+validated at startup and invalid values abort startup.
+
+### Example: Basic Client Setup
 ```yaml
-mode: "client"
-network:
-  interface: "sssonector0"
-  address: "10.0.0.2/24"
-  mtu: 1500
-tunnel:
-  cert_file: "C:\\ProgramData\\SSSonector\\certs\\client.crt"
-  key_file: "C:\\ProgramData\\SSSonector\\certs\\client.key"
-  ca_file: "C:\\ProgramData\\SSSonector\\certs\\ca.crt"
-  server_address: "server.example.com"
-  server_port: 8443
-monitor:
-  enabled: true
-  log_file: "C:\\ProgramData\\SSSonector\\logs\\client.log"
+metadata:
+  schema_version: "2.0.0"
+  environment: production
+type: client
+config:
+  mode: client
+  logging:
+    level: info
+    format: console
+  network:
+    name: sssonector0
+    interface: sssonector0
+    address: "10.0.0.2/24"
+    mtu: 1500
+  tunnel:
+    server_address: "server.example.com"
+    server_port: 8443
+  auth:
+    cert_file: "C:\\ProgramData\\SSSonector\\certs\\client.crt"
+    key_file: "C:\\ProgramData\\SSSonector\\certs\\client.key"
+    ca_file: "C:\\ProgramData\\SSSonector\\certs\\ca.crt"
 ```
 
-### Example 2: High-Performance Client Setup
-```yaml
-mode: "client"
-network:
-  interface: "sssonector0"
-  address: "10.0.0.2/24"
-  mtu: 1500
-tunnel:
-  cert_file: "C:\\ProgramData\\SSSonector\\certs\\client.crt"
-  key_file: "C:\\ProgramData\\SSSonector\\certs\\client.key"
-  ca_file: "C:\\ProgramData\\SSSonector\\certs\\ca.crt"
-  server_address: "server.example.com"
-  server_port: 8443
-monitor:
-  enabled: true
-  log_file: "C:\\ProgramData\\SSSonector\\logs\\client.log"
-  snmp_enabled: true
-  snmp_port: 10161
-throttle:
-  enabled: true
-  rate_limit: 1000000000  # 1 Gbps
-  burst_limit: 1200000000 # 1.2 Gbps burst
-buffer:
-  read_size: 65536
-  write_size: 65536
-  pool_size: 1024
-```
+See the [Configuration Guide](configuration_guide.md) for monitoring,
+throttle, facade, and hot-reload options.
 
 ## Windows Service Setup
 
@@ -234,13 +220,18 @@ New-PerfCounter -Name "BytesOut" -CategoryName "SSSonector" -CounterType NumberO
 
 ### SNMP Monitoring
 ```yaml
-monitor:
-  enabled: true
-  snmp_enabled: true
-  snmp_address: "0.0.0.0"
-  snmp_port: 10161
-  snmp_community: "public"
+config:
+  monitor:
+    enabled: true
+    type: snmp
+  snmp:
+    enabled: true
+    address: "0.0.0.0"
+    port: 10162
+    community: "public"
 ```
+
+See [SNMP Monitoring](snmp_monitoring.md) for the MIB layout.
 
 ## Support and Resources
 

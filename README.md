@@ -253,8 +253,8 @@ config:
       path: /metrics
 throttle:
   enabled: true
-  rate: 1048576    # 1 MB/s
-  burst: 2097152   # 2 MB burst
+  rate: 1048576    # ~1.1 MB/s effective after TCP overhead adjustment
+  burst: 2097152   # accepted but unused: limiter derives burst as 100ms of effective rate
 ```
 
 ### Client Configuration
@@ -288,8 +288,8 @@ config:
     direct_timeout: 3s
 throttle:
   enabled: true
-  rate: 1048576    # 1 MB/s
-  burst: 2097152   # 2 MB burst
+  rate: 1048576    # ~1.1 MB/s effective after TCP overhead adjustment
+  burst: 2097152   # accepted but unused: limiter derives burst as 100ms of effective rate
 ```
 
 ## Multi-Instance Deployment

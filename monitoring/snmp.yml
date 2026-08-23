@@ -1,0 +1,48 @@
+# SNMP exporter module for the SSSonector agent.
+# OIDs mirror internal/monitor/mib.go (enterprise root 1.3.6.1.4.1.54321).
+modules:
+  sssonector:
+    walk:
+      - 1.3.6.1.4.1.54321.1   # Tunnel metrics: bytes in/out, connections, cpu, memory
+      - 1.3.6.1.4.1.54321.2   # Tunnel state: status, last error, start time
+      - 1.3.6.1.4.1.54321.3   # Limits: max connections, rate limits
+    get:
+      - 1.3.6.1.4.1.54321.1.1.0
+      - 1.3.6.1.4.1.54321.1.2.0
+    metrics:
+      - name: sssonector_snmp_bytes_in_total
+        oid: 1.3.6.1.4.1.54321.1.1
+        type: counter
+        help: Total bytes received from tunnel peers
+      - name: sssonector_snmp_bytes_out_total
+        oid: 1.3.6.1.4.1.54321.1.2
+        type: counter
+        help: Total bytes sent to tunnel peers
+      - name: sssonector_snmp_active_connections
+        oid: 1.3.6.1.4.1.54321.1.7
+        type: gauge
+        help: Currently active tunnel connections
+      - name: sssonector_snmp_cpu_usage_percent
+        oid: 1.3.6.1.4.1.54321.1.8
+        type: gauge
+        help: Process CPU usage percentage
+      - name: sssonector_snmp_memory_usage_mb
+        oid: 1.3.6.1.4.1.54321.1.9
+        type: gauge
+        help: Process memory usage in megabytes
+      - name: sssonector_snmp_tunnel_status
+        oid: 1.3.6.1.4.1.54321.2.1
+        type: gauge
+        help: Tunnel operational status (0 down, 1 up)
+      - name: sssonector_snmp_start_time_seconds
+        oid: 1.3.6.1.4.1.54321.2.3
+        type: counter
+        help: Service start time as unix seconds
+      - name: sssonector_snmp_upload_rate_limit_kbps
+        oid: 1.3.6.1.4.1.54321.3.2
+        type: gauge
+        help: Configured upload rate limit in kbps
+      - name: sssonector_snmp_download_rate_limit_kbps
+        oid: 1.3.6.1.4.1.54321.3.3
+        type: gauge
+        help: Configured download rate limit in kbps

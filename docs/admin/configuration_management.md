@@ -6,30 +6,32 @@ This guide provides system administrators with detailed information on managing 
 
 SSSonector supports dynamic configuration updates, allowing you to modify certain settings without service interruption or connection loss.
 
-### Supported Dynamic Changes
+### Supported Dynamic Changes (SIGHUP)
 
-✅ Can be changed without restart:
-- Rate limiting settings
-- Monitoring parameters
-- Connection limits
-- Buffer sizes
-- SNMP settings
+✅ Applied live on reload:
+- `throttle.enabled`, `throttle.rate` (live and future transfers)
+- `logging.level` (unless overridden by the `-log-level` startup flag)
+- `auth.cert_rotation.interval`
 
-❌ Requires restart:
-- Operating mode (server/client)
-- Network interface settings
-- TLS/Certificate configurations
-- Authentication methods
+⚠️ Detected and logged as "requires restart" warnings:
+- Operating mode, network/TUN settings, tunnel ports
+- Facade enablement/ports/secrets
+- Logging file/format (logger sinks are fixed at startup)
+- Monitor type, Prometheus port, SNMP endpoint settings, metrics interval
+- Certificate paths and TLS material
+
+See [Hot Reload](../hot_reload.md) for the complete contract.
 
 ## Configuration Methods
 
-### 1. Direct File Edit
+### 1. Direct File Edit + SIGHUP
 
 ```bash
 # Edit configuration file
 sudo vim /etc/sssonector/config.yaml
 
-# Changes are automatically detected and applied
+# Then trigger the reload - edits are NOT detected automatically
+sudo systemctl reload sssonector
 ```
 
 ### 2. SIGHUP Signal
@@ -53,56 +55,52 @@ sudo systemctl reload sssonector
 # Before
 throttle:
   enabled: true
-  rate_limit: 1048576    # 1 MB/s
-  burst_limit: 104858    # 100ms worth of data
+  rate: 1048576    # ~1.05 MB/s effective after TCP overhead factor
 
 # After
 throttle:
   enabled: true
-  rate_limit: 2097152    # 2 MB/s
-  burst_limit: 209716    # 100ms worth of data
+  rate: 2097152    # ~2.1 MB/s effective
 ```
 
-### Monitoring Changes
+### Log Level Change
 
 ```yaml
 # Before
-monitor:
-  enabled: true
-  snmp_enabled: false
-  update_interval: 30
+config:
+  logging:
+    level: info
 
 # After
-monitor:
-  enabled: true
-  snmp_enabled: true
-  snmp_port: 161
-  update_interval: 10
+config:
+  logging:
+    level: debug
 ```
+
+Note: endpoint topology changes (`monitor.type`, `snmp.*`, prometheus port)
+require a restart; reload logs them as warnings.
 
 ## Validation and Safety
 
 ### Pre-change Validation
 
 ```bash
-# Validate configuration before applying
-sssonector -validate-config /path/to/new/config.yaml
-
-# Show current effective configuration
-sssonector -show-config
+# The daemon validates on every SIGHUP itself; rejected reloads are logged
+# at ERROR with the offending field and the old config stays active.
+journalctl -u sssonector | grep -E "reload|restart"
 ```
 
 ### Monitoring Changes
 
 ```bash
-# Watch configuration status
-watch -n 1 'sssonector -status'
-
-# Monitor logs for changes
-journalctl -u sssonector -f | grep "configuration"
+# Monitor logs for reload events
+journalctl -u sssonector -f | grep -E "reloaded|requires restart|Log level"
 
 # Check SNMP metrics
-snmpwalk -v2c -c public localhost:161 .1.3.6.1.4.1.54321.1
+snmpwalk -v2c -c public localhost:10162 .1.3.6.1.4.1.54321.1
+
+# Or scrape Prometheus directly
+curl -s http://localhost:9090/metrics | grep sssonector_
 ```
 
 ## Best Practices

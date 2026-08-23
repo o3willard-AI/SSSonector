@@ -1,103 +1,183 @@
 # SSSonector Configuration Guide
 
-This guide provides detailed information about configuring SSSonector, including complete examples and explanations for both server and client setups.
+This guide describes the **current** configuration schema (v2,
+`metadata.schema_version: "2.0.0"`). Reference fixtures live in
+`configs/` and `templates/`.
 
 ## Configuration File Structure
 
-SSSonector uses YAML configuration files with the following main sections:
-- `mode`: Determines if running as server or client
-- `network`: Network interface configuration
-- `tunnel`: SSL tunnel and certificate settings
-- `facade`: HTTPS facade for firewall traversal (optional)
-- `monitor`: Monitoring and SNMP configuration
-- `throttle`: Rate limiting settings
+```yaml
+metadata:
+  schema_version: "2.0.0"
+  environment: production   # development|staging|production|test|qa
+  region: local
+
+type: server                # server|client
+config:
+  mode: server
+  logging:
+    level: info             # debug|info|warn|error|fatal
+    format: json            # json|console
+    file: ""                # empty = stdout only; when set, output mirrors to stderr
+  network:
+    name: tun0
+    interface: tun0
+    mtu: 1500
+    address: 10.0.0.1/24    # CIDR notation is required
+  tunnel:
+    listen_address: 0.0.0.0 # server role
+    listen_port: 8443       # server role
+    server_address: ""      # client role
+    server_port: 8443       # client role
+  security:
+    tls:
+      min_version: "1.2"    # production environment enforces "1.3"
+      max_version: "1.3"
+    auth_method: certificate
+  auth:
+    cert_file: /etc/sssonector/certs/server.crt
+    key_file: /etc/sssonector/certs/server.key
+    ca_file: /etc/sssonector/certs/ca.crt
+    cert_rotation:
+      enabled: false
+      interval: 1h          # expiry-check cadence; hot-reloadable
+  monitor:
+    enabled: true
+    type: prometheus        # prometheus|snmp
+    interval: 10s
+    prometheus:
+      enabled: true
+      port: 9090
+      path: /metrics
+  snmp:
+    enabled: false
+    address: "0.0.0.0"
+    port: 10162
+    community: "public"
+  metrics:
+    enabled: true           # feeds SNMP/Prometheus from the live data path
+    interval: 5s
+  facade:
+    enabled: false          # see Facade Configuration below
+throttle:
+  enabled: false
+  rate: 1048576             # bytes/sec; effective rate = rate x 1.1
+  burst: 104858             # accepted but unused: burst is always 100ms of effective rate
+```
 
 ## Basic Configuration Examples
 
 ### Server Configuration
 ```yaml
-mode: "server"
-
-network:
-  interface: "tun0"
-  address: "10.0.0.1/24"  # Server uses first address in tunnel network
-  mtu: 1500               # Standard MTU, adjust if needed
-
-tunnel:
-  cert_file: "/etc/sssonector/certs/server.crt"
-  key_file: "/etc/sssonector/certs/server.key"
-  ca_file: "/etc/sssonector/certs/ca.crt"
-  listen_address: "0.0.0.0"  # Listen on all interfaces
-  listen_port: 8443
-  max_clients: 10
-  upload_kbps: 10240     # 10 Mbps upload limit
-  download_kbps: 10240   # 10 Mbps download limit
-
-monitor:
-  enabled: true
-  log_file: "/var/log/sssonector/server.log"
-  snmp_enabled: true
-  snmp_address: "0.0.0.0"
-  snmp_port: 10161       # Non-standard port to avoid conflicts
-  snmp_community: "public"
-  snmp_version: "2c"
-  update_interval: 30
-
+metadata:
+  schema_version: "2.0.0"
+  environment: qa
+type: server
+config:
+  mode: server
+  logging:
+    level: info
+    format: json
+  network:
+    name: tun0
+    interface: tun0
+    mtu: 1500
+    address: 10.0.0.1/24
+  tunnel:
+    listen_address: "0.0.0.0"
+    listen_port: 8443
+  auth:
+    cert_file: "/etc/sssonector/certs/server.crt"
+    key_file: "/etc/sssonector/certs/server.key"
+    ca_file: "/etc/sssonector/certs/ca.crt"
+  monitor:
+    enabled: true
+    type: prometheus
+    prometheus:
+      enabled: true
+      port: 9090
+      path: /metrics
+  metrics:
+    enabled: true
+    interval: 5s
 throttle:
   enabled: true
-  rate_limit: 1000000    # 1 MB/s
-  burst_limit: 2000000   # 2 MB/s burst
+  rate: 1000000    # ~1.1 MB/s effective
 ```
 
 ### Client Configuration
 ```yaml
-mode: "client"
-
-network:
-  interface: "tun0"
-  address: "10.0.0.2/24"  # Client uses unique address in tunnel network
-  mtu: 1500
-
-tunnel:
-  cert_file: "/etc/sssonector/certs/client.crt"
-  key_file: "/etc/sssonector/certs/client.key"
-  ca_file: "/etc/sssonector/certs/ca.crt"
-  server_address: "192.168.50.210"  # Server's public IP
-  server_port: 8443
-  upload_kbps: 10240
-  download_kbps: 10240
-
-monitor:
-  enabled: true
-  log_file: "/var/log/sssonector/client.log"
-  snmp_enabled: true
-  snmp_address: "0.0.0.0"
-  snmp_port: 10162       # Different port from server
-  snmp_community: "public"
-  snmp_version: "2c"
-  update_interval: 30
-
-throttle:
-  enabled: true
-  rate_limit: 1000000
-  burst_limit: 2000000
+metadata:
+  schema_version: "2.0.0"
+  environment: qa
+type: client
+config:
+  mode: client
+  logging:
+    level: info
+    format: json
+  network:
+    name: tun0
+    interface: tun0
+    mtu: 1500
+    address: 10.0.0.2/24
+  tunnel:
+    server_address: "192.168.50.210"
+    server_port: 8443
+  auth:
+    cert_file: "/etc/sssonector/certs/client.crt"
+    key_file: "/etc/sssonector/certs/client.key"
+    ca_file: "/etc/sssonector/certs/ca.crt"
+  snmp:
+    enabled: true
+    address: "0.0.0.0"
+    port: 10162
+    community: "public"
+  metrics:
+    enabled: true
+    interval: 5s
+  monitor:
+    enabled: true
+    type: snmp
 ```
 
 ## Section Details
 
 ### Network Configuration
 - `interface`: Name of the TUN interface to create
-- `address`: IP address/netmask for the tunnel interface
-- `mtu`: Maximum Transmission Unit (default: 1500)
+- `address`: IP address in CIDR notation (e.g. `10.0.0.2/24`); bare IPs are rejected by validation
+- `mtu`: Maximum Transmission Unit (valid range 576–65535)
 
 ### Tunnel Configuration
-- `cert_file`, `key_file`, `ca_file`: Paths to SSL certificates
-  * Can be absolute paths or relative to config directory
-  * Default location: /etc/sssonector/certs/
-- `listen_address`, `listen_port`: Server listening settings
-- `server_address`, `server_port`: Client connection settings
-- `max_clients`: Maximum concurrent client connections (server only)
-- `upload_kbps`, `download_kbps`: Bandwidth limits in Kbps
+Validation is mode-aware:
+- Server: `listen_port` must be 1–65535
+- Client: `server_address` must be set; `server_port` must be 1–65535
+
+Certificate paths may be absolute or relative to the config file location.
+
+### Logging Configuration
+- `level`: one of debug, info, warn, error, fatal (required)
+- `format`: `json` (default) or `console`
+- `file`: when set, logs are written to this file AND mirrored to stderr;
+  parent directories are created automatically
+- The `-log-level` command-line flag overrides `logging.level`; it also
+  keeps precedence across SIGHUP reloads (see [Hot Reload](hot_reload.md))
+
+### Monitor / Metrics / SNMP Configuration
+- `monitor.enabled` gates monitoring overall
+- `monitor.type: prometheus` + `monitor.prometheus.enabled` serves a
+  `/metrics` text-exposition endpoint on `monitor.prometheus.port`
+- `monitor.type: snmp` + `snmp.enabled` starts the SNMPv2c agent on
+  `snmp.address:snmp.port` (see [SNMP Monitoring](snmp_monitoring.md))
+- `metrics.enabled` + `metrics.interval` control how often live data-path
+  counters are sampled into those endpoints
+
+### Throttle Configuration
+- `enabled`: enable/disable rate limiting (hot-reloadable)
+- `rate`: sustained limit in bytes/sec before TCP overhead adjustment;
+  effective rate = `rate x 1.1` (hot-reloadable)
+- `burst`: accepted for compatibility but **not used** — the limiter always
+  derives burst as 100ms of the effective rate
 
 ### Facade Configuration (Firewall Traversal)
 
@@ -124,204 +204,57 @@ WebSocket upgrades over a legitimate HTTPS web server.
 - `facade.token_secret`: **Required when the facade is enabled; must match server exactly**
 - `facade.tls.cert_file`, `facade.tls.key_file`, `facade.tls.ca_file`: Optional separate TLS config
 
-**Example -- Server with facade:**
-```yaml
-facade:
-  enabled: true
-  listen_address: 0.0.0.0
-  listen_port: 443
-  token_ttl: 30s
-  tunnel_ports:
-    - 8443
-    - 8444
-    - 8445
-```
-
-**Example -- Client with facade fallback:**
-```yaml
-facade:
-  enabled: true
-  server_port: 443
-  direct_timeout: 3s
-```
-
-### Monitor Configuration
-- `enabled`: Enable/disable monitoring
-- `log_file`: Path to monitoring log file
-- `snmp_enabled`: Enable SNMP monitoring
-- `snmp_address`: SNMP listening address
-- `snmp_port`: SNMP port (default: 161)
-- `snmp_community`: SNMP community string
-- `snmp_version`: SNMP version (supported: 1, 2c)
-- `update_interval`: Metrics update interval in seconds
-
-### Throttle Configuration
-- `enabled`: Enable/disable rate limiting
-- `rate_limit`: Sustained rate limit in bytes/sec
-- `burst_limit`: Burst rate limit in bytes/sec
-
 ## Path Resolution Rules
 
 1. Certificate paths:
    - Absolute paths are used as-is
    - Relative paths are resolved from config file location
-   - Default paths use /etc/sssonector/certs/
+   - Instance layouts under an `instances/` directory resolve relative
+     cert paths against the instance directory
 
-2. Log files:
+2. Log files (`logging.file`):
    - Absolute paths are used as-is
-   - Relative paths are resolved from current directory
-   - Default location: /var/log/sssonector/
+   - Relative paths are resolved from the current working directory
+   - Parent directories are created automatically at startup
+
+## Validation Rules
+
+Configuration is validated at startup AND on every SIGHUP reload:
+
+- `logging.level` must be one of debug/info/warn/error/fatal;
+  `logging.format` must be json or console
+- `network.address` must be valid CIDR
+- Tunnel ports/address checked per mode (see above)
+- Certificate path hygiene: no `..`, no duplicate slashes, correct extensions
+  (.crt/.pem for certs, .key/.pem for keys, .crt/.pem for CA)
+- `metadata.environment` must be one of development/staging/production/test/qa;
+  production additionally requires TLS 1.3 minimum
+- `monitor.type` must be prometheus or snmp when monitoring is enabled
+- Invalid configurations abort startup or reject the reload — never fall
+  back to defaults silently
 
 ## Common Issues and Solutions
 
-1. Certificate Loading Fails
-   ```
-   Problem: "failed to load certificate"
-   Solution: Ensure paths are correct and files have proper permissions (600)
-   ```
+1. **Service exits immediately with "Config validation failed"**
+   The error names the offending field and the log line includes the config
+   path. Fix the value; nothing is guessed.
 
-2. Network Interface Creation Fails
-   ```
-   Problem: "failed to create tun device"
-   Solution: Run with sufficient privileges (root/sudo)
-   ```
+2. **No TLS on connections**
+   Missing/unreadable certificate files disable TLS with an ERROR log
+   ("running without TLS"). Provision certs before production use.
 
-3. SNMP Binding Fails
-   ```
-   Problem: "failed to bind SNMP agent"
-   Solution: Check if port is available, may need to change port number
-   ```
+3. **SNMP walk returns nothing**
+   Check `monitor.type` is `snmp`, `snmp.enabled: true`, firewall allows the
+   UDP port, and community matches.
 
-## Tested Configurations
-
-The following configurations have been validated in our QA environment:
-
-1. Basic Server-Client Setup
-   - Server (192.168.50.210):
-     ```yaml
-     mode: "server"
-     network:
-       interface: "tun0"
-       address: "10.0.0.1/24"
-       mtu: 1500
-     tunnel:
-       cert_file: "/etc/sssonector/certs/server.crt"
-       key_file: "/etc/sssonector/certs/server.key"
-       ca_file: "/etc/sssonector/certs/ca.crt"
-       listen_address: "0.0.0.0"
-       listen_port: 8443
-       max_clients: 10
-       upload_kbps: 10240
-       download_kbps: 10240
-     ```
-
-   - Client (192.168.50.211):
-     ```yaml
-     mode: "client"
-     network:
-       interface: "tun0"
-       address: "10.0.0.2/24"
-       mtu: 1500
-     tunnel:
-       cert_file: "/etc/sssonector/certs/client.crt"
-       key_file: "/etc/sssonector/certs/client.key"
-       ca_file: "/etc/sssonector/certs/ca.crt"
-       server_address: "192.168.50.210"
-       server_port: 8443
-       upload_kbps: 10240
-       download_kbps: 10240
-     ```
-
-2. Monitoring Setup
-   - Server SNMP Configuration:
-     ```yaml
-     monitor:
-       enabled: true
-       log_file: "/var/log/sssonector/server.log"
-       snmp_enabled: true
-       snmp_address: "0.0.0.0"
-       snmp_port: 10161
-       snmp_community: "public"
-       snmp_version: "2c"
-       update_interval: 30
-     ```
-
-   - Client SNMP Configuration:
-     ```yaml
-     monitor:
-       enabled: true
-       log_file: "/var/log/sssonector/client.log"
-       snmp_enabled: true
-       snmp_address: "0.0.0.0"
-       snmp_port: 10162
-       snmp_community: "public"
-       snmp_version: "2c"
-       update_interval: 30
-     ```
-
-3. Rate Limiting Configuration
-   - Both server and client:
-     ```yaml
-     throttle:
-       enabled: true
-       rate_limit: 1000000    # 1 MB/s
-       burst_limit: 2000000   # 2 MB/s burst
-     ```
-
-## Configuration Testing
-
-Before deploying, validate your configuration:
-
-1. Test configuration syntax:
-   ```bash
-   sssonector -validate-config /etc/sssonector/config.yaml
-   ```
-
-2. Test with temporary certificates (useful for initial setup):
-   ```bash
-   # On server
-   sudo sssonector -test-without-certs -config /etc/sssonector/config.yaml
-
-   # On client (after server is running)
-   sudo sssonector -test-without-certs -config /etc/sssonector/config.yaml
-   ```
-
-3. Validate certificate setup:
-   ```bash
-   sssonector -validate-certs -config /etc/sssonector/config.yaml
-   ```
-
-4. Verify SNMP monitoring:
-   ```bash
-   # Check SNMP agent status
-   snmpwalk -v2c -c public localhost:10161 .1.3.6.1.4.1.54321
-
-   # Monitor metrics in real-time
-   snmptrapd -f -Lo -c /etc/snmp/snmptrapd.conf
-   ```
+4. **Rate changes not taking effect**
+   Send SIGHUP after editing; check for "requires restart" warnings if you
+   touched structural fields.
 
 ## Best Practices
 
-1. Security
-   - Use absolute paths for certificates
-   - Set restrictive file permissions (600 for keys)
-   - Change default SNMP community strings
-   - Use non-standard ports when possible
-
-2. Performance
-   - Set appropriate MTU for your network
-   - Configure rate limits based on available bandwidth
-   - Adjust burst limits for better performance
-   - Monitor system metrics for optimization
-
-3. Monitoring
-   - Enable detailed logging in production
-   - Configure SNMP monitoring for better visibility
-   - Set appropriate update intervals
-   - Use ntopng for traffic analysis
-
-4. Testing
-   - Validate configurations before deployment
-   - Test with temporary certificates first
-   - Verify SNMP connectivity
-   - Check rate limiting effectiveness
+- Keep `metadata.schema_version: "2.0.0"` in every config so the loader
+  parses it directly instead of running legacy upgrade heuristics
+- Prefer explicit values over defaults for anything security-relevant
+- Test config changes with `-log-level debug` first
+- Restrict config file permissions; the facade token secret lives there

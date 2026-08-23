@@ -1,45 +1,9 @@
 # Hot Reload Configuration
 
-SSSonector supports hot reloading of configuration, allowing you to modify settings without restarting the service or disrupting active connections.
+SSSonector supports reloading a subset of its configuration at runtime via
+`SIGHUP`, without disrupting active tunnel connections.
 
-## Supported Configuration Changes
-
-The following settings can be modified at runtime:
-
-1. Rate Limiting:
-   - Upload and download bandwidth limits
-   - Rate limiting enable/disable
-   - Burst size adjustments
-
-2. Monitoring:
-   - SNMP settings
-   - Logging levels
-   - Update intervals
-
-3. Connection Management:
-   - Maximum client limits
-   - Buffer sizes
-   - Timeouts
-
-## Unchangeable Settings
-
-Some settings cannot be modified during runtime and require a service restart:
-
-1. Core Settings:
-   - Operating mode (server/client)
-   - Network interface
-   - TUN device settings
-
-2. Security:
-   - Certificate paths
-   - TLS settings
-   - Authentication methods
-
-## How to Use Hot Reload
-
-### Method 1: SIGHUP Signal
-
-Send a SIGHUP signal to the SSSonector process to trigger a configuration reload:
+## How to Trigger a Reload
 
 ```bash
 # Using process ID
@@ -49,209 +13,91 @@ kill -HUP $(pidof sssonector)
 systemctl reload sssonector
 ```
 
-### Method 2: File Monitoring
+There is no file-watching mechanism: changes take effect only when `SIGHUP`
+is delivered.
 
-SSSonector automatically monitors its configuration file for changes. Simply modify and save the configuration file:
+## What Can Be Reloaded
 
-```bash
-# Edit configuration
-vim /etc/sssonector/config.yaml
+| Setting | Effect on reload |
+|---|---|
+| `throttle.enabled` | Applies to live and future transfers immediately |
+| `throttle.rate` | Live limiters are updated in place; new connections pick it up automatically |
+| `logging.level` | Applied atomically via the zap atomic level |
+| `auth.cert_rotation.interval` | Updates the certificate-expiry check interval on live certificate managers |
 
-# Changes will be detected and applied automatically
-```
+Notes:
+- If the daemon was started with an explicit `-log-level` flag, that flag
+  keeps precedence and `logging.level` changes from reloads are ignored.
+- Throttle **burst is always derived** as 100ms of the effective rate
+  (rate x 1.1 TCP overhead factor). The `throttle.burst` config value is
+  accepted but not used by the limiter.
 
-## Configuration File Example
+## What Requires a Restart
+
+Any change to the following is detected during reload and logged as a
+`Configuration change requires restart` warning; the running values remain
+in effect until restart:
+
+- `mode` (server/client)
+- `network.*` (TUN interface name, address, MTU)
+- `tunnel.listen_address`, `tunnel.listen_port`,
+  `tunnel.server_address`, `tunnel.server_port`
+- `facade.*` (enable/disable, ports, secrets)
+- `logging.file`, `logging.format` (logger outputs are fixed at startup)
+- `monitor.type`, `monitor.prometheus.port`, `snmp.*`, `metrics.interval`
+  (endpoint lifecycle and sampler cadence are fixed at startup)
+
+## Reload Pipeline
+
+On each `SIGHUP` the daemon:
+
+1. Loads the configuration file fresh from disk.
+2. Runs the same validation enforced at startup. On any failure the reload
+   is rejected, the reason is logged at ERROR level, and the previous
+   configuration stays active.
+3. Applies the hot-reloadable subset listed above.
+4. Logs each structural difference as a restart-required warning.
+5. Confirms with a `Configuration reloaded` INFO entry.
+
+## Example: Adjusting the Rate Limit
 
 ```yaml
-# Rate limiting settings (hot reloadable)
+# Before
 throttle:
   enabled: true
-  rate_limit: 1048576    # 1 MB/s
-  burst_limit: 104858    # 100ms worth of data
-  dynamic:
-    enabled: true
-    min_rate: 524288     # 512 KB/s
-    max_rate: 10485760   # 10 MB/s
+  rate: 1048576    # ~1 MB/s effective after TCP overhead adjustment
 
-# Monitoring settings (hot reloadable)
-monitor:
+# After editing and saving
+throttle:
   enabled: true
-  snmp_enabled: true
-  snmp_port: 161
-  update_interval: 30
-
-# Core settings (requires restart)
-mode: "server"
-network:
-  interface: "tun0"
-  address: "10.0.0.1/24"
-  mtu: 1500
+  rate: 2097152    # ~2 MB/s
 ```
-
-## Validation
-
-When configuration changes are applied:
-
-1. The new configuration is validated before application
-2. Changes are applied atomically
-3. Invalid changes are rejected with error logging
-4. Current configuration remains active if validation fails
-
-## Monitoring Changes
-
-Monitor the application logs to track configuration changes:
 
 ```bash
-# View configuration reload events
-journalctl -u sssonector | grep "configuration"
-
-# Check current settings via SNMP
-snmpwalk -v2c -c public localhost:161 .1.3.6.1.4.1.54321.1
+kill -HUP $(pidof sssonector)
 ```
 
-## Best Practices
+Expected log output:
 
-1. Testing:
-   - Test configuration changes in a staging environment
-   - Verify settings after reload
-   - Monitor system performance during changes
+```
+{"level":"info","msg":"Applying reloaded throttle settings","enabled":true,"rate":2097152,...}
+{"level":"info","msg":"Configuration reloaded",...}
+```
 
-2. Rate Limiting:
-   - Make gradual adjustments to rate limits
-   - Monitor connection quality after changes
-   - Consider peak usage times
+## Monitoring Reloads
 
-3. Error Handling:
-   - Check logs for validation errors
-   - Verify configuration syntax before saving
-   - Keep backup of working configuration
+```bash
+journalctl -u sssonector | grep -E "reloaded|requires restart"
+```
 
-4. Security:
-   - Restrict configuration file permissions
-   - Use version control for tracking changes
-   - Document all configuration modifications
+Current throughput and limiter state are observable either through the
+Prometheus `/metrics` endpoint (when `monitor.type: prometheus`) or via
+SNMP (see [SNMP Monitoring](snmp_monitoring.md)).
 
 ## Troubleshooting
 
-### Common Issues
-
-1. Changes Not Applied:
-   - Verify file permissions
-   - Check syntax validity
-   - Review error logs
-   - Ensure changes are supported for hot reload
-
-2. Connection Issues:
-   - Monitor connection metrics
-   - Check rate limiting logs
-   - Verify client configurations
-   - Review resource usage
-
-3. Performance Impact:
-   - Monitor system resources
-   - Check connection latency
-   - Verify throughput metrics
-   - Review error rates
-
-### Error Messages
-
-1. Invalid Configuration:
-```
-Failed to validate configuration: invalid rate limit value
-```
-- Ensure values are within acceptable ranges
-- Check configuration syntax
-
-2. State Errors:
-```
-Cannot modify [setting] while connections are active
-```
-- Some settings require no active connections
-- Consider scheduling changes during low usage
-
-3. Permission Issues:
-```
-Failed to reload configuration: permission denied
-```
-- Check file permissions
-- Verify process privileges
-
-## Command Reference
-
-### Check Current Configuration
-```bash
-# View effective configuration
-sssonector -show-config
-
-# Validate configuration file
-sssonector -validate-config /etc/sssonector/config.yaml
-```
-
-### Monitor Changes
-```bash
-# Watch configuration status
-watch -n 1 'sssonector -status'
-
-# Monitor rate limiting
-sssonector -metrics | grep "rate"
-```
-
-### Force Reload
-```bash
-# Force configuration reload
-sssonector -reload
-
-# Reload with validation
-sssonector -reload -validate
-```
-
-## Example Scenarios
-
-### 1. Adjusting Rate Limits
-
-Original configuration:
-```yaml
-throttle:
-  enabled: true
-  rate_limit: 1048576  # 1 MB/s
-```
-
-Modified configuration:
-```yaml
-throttle:
-  enabled: true
-  rate_limit: 2097152  # 2 MB/s
-```
-
-Effect: Bandwidth limit will be adjusted without disrupting connections.
-
-### 2. Updating Monitoring
-
-Original configuration:
-```yaml
-monitor:
-  update_interval: 30
-  snmp_enabled: false
-```
-
-Modified configuration:
-```yaml
-monitor:
-  update_interval: 10
-  snmp_enabled: true
-  snmp_port: 161
-```
-
-Effect: Monitoring settings will be updated immediately.
-
-## Support
-
-For issues with hot reload functionality:
-
-1. Check the troubleshooting guide above
-2. Review application logs
-3. Contact support with:
-   - Configuration file
-   - Error messages
-   - System information
-   - Recent changes made
+- **Reload rejected**: check the ERROR entry directly above; it names the
+  validation failure. Fix the file and resend `SIGHUP`.
+- **Level change ignored**: an explicit `-log-level` flag was given at
+  startup; flags win over config.
+- **Structural changes not applying**: by design; restart the service.
