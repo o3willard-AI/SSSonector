@@ -228,6 +228,10 @@ lsmod | grep tun
 sudo modprobe tun
 # Check device permissions
 ls -l /dev/net/tun
+
+# The service runs as root or with CAP_NET_ADMIN; no sudoers entries needed.
+# For a non-root service, add to the [Service] section:
+#   AmbientCapabilities=CAP_NET_ADMIN
 ```
 
 2. Connection Issues

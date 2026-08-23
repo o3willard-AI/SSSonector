@@ -6,6 +6,20 @@ This document details the TUN interface lifecycle management in SSSonector, incl
 
 SSSonector implements a robust TUN interface management system that ensures proper resource handling and cleanup in all scenarios. The system uses a state machine approach with timeout-based cleanup and automatic recovery mechanisms.
 
+## Privilege Model
+
+Interface creation and configuration are performed **natively**:
+
+- The device is created by opening `/dev/net/tun` and issuing the
+  `TUNSETIFF` ioctl — no `ip tuntap` shell-outs.
+- Address, MTU, and link state are managed via the netlink UAPI
+  (`github.com/vishvananda/netlink`) — no `ip addr/link` shell-outs.
+
+The process must therefore run as **root** or with **CAP_NET_ADMIN**
+(recommended: a systemd unit with `AmbientCapabilities=CAP_NET_ADMIN`).
+No sudoers entries are required. Closing the file descriptor destroys an
+unpersisted TUN, so cleanup needs no explicit deletion step.
+
 ## Interface Lifecycle
 
 ### States

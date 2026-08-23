@@ -5,15 +5,14 @@ package adapter
 
 import (
 	"fmt"
-	"net"
 	"os"
-	"os/exec"
 	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
 	"unsafe"
 
+	"github.com/vishvananda/netlink"
 	"go.uber.org/zap"
 )
 
@@ -21,7 +20,6 @@ const (
 	TUNSETIFF = 0x400454ca
 	IFF_TUN   = 0x0001
 	IFF_NO_PI = 0x1000
-	IFF_UP    = 0x1
 )
 
 type linuxInterface struct {
@@ -87,63 +85,18 @@ func newLinuxInterface(name string, opts *Options) (Interface, error) {
 	return iface, nil
 }
 
+// initialize opens /dev/net/tun and creates the interface natively via the
+// TUNSETIFF ioctl. Requires the process to run as root or hold
+// CAP_NET_ADMIN; no external commands are involved. A stale interface with
+// the requested name is torn down first so the name can be reused.
 func (i *linuxInterface) initialize() error {
 	if !i.transitionState(StateUninitialized, StateInitializing) {
 		return ErrInvalidStateTransition
 	}
 	i.opts.Logger.Info("Initializing TUN interface", zap.String("name", i.name))
 
-	// First, check if interface already exists and remove it
-	if _, err := os.Stat(fmt.Sprintf("/sys/class/net/%s", i.name)); err == nil {
-		i.opts.Logger.Info("Removing pre-existing interface", zap.String("name", i.name))
-		if out, err := exec.Command("sudo", "ip", "tuntap", "del", "dev", i.name, "mode", "tun").CombinedOutput(); err != nil {
-			i.opts.Logger.Warn("Failed to remove existing interface",
-				zap.String("name", i.name),
-				zap.Error(err),
-				zap.String("output", string(out)),
-			)
-		}
-		time.Sleep(time.Second) // Wait for interface to be removed
-	}
+	i.removeStaleLink()
 
-	// Create TUN device
-	if out, err := exec.Command("sudo", "ip", "tuntap", "add", "dev", i.name, "mode", "tun").CombinedOutput(); err != nil {
-		i.opts.Logger.Error("Failed to create TUN device",
-			zap.String("name", i.name),
-			zap.Error(err),
-			zap.String("output", string(out)),
-		)
-		i.setState(StateError)
-		return fmt.Errorf("failed to create TUN device: %w (output: %s)", err, string(out))
-	}
-
-	// Set ownership and permissions
-	if out, err := exec.Command("sudo", "chown", "root:sssonector", fmt.Sprintf("/sys/class/net/%s", i.name)).CombinedOutput(); err != nil {
-		i.setState(StateError)
-		return fmt.Errorf("failed to set interface ownership: %w (output: %s)", err, string(out))
-	}
-
-	if out, err := exec.Command("sudo", "chmod", "0660", fmt.Sprintf("/sys/class/net/%s", i.name)).CombinedOutput(); err != nil {
-		i.setState(StateError)
-		return fmt.Errorf("failed to set interface permissions: %w (output: %s)", err, string(out))
-	}
-
-	// Wait for interface to be created
-	ready := false
-	for attempt := 0; attempt < i.opts.RetryAttempts; attempt++ {
-		if _, err := os.Stat(fmt.Sprintf("/sys/class/net/%s", i.name)); err == nil {
-			ready = true
-			break
-		}
-		time.Sleep(time.Duration(i.opts.RetryDelay) * time.Millisecond)
-	}
-
-	if !ready {
-		i.setState(StateError)
-		return fmt.Errorf("interface failed to appear after creation")
-	}
-
-	// Open TUN device
 	file, err := os.OpenFile("/dev/net/tun", os.O_RDWR, 0)
 	if err != nil {
 		i.opts.Logger.Error("Failed to open TUN device file",
@@ -163,6 +116,8 @@ func (i *linuxInterface) initialize() error {
 
 	// #nosec G103 -- TUN ioctl requires an ifreq struct; the layout is fixed
 	// by the kernel ABI and the interface name is validated in New().
+	// #nosec G103 -- TUN ioctl requires an ifreq struct; the layout is fixed
+	// by the kernel ABI and the interface name is validated in New().
 	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, file.Fd(), uintptr(TUNSETIFF), uintptr(unsafe.Pointer(&ifreq[0])))
 	if errno != 0 {
 		i.opts.Logger.Error("TUNSETIFF ioctl failed",
@@ -174,26 +129,28 @@ func (i *linuxInterface) initialize() error {
 		i.setState(StateError)
 		return fmt.Errorf("failed to create TUN interface: %v", errno)
 	}
-
-	// Ensure interface is down before configuration
-	if out, err := exec.Command("sudo", "ip", "link", "set", "dev", i.name, "down").CombinedOutput(); err != nil {
-		file.Close()
-		i.setState(StateError)
-		return fmt.Errorf("failed to bring interface down: %w (output: %s)", err, string(out))
-	}
-
-	// Set interface ownership
-	if out, err := exec.Command("sudo", "chown", "sssonector:sssonector", "/dev/net/tun").CombinedOutput(); err != nil {
-		file.Close()
-		i.setState(StateError)
-		return fmt.Errorf("failed to set TUN device ownership: %w (output: %s)", err, string(out))
-	}
-
 	i.file = file
 	i.mtu = 1500 // Default MTU
 	i.setState(StateReady)
 	i.opts.Logger.Info("TUN interface initialized", zap.String("name", i.name))
 	return nil
+}
+
+// removeStaleLink tears down a leftover interface with the requested name
+// (e.g. after an unclean shutdown). Absent links are not an error.
+func (i *linuxInterface) removeStaleLink() {
+	link, err := netlink.LinkByName(i.name)
+	if err != nil {
+		return
+	}
+	i.opts.Logger.Info("Removing pre-existing interface", zap.String("name", i.name))
+	if err := netlink.LinkDel(link); err != nil {
+		i.opts.Logger.Warn("Failed to remove existing interface",
+			zap.String("name", i.name),
+			zap.Error(err),
+		)
+	}
+	time.Sleep(time.Second) // Allow kernel teardown to settle
 }
 
 // errnoName maps a syscall.Errno to its symbolic name for log readability
@@ -230,7 +187,8 @@ func (i *linuxInterface) Configure(cfg *Config) error {
 	)
 
 	// Parse IP address and network to validate format
-	if _, _, err := net.ParseCIDR(cfg.Address); err != nil {
+	addr, err := netlink.ParseAddr(cfg.Address)
+	if err != nil {
 		i.opts.Logger.Error("Invalid TUN address format",
 			zap.String("address", cfg.Address),
 			zap.Error(err),
@@ -239,11 +197,10 @@ func (i *linuxInterface) Configure(cfg *Config) error {
 		return fmt.Errorf("invalid address format: %w", err)
 	}
 
-	// Configure with retries
 	configured := false
 	var lastErr error
 	for attempt := 0; attempt < i.opts.RetryAttempts; attempt++ {
-		if err := i.applyConfiguration(cfg); err == nil {
+		if err := i.applyConfiguration(cfg, addr); err == nil {
 			configured = true
 			break
 		} else {
@@ -274,40 +231,55 @@ func (i *linuxInterface) Configure(cfg *Config) error {
 	return nil
 }
 
-func (i *linuxInterface) applyConfiguration(cfg *Config) error {
-	// Verify interface exists
-	if _, err := os.Stat(fmt.Sprintf("/sys/class/net/%s", i.name)); err != nil {
+func (i *linuxInterface) applyConfiguration(cfg *Config, addr *netlink.Addr) error {
+	link, err := netlink.LinkByName(i.name)
+	if err != nil {
 		return fmt.Errorf("interface does not exist: %w", err)
 	}
 
-	// Set MTU first
-	if out, err := exec.Command("sudo", "ip", "link", "set", "dev", i.name, "mtu", fmt.Sprintf("%d", cfg.MTU)).CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to set MTU: %w (output: %s)", err, string(out))
+	if err := netlink.LinkSetMTU(link, cfg.MTU); err != nil {
+		return fmt.Errorf("failed to set MTU: %w", err)
 	}
 
-	// Set IP address
-	if out, err := exec.Command("sudo", "ip", "addr", "add", cfg.Address, "dev", i.name).CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to set IP address: %w (output: %s)", err, string(out))
+	if err := netlink.AddrAdd(link, addr); err != nil && !os.IsExist(err) {
+		return fmt.Errorf("failed to set IP address: %w", err)
 	}
 
-	// Bring interface up last
-	if out, err := exec.Command("sudo", "ip", "link", "set", "dev", i.name, "up").CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to bring interface up: %w (output: %s)", err, string(out))
+	if err := netlink.LinkSetUp(link); err != nil {
+		return fmt.Errorf("failed to bring interface up: %w", err)
 	}
 
 	// Verify configuration
 	if i.opts.ValidateState {
-		out, err := exec.Command("sudo", "ip", "addr", "show", "dev", i.name).CombinedOutput()
+		addrs, err := netlink.AddrList(link, netlink.FAMILY_V4)
 		if err != nil {
-			return fmt.Errorf("failed to validate interface configuration: %w (output: %s)", err, string(out))
+			return fmt.Errorf("failed to validate interface configuration: %w", err)
+		}
+		found := false
+		for _, a := range addrs {
+			if a.String() == addr.String() {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("configured address %s not present after setup", addr.String())
 		}
 		i.opts.Logger.Debug("Interface configuration verified",
 			zap.String("name", i.name),
-			zap.String("output", string(out)),
+			zap.Strings("addresses", addrStrings(addrs)),
 		)
 	}
 
 	return nil
+}
+
+func addrStrings(addrs []netlink.Addr) []string {
+	out := make([]string, 0, len(addrs))
+	for _, a := range addrs {
+		out = append(out, a.String())
+	}
+	return out
 }
 
 func (i *linuxInterface) Read(p []byte) (int, error) {
@@ -347,13 +319,11 @@ func (i *linuxInterface) Cleanup() error {
 	}
 	i.opts.Logger.Info("Cleaning up TUN interface", zap.String("name", i.name))
 
-	// Create cleanup channel with timeout
 	done := make(chan error, 1)
 	go func() {
 		done <- i.performCleanup()
 	}()
 
-	// Wait for cleanup with timeout
 	select {
 	case err := <-done:
 		if err != nil {
@@ -377,29 +347,17 @@ func (i *linuxInterface) Cleanup() error {
 	}
 }
 
+// performCleanup withdraws the address and brings the link down; closing
+// the file descriptor destroys the unpersisted TUN device.
 func (i *linuxInterface) performCleanup() error {
 	if i.isUp {
-		// Bring interface down
-		if out, err := exec.Command("sudo", "ip", "link", "set", "dev", i.name, "down").CombinedOutput(); err != nil {
-			return fmt.Errorf("failed to bring interface down: %w (output: %s)", err, string(out))
-		}
-
-		// Remove IP address with retries
-		for attempt := 0; attempt < i.opts.RetryAttempts; attempt++ {
-			out, err := exec.Command("sudo", "ip", "addr", "del", i.address, "dev", i.name).CombinedOutput()
-			if err == nil {
-				break
-			} else if attempt == i.opts.RetryAttempts-1 {
-				return fmt.Errorf("failed to remove IP address after %d attempts: %w (output: %s)", i.opts.RetryAttempts, err, string(out))
+		link, err := netlink.LinkByName(i.name)
+		if err == nil {
+			_ = netlink.LinkSetDown(link)
+			if addr, err := netlink.ParseAddr(i.address); err == nil {
+				_ = netlink.AddrDel(link, addr)
 			}
-			time.Sleep(time.Duration(i.opts.RetryDelay) * time.Millisecond)
 		}
-
-		// Delete the TUN interface
-		if out, err := exec.Command("sudo", "ip", "tuntap", "del", "dev", i.name, "mode", "tun").CombinedOutput(); err != nil {
-			return fmt.Errorf("failed to delete TUN interface: %w (output: %s)", err, string(out))
-		}
-
 		i.isUp = false
 	}
 
