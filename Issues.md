@@ -10,9 +10,6 @@ This file tracks currently-true issues only.
    packet families exist for schema compatibility. Implement via recvmsg with
    IP_PKTINFO or move counting to a packet-oriented layer if packet metrics
    become a requirement.
-2. **Limiter hit metrics not exposed** — `LimiterMetrics.LimitHits` is
-   tracked and incremented but not surfaced on the Prometheus endpoint or the
-   SNMP MIB yet.
 3. **Adapter requires privileged interface setup** — Linux TUN creation
    shells out to `sudo ip tuntap/ip link`; deployments need root or
    passwordless sudo for those commands, and environments without
@@ -42,6 +39,11 @@ This file tracks currently-true issues only.
 - ~~Mutation campaign~~ — facade/token + throttle at 100% non-equivalent kill
   rate; methodology in `docs/testing/mutation-testing.md`.
 
+## Resolved (2026-08 quick-wins batch)
+
+- ~~Limiter hit metrics not exposed~~ — `sssonector_throttle_hits_total{direction}`
+  on `/metrics`, `.3.4`/`.3.5` in the MIB, and the rate gauges now report the
+  live effective pacing instead of a static placeholder.
 ## Resolved (2026-08 logging & observability refactor)
 
 - ~~Orphaned observability subsystem~~ — `internal/monitor` was unreachable

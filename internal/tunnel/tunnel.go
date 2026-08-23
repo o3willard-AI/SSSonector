@@ -61,6 +61,11 @@ type Server struct {
 	activeConns atomic.Int32
 
 	currentTransfer *Transfer
+
+	throttleHitsIn  atomic.Uint64
+	throttleHitsOut atomic.Uint64
+	lastSeenHitsIn  uint64
+	lastSeenHitsOut uint64
 }
 
 // NewServer creates a new tunnel server. The monitor may be nil to run
@@ -269,6 +274,13 @@ func (s *Server) ApplyConfig(newCfg *config.AppConfig) error {
 	return nil
 }
 
+// currentTransferSnapshotLocked returns the active transfer for sampling.
+func (s *Server) currentTransferSnapshotLocked() *Transfer {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.currentTransfer
+}
+
 // startMetricsSampler periodically publishes tunnel counters to the monitor
 func (s *Server) startMetricsSampler() {
 	if s.monitor == nil || !s.config.Config.Metrics.Enabled {
@@ -297,9 +309,39 @@ func (s *Server) startMetricsSampler() {
 					s.errorsTotal.Load(),
 					int(s.activeConns.Load()),
 				)
+				inH, outH, rate, burst := sampleThrottle(
+					s.currentTransferSnapshotLocked(),
+					&s.throttleHitsIn, &s.throttleHitsOut,
+					&s.lastSeenHitsIn, &s.lastSeenHitsOut,
+					&s.mu)
+				s.monitor.UpdateThrottleMetrics(inH, outH, rate, burst)
 			}
 		}
 	}()
+}
+
+// sampleThrottle accumulates per-transfer hit deltas into cumulative
+// counters and returns them with the current pacing values. Safe on nil
+// transfer: counters persist, pacing reports the last observed values.
+func sampleThrottle(
+	transfer *Transfer,
+	hitsIn, hitsOut *atomic.Uint64,
+	lastIn, lastOut *uint64,
+	mu *sync.Mutex,
+) (inHits, outHits uint64, rate, burst float64) {
+	if transfer != nil {
+		curIn, curOut, r, b := transfer.ThrottleStats()
+		mu.Lock()
+		deltaIn := curIn - *lastIn
+		deltaOut := curOut - *lastOut
+		*lastIn = curIn
+		*lastOut = curOut
+		mu.Unlock()
+		hitsIn.Add(deltaIn)
+		hitsOut.Add(deltaOut)
+		return hitsIn.Load(), hitsOut.Load(), r, b
+	}
+	return hitsIn.Load(), hitsOut.Load(), 0, 0
 }
 
 // Stop stops the tunnel server
@@ -356,6 +398,11 @@ type Client struct {
 
 	mu              sync.Mutex
 	currentTransfer *Transfer
+
+	throttleHitsIn  atomic.Uint64
+	throttleHitsOut atomic.Uint64
+	lastSeenHitsIn  uint64
+	lastSeenHitsOut uint64
 
 	bytesIn     atomic.Int64
 	bytesOut    atomic.Int64
@@ -448,6 +495,13 @@ func (c *Client) Start() error {
 	return nil
 }
 
+// currentTransferSnapshotLocked returns the active transfer for sampling.
+func (c *Client) currentTransferSnapshotLocked() *Transfer {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.currentTransfer
+}
+
 // startMetricsSampler periodically publishes tunnel counters to the monitor
 func (c *Client) startMetricsSampler() {
 	if c.monitor == nil || !c.config.Config.Metrics.Enabled {
@@ -476,6 +530,12 @@ func (c *Client) startMetricsSampler() {
 					c.errorsTotal.Load(),
 					int(c.activeConns.Load()),
 				)
+				inH, outH, rate, burst := sampleThrottle(
+					c.currentTransferSnapshotLocked(),
+					&c.throttleHitsIn, &c.throttleHitsOut,
+					&c.lastSeenHitsIn, &c.lastSeenHitsOut,
+					&c.mu)
+				c.monitor.UpdateThrottleMetrics(inH, outH, rate, burst)
 			}
 		}
 	}()

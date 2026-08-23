@@ -79,6 +79,8 @@ func TestSNMPGetConformance(t *testing.T) {
 	}
 	defer client.Conn.Close()
 
+	// Effective 1.25 GB/s paces to 10000 kbps as reported by .3.2/.3.3.
+	metrics.SetThrottle(0, 0, 1250000, 125000)
 	result, err := client.Get([]string{
 		maxConnsOID,     // INTEGER 10
 		tunnelStatusOID, // INTEGER 1
@@ -116,8 +118,10 @@ func TestSNMPGetConformance(t *testing.T) {
 	if got := asUint(result.Variables[1].Value); got != 1 {
 		t.Errorf("tunnelStatus = %v (%T), want 1", result.Variables[1].Value, result.Variables[1].Value)
 	}
-	if got := asUint(result.Variables[2].Value); got != 10240 {
-		t.Errorf("rateUp = %v (%T), want 10240", result.Variables[2].Value, result.Variables[2].Value)
+	// rateUp derives from live throttle metrics: ThrottleRate bytes/s -> kbps.
+	wantKbps := uint64(1250000 * 8 / 1000) // effective 1.25 GB/s -> 10000 kbps
+	if got := asUint(result.Variables[2].Value); got != wantKbps {
+		t.Errorf("rateUp = %v (%T), want %v", result.Variables[2].Value, result.Variables[2].Value, wantKbps)
 	}
 }
 

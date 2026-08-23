@@ -25,8 +25,11 @@ const (
 
 	// Configuration (3.x)
 	maxConnsOID = baseOID + ".3.1" // INTEGER: Maximum allowed connections
-	rateUpOID   = baseOID + ".3.2" // Gauge32: Upload rate limit (kbps)
-	rateDownOID = baseOID + ".3.3" // Gauge32: Download rate limit (kbps)
+	rateUpOID   = baseOID + ".3.2" // Gauge32: Effective upload rate (kbps)
+	rateDownOID = baseOID + ".3.3" // Gauge32: Effective download rate (kbps)
+
+	hitsInOID  = baseOID + ".3.4" // Counter64: Throttle wait events, inbound
+	hitsOutOID = baseOID + ".3.5" // Counter64: Throttle wait events, outbound
 )
 
 // SNMP community strings
@@ -90,8 +93,11 @@ func NewMIBTree(metrics *Metrics) *MIBTree {
 
 	// Configuration
 	tree.addInteger(maxConnsOID, "maxConnections", "Maximum allowed connections", 10, "read-write")
-	tree.addGauge32(rateUpOID, "uploadRateLimit", "Upload rate limit in kbps", 10240, "read-write")
-	tree.addGauge32(rateDownOID, "downloadRateLimit", "Download rate limit in kbps", 10240, "read-write")
+	tree.addGauge32(rateUpOID, "uploadRate", "Effective upload rate in kbps", 0, "read-write")
+	tree.addGauge32(rateDownOID, "downloadRate", "Effective download rate in kbps", 0, "read-write")
+
+	tree.addCounter64(hitsInOID, "rateLimitHitsIn", "Throttle wait events, inbound direction", 0, "read-only")
+	tree.addCounter64(hitsOutOID, "rateLimitHitsOut", "Throttle wait events, outbound direction", 0, "read-only")
 
 	return tree
 }
@@ -212,6 +218,12 @@ func (t *MIBTree) UpdateMetrics(metrics *Metrics) {
 			newEntry.Value = metrics.LastError
 		case startTimeOID:
 			newEntry.Value = metrics.StartTime.Unix()
+		case rateUpOID, rateDownOID:
+			newEntry.Value = int32(metrics.ThrottleRate * 8 / 1000) // bytes/s -> kbps
+		case hitsInOID:
+			newEntry.Value = metrics.ThrottleHitsIn
+		case hitsOutOID:
+			newEntry.Value = metrics.ThrottleHitsOut
 		}
 		newEntries[oid] = newEntry
 	}

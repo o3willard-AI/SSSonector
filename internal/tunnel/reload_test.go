@@ -142,3 +142,33 @@ func TestClientApplyConfigUpdatesCertTunables(t *testing.T) {
 		t.Errorf("check interval = %v, want %v", got, newInterval)
 	}
 }
+
+func TestTransferThrottleStats(t *testing.T) {
+	c1, c2 := net.Pipe()
+	defer c1.Close()
+	defer c2.Close()
+
+	transfer, err := NewTransfer(c1, c2, throttleCfg(true, 1000, 100), zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewTransfer: %v", err)
+	}
+
+	inHits, outHits, rate, burst := transfer.ThrottleStats()
+	if inHits != 0 || outHits != 0 {
+		t.Errorf("fresh transfer should have zero hits, got %d/%d", inHits, outHits)
+	}
+	wantRate := float64(1000) * throttle.TCPOverheadFactor
+	if rate != wantRate || burst != wantRate*0.1 {
+		t.Errorf("rate/burst = %f/%f, want %f/%f", rate, burst, wantRate, wantRate*0.1)
+	}
+
+	// Force a wait event on the inbound limiter and observe the counter.
+	srcToDst, _ := transfer.limiters()
+	if err := srcToDst.Wait(true, 5000); err == nil {
+		t.Log("wait admitted without hit")
+	}
+	inHits, _, _, _ = transfer.ThrottleStats()
+	if inHits == 0 {
+		t.Error("expected inbound hits to increase after oversized Wait")
+	}
+}

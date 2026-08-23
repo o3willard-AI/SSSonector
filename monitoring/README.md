@@ -66,7 +66,8 @@ Prometheus reaches the host daemon via `host.docker.internal`
 
 Direct scrape (`sssonector_*`) — see the `/metrics` endpoint output for the
 full list; key families include bytes/packets counters, error totals,
-connection gauges, CPU/memory/goroutines, and uptime.
+throttle hit/rate/burst gauges, connection gauges, CPU/memory/goroutines,
+and uptime.
 
 SNMP exporter path (`sssonector_snmp_*`): bytes in/out, active connections,
 CPU, memory, tunnel status, start time, rate limits.

@@ -4,6 +4,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -122,5 +123,51 @@ func TestNewRequiresLoggerAndConfig(t *testing.T) {
 	logger := zap.NewNop()
 	if _, err := New(logger, nil); err == nil {
 		t.Error("Expected error for nil config")
+	}
+}
+
+func TestThrottleMetricsExposed(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve port: %v", err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	ln.Close()
+
+	m, err := New(zap.NewNop(), &Config{
+		PromEnabled: true,
+		PromPort:    port,
+		PromPath:    "/metrics",
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.Start()
+	defer m.Stop()
+
+	m.UpdateThrottleMetrics(3, 9, 2262.8, 226.28)
+
+	resp, err := http.Get("http://127.0.0.1:" + strconv.Itoa(port) + "/metrics") // #nosec G107 -- own loopback listener
+	if err != nil {
+		t.Fatalf("GET /metrics: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	text := string(body)
+
+	for _, want := range []string{
+		`sssonector_throttle_hits_total{direction="in"} 3`,
+		`sssonector_throttle_hits_total{direction="out"} 9`,
+		"sssonector_throttle_effective_rate_bytes_per_second 2262.8",
+		"sssonector_throttle_burst_bytes 226.28",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("metrics output missing %q", want)
+		}
+	}
+
+	snap := m.GetMetrics()
+	if snap.ThrottleHitsIn != 3 || snap.ThrottleHitsOut != 9 {
+		t.Errorf("GetMetrics hits = %d/%d, want 3/9", snap.ThrottleHitsIn, snap.ThrottleHitsOut)
 	}
 }

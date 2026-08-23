@@ -61,6 +61,12 @@ type Metrics struct {
 	SystemLoad float64
 	DiskIO     int64
 	NetworkIO  int64
+
+	// Throttle metrics
+	ThrottleHitsIn  int64   // requests that had to wait, inbound direction
+	ThrottleHitsOut int64   // requests that had to wait, outbound direction
+	ThrottleRate    float64 // effective paced rate (bytes/sec incl. TCP overhead)
+	ThrottleBurst   float64 // burst allowance in bytes
 }
 
 // NewMetrics creates a new metrics instance
@@ -70,6 +76,16 @@ func NewMetrics() *Metrics {
 		StartTime:  now,
 		LastUpdate: now,
 	}
+}
+
+// SetThrottle records limiter counters and pacing values
+func (m *Metrics) SetThrottle(hitsIn, hitsOut uint64, rate, burst float64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	atomic.StoreInt64(&m.ThrottleHitsIn, int64(hitsIn))
+	atomic.StoreInt64(&m.ThrottleHitsOut, int64(hitsOut))
+	m.ThrottleRate = rate
+	m.ThrottleBurst = burst
 }
 
 // Reset resets all metrics to zero
@@ -95,6 +111,8 @@ func (m *Metrics) Reset() {
 	atomic.StoreInt64(&m.Uptime, 0)
 	atomic.StoreInt64(&m.DiskIO, 0)
 	atomic.StoreInt64(&m.NetworkIO, 0)
+	atomic.StoreInt64(&m.ThrottleHitsIn, 0)
+	atomic.StoreInt64(&m.ThrottleHitsOut, 0)
 	m.LastUpdate = time.Now()
 }
 
@@ -103,37 +121,41 @@ func (m *Metrics) Clone() *Metrics {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return &Metrics{
-		BytesIn:        atomic.LoadInt64(&m.BytesIn),
-		BytesOut:       atomic.LoadInt64(&m.BytesOut),
-		PacketsIn:      atomic.LoadInt64(&m.PacketsIn),
-		PacketsOut:     atomic.LoadInt64(&m.PacketsOut),
-		ByteRate:       m.ByteRate,
-		PacketRate:     m.PacketRate,
-		Errors:         atomic.LoadInt64(&m.Errors),
-		LastError:      m.LastError,
-		ErrorRate:      m.ErrorRate,
-		RetryCount:     atomic.LoadInt64(&m.RetryCount),
-		DropCount:      atomic.LoadInt64(&m.DropCount),
-		Latency:        atomic.LoadInt64(&m.Latency),
-		Jitter:         atomic.LoadInt64(&m.Jitter),
-		RTT:            atomic.LoadInt64(&m.RTT),
-		PacketLoss:     m.PacketLoss,
-		ReorderingRate: m.ReorderingRate,
-		CPUUsage:       m.CPUUsage,
-		MemoryUsage:    atomic.LoadInt64(&m.MemoryUsage),
-		BufferSize:     atomic.LoadInt64(&m.BufferSize),
-		QueueLength:    atomic.LoadInt64(&m.QueueLength),
-		GoroutineNum:   atomic.LoadInt64(&m.GoroutineNum),
-		Connections:    atomic.LoadInt32(&m.Connections),
-		MaxConnections: atomic.LoadInt32(&m.MaxConnections),
-		ConnectTime:    atomic.LoadInt64(&m.ConnectTime),
-		DisconnectTime: atomic.LoadInt64(&m.DisconnectTime),
-		Uptime:         atomic.LoadInt64(&m.Uptime),
-		LastUpdate:     m.LastUpdate,
-		StartTime:      m.StartTime,
-		SystemLoad:     m.SystemLoad,
-		DiskIO:         atomic.LoadInt64(&m.DiskIO),
-		NetworkIO:      atomic.LoadInt64(&m.NetworkIO),
+		BytesIn:         atomic.LoadInt64(&m.BytesIn),
+		BytesOut:        atomic.LoadInt64(&m.BytesOut),
+		PacketsIn:       atomic.LoadInt64(&m.PacketsIn),
+		PacketsOut:      atomic.LoadInt64(&m.PacketsOut),
+		ByteRate:        m.ByteRate,
+		PacketRate:      m.PacketRate,
+		Errors:          atomic.LoadInt64(&m.Errors),
+		LastError:       m.LastError,
+		ErrorRate:       m.ErrorRate,
+		RetryCount:      atomic.LoadInt64(&m.RetryCount),
+		DropCount:       atomic.LoadInt64(&m.DropCount),
+		Latency:         atomic.LoadInt64(&m.Latency),
+		Jitter:          atomic.LoadInt64(&m.Jitter),
+		RTT:             atomic.LoadInt64(&m.RTT),
+		PacketLoss:      m.PacketLoss,
+		ReorderingRate:  m.ReorderingRate,
+		CPUUsage:        m.CPUUsage,
+		MemoryUsage:     atomic.LoadInt64(&m.MemoryUsage),
+		BufferSize:      atomic.LoadInt64(&m.BufferSize),
+		QueueLength:     atomic.LoadInt64(&m.QueueLength),
+		GoroutineNum:    atomic.LoadInt64(&m.GoroutineNum),
+		Connections:     atomic.LoadInt32(&m.Connections),
+		MaxConnections:  atomic.LoadInt32(&m.MaxConnections),
+		ConnectTime:     atomic.LoadInt64(&m.ConnectTime),
+		DisconnectTime:  atomic.LoadInt64(&m.DisconnectTime),
+		Uptime:          atomic.LoadInt64(&m.Uptime),
+		LastUpdate:      m.LastUpdate,
+		StartTime:       m.StartTime,
+		SystemLoad:      m.SystemLoad,
+		DiskIO:          atomic.LoadInt64(&m.DiskIO),
+		NetworkIO:       atomic.LoadInt64(&m.NetworkIO),
+		ThrottleHitsIn:  atomic.LoadInt64(&m.ThrottleHitsIn),
+		ThrottleHitsOut: atomic.LoadInt64(&m.ThrottleHitsOut),
+		ThrottleRate:    m.ThrottleRate,
+		ThrottleBurst:   m.ThrottleBurst,
 	}
 }
 

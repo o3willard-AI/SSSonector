@@ -210,6 +210,16 @@ func (m *Monitor) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "# HELP sssonector_connections_peak Peak concurrent tunnel connections.\n")
 	fmt.Fprintf(w, "# TYPE sssonector_connections_peak gauge\n")
 	fmt.Fprintf(w, "sssonector_connections_peak %d\n", snap.MaxConnections)
+	fmt.Fprintf(w, "# HELP sssonector_throttle_hits_total Requests that had to wait for tokens.\n")
+	fmt.Fprintf(w, "# TYPE sssonector_throttle_hits_total counter\n")
+	fmt.Fprintf(w, "sssonector_throttle_hits_total{direction=\"in\"} %d\n", snap.ThrottleHitsIn)
+	fmt.Fprintf(w, "sssonector_throttle_hits_total{direction=\"out\"} %d\n", snap.ThrottleHitsOut)
+	fmt.Fprintf(w, "# HELP sssonector_throttle_effective_rate_bytes_per_second Effective paced rate including TCP overhead.\n")
+	fmt.Fprintf(w, "# TYPE sssonector_throttle_effective_rate_bytes_per_second gauge\n")
+	fmt.Fprintf(w, "sssonector_throttle_effective_rate_bytes_per_second %f\n", snap.ThrottleRate)
+	fmt.Fprintf(w, "# HELP sssonector_throttle_burst_bytes Burst allowance in bytes.\n")
+	fmt.Fprintf(w, "# TYPE sssonector_throttle_burst_bytes gauge\n")
+	fmt.Fprintf(w, "sssonector_throttle_burst_bytes %f\n", snap.ThrottleBurst)
 	fmt.Fprintf(w, "# HELP sssonector_cpu_usage_percent Process CPU usage percentage.\n")
 	fmt.Fprintf(w, "# TYPE sssonector_cpu_usage_percent gauge\n")
 	fmt.Fprintf(w, "sssonector_cpu_usage_percent %f\n", snap.CPUUsage)
@@ -232,6 +242,12 @@ func (m *Monitor) UpdateMetrics(bytesIn, bytesOut, packetsIn, packetsOut, errors
 	m.metrics.UpdateNetworkMetrics(bytesIn, bytesOut, packetsIn, packetsOut)
 	m.metrics.UpdateErrorMetrics(errors, "", 0, 0) // No retry/drop info yet
 	m.metrics.UpdateConnectionMetrics(int32(connections), int32(connections), 0, 0)
+}
+
+// UpdateThrottleMetrics records rate-limiter counters and the effective
+// pacing configuration sampled from the live data path.
+func (m *Monitor) UpdateThrottleMetrics(hitsIn, hitsOut uint64, rate, burst float64) {
+	m.metrics.SetThrottle(hitsIn, hitsOut, rate, burst)
 }
 
 // GetMetrics returns current metrics

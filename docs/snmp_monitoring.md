@@ -49,13 +49,15 @@ All OIDs are relative to the enterprise root `.1.3.6.1.4.1.54321`.
 | .2.2 | lastError | OCTET STRING | Last recorded error message |
 | .2.3 | startTime | Counter64 | Service start time (unix seconds) |
 
-### Limits (.3)
+### Limits and throttle events (.3)
 
-| OID | Name | Type | Access |
+| OID | Name | Type | Description |
 |---|---|---|---|
 | .3.1 | maxConnections | Integer | read-write (not applied at runtime) |
-| .3.2 | uploadRateLimit | Gauge32 | read-write (not applied at runtime) |
-| .3.3 | downloadRateLimit | Gauge32 | read-write (not applied at runtime) |
+| .3.2 | uploadRate | Gauge32 | Effective upload pacing rate in kbps (0 when throttling disabled) |
+| .3.3 | downloadRate | Gauge32 | Effective download pacing rate in kbps |
+| .3.4 | rateLimitHitsIn | Counter64 | Inbound requests that had to wait for tokens |
+| .3.5 | rateLimitHitsOut | Counter64 | Outbound requests that had to wait for tokens |
 
 Byte/packet counters are cumulative since service start and are sampled
 from the live data path every `config.metrics.interval`.

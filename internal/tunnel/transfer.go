@@ -83,6 +83,14 @@ func (t *Transfer) Start() error {
 	return err
 }
 
+// ThrottleStats returns the directional hit counters and current pacing
+// values (effective rate and burst) from both directional limiters.
+func (t *Transfer) ThrottleStats() (inHits, outHits uint64, rate, burst float64) {
+	inMetrics, _ := t.srcToDst.GetMetrics()
+	_, outMetrics := t.dstToSrc.GetMetrics()
+	return inMetrics.LimitHits, outMetrics.LimitHits, inMetrics.Rate, inMetrics.Burst
+}
+
 // UpdateConfig pushes a reloaded configuration into both directional
 // limiters so live transfers pick up new rates without restart.
 func (t *Transfer) UpdateConfig(cfg *config.AppConfig) {
