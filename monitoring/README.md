@@ -79,6 +79,13 @@ cumulative errors, error rate over 5 minutes, and CPU usage.
 
 To import additional dashboards: Grafana -> Dashboards -> Import.
 
+## Exposure
+
+The metrics endpoint is unauthenticated. Pin
+`monitor.prometheus.listen_address` (e.g. `"127.0.0.1"` or a management
+address) so it is not reachable from untrusted networks; the default binds
+all interfaces for lab compatibility.
+
 ## Health Probes
 
 When the metrics endpoint is enabled, `/healthz` (same port as `/metrics`)

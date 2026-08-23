@@ -200,6 +200,9 @@ The MIB reports this contract as `maxConnections = 1`.
 - `monitor.enabled` gates monitoring overall
 - `monitor.type: prometheus` + `monitor.prometheus.enabled` serves a
   `/metrics` text-exposition endpoint on `monitor.prometheus.port`
+  bound to `monitor.prometheus.listen_address` (empty = all interfaces;
+  production should pin loopback or a management address — `/healthz`
+  shares the same listener)
 - `monitor.type: snmp` + `snmp.enabled` starts the SNMPv2c agent on
   `snmp.address:snmp.port` (see [SNMP Monitoring](snmp_monitoring.md))
 - `metrics.enabled` + `metrics.interval` control how often live data-path

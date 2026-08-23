@@ -297,6 +297,10 @@ func (v *Validator) validateMonitor(config MonitorConfig) error {
 		return fmt.Errorf("invalid monitor interval: %v", config.Interval)
 	}
 
+	if p := config.Prometheus.ListenAddress; p != "" && net.ParseIP(p) == nil {
+		return fmt.Errorf("invalid prometheus listen_address: %s", p)
+	}
+
 	return nil
 }
 

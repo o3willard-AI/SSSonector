@@ -14,13 +14,14 @@ import (
 
 // Config holds monitoring configuration
 type Config struct {
-	SNMPEnabled   bool
-	SNMPAddress   string
-	SNMPPort      int
-	SNMPCommunity string
-	PromEnabled   bool
-	PromPort      int
-	PromPath      string
+	SNMPEnabled       bool
+	SNMPAddress       string
+	SNMPPort          int
+	SNMPCommunity     string
+	PromEnabled       bool
+	PromPort          int
+	PromPath          string
+	PromListenAddress string // empty = all interfaces
 }
 
 // Monitor handles system monitoring and metrics exposition
@@ -156,7 +157,11 @@ func (m *Monitor) startPrometheus() error {
 	mux.HandleFunc(path, m.handleMetrics)
 	mux.HandleFunc("/healthz", m.handleHealthz)
 
-	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", m.config.PromPort))
+	bind := m.config.PromListenAddress
+	if bind == "" {
+		bind = "0.0.0.0"
+	}
+	ln, err := net.Listen("tcp", net.JoinHostPort(bind, fmt.Sprintf("%d", m.config.PromPort)))
 	if err != nil {
 		return fmt.Errorf("failed to bind Prometheus listener on port %d: %w", m.config.PromPort, err)
 	}

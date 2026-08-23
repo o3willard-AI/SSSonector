@@ -166,13 +166,14 @@ func main() {
 	var mon *monitor.Monitor
 	if cfg.Config != nil && (cfg.Config.Monitor.Enabled || cfg.Config.SNMP.Enabled || cfg.Config.Metrics.Enabled) {
 		monCfg := &monitor.Config{
-			SNMPEnabled:   cfg.Config.SNMP.Enabled,
-			SNMPAddress:   cfg.Config.SNMP.Address,
-			SNMPPort:      cfg.Config.SNMP.Port,
-			SNMPCommunity: cfg.Config.SNMP.Community,
-			PromEnabled:   cfg.Config.Monitor.Prometheus.Enabled && strings.EqualFold(cfg.Config.Monitor.Type, "prometheus"),
-			PromPort:      cfg.Config.Monitor.Prometheus.Port,
-			PromPath:      cfg.Config.Monitor.Prometheus.Path,
+			SNMPEnabled:       cfg.Config.SNMP.Enabled,
+			SNMPAddress:       cfg.Config.SNMP.Address,
+			SNMPPort:          cfg.Config.SNMP.Port,
+			SNMPCommunity:     cfg.Config.SNMP.Community,
+			PromEnabled:       cfg.Config.Monitor.Prometheus.Enabled && strings.EqualFold(cfg.Config.Monitor.Type, "prometheus"),
+			PromPort:          cfg.Config.Monitor.Prometheus.Port,
+			PromPath:          cfg.Config.Monitor.Prometheus.Path,
+			PromListenAddress: cfg.Config.Monitor.Prometheus.ListenAddress,
 		}
 		if monCfg.SNMPAddress == "" {
 			monCfg.SNMPAddress = "0.0.0.0"

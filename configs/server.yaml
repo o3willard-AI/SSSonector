@@ -27,6 +27,7 @@ config:
     prometheus:
       enabled: true
       port: 9090
+      listen_address: "127.0.0.1" # restrict exposure; use a mgmt IP if scrapers are remote
       path: /metrics
   metrics:
     enabled: true

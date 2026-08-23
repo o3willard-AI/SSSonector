@@ -235,6 +235,11 @@ type PrometheusConfig struct {
 	Port       int    `yaml:"port" json:"port"`
 	Path       string `yaml:"path" json:"path"`
 	BufferSize int    `yaml:"buffer_size" json:"buffer_size"`
+
+	// ListenAddress restricts the metrics/health bind interface.
+	// Empty binds all interfaces; production should pin a loopback or
+	// management-network address.
+	ListenAddress string `yaml:"listen_address" json:"listen_address"`
 }
 
 // MetricsConfig represents metrics configuration

@@ -213,3 +213,39 @@ func TestHealthzReportsState(t *testing.T) {
 		t.Error("uptime should be non-negative")
 	}
 }
+
+func TestPrometheusHonorsListenAddress(t *testing.T) {
+	m, err := New(zap.NewNop(), &Config{
+		PromEnabled:       true,
+		PromPort:          freePortForTest(t),
+		PromPath:          "/metrics",
+		PromListenAddress: "127.0.0.1",
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := m.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer m.Stop()
+
+	endpoint := m.PromEndpoint()
+	host, _, err := net.SplitHostPort(endpoint)
+	if err != nil {
+		t.Fatalf("endpoint %q: %v", endpoint, err)
+	}
+	if host != "127.0.0.1" {
+		t.Errorf("bound host = %q, want 127.0.0.1", host)
+	}
+}
+
+func freePortForTest(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve port: %v", err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	ln.Close()
+	return port
+}
