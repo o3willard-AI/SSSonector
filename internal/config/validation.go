@@ -240,6 +240,13 @@ func (v *Validator) validateTunnel(mode string, config TunnelConfig) error {
 		return fmt.Errorf("reconnect jitter must be <= 0.9, got %v", rc.Jitter)
 	}
 
+	if config.KeepAliveSeconds < 0 || config.KeepAliveSeconds > 86400 {
+		return fmt.Errorf("invalid keepalive_seconds: %d", config.KeepAliveSeconds)
+	}
+	if config.IdleTimeoutSeconds < 0 || config.IdleTimeoutSeconds > 86400 {
+		return fmt.Errorf("invalid idle_timeout_seconds: %d", config.IdleTimeoutSeconds)
+	}
+
 	return nil
 }
 

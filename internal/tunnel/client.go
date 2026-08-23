@@ -272,10 +272,23 @@ func (c *Client) connectLoop() {
 			c.logger.Info("Connected to server", zap.String("address", serverAddr))
 		}
 
+		if tc, ok := conn.(*net.TCPConn); ok {
+			if ka := c.activeConfig().Config.Tunnel.KeepAliveSeconds; ka > 0 {
+				period := time.Duration(ka) * time.Second
+				_ = tc.SetKeepAliveConfig(net.KeepAliveConfig{
+					Enable:   true,
+					Idle:     period,
+					Interval: period / 3,
+					Count:    3,
+				})
+			}
+		}
+
 		c.conn = conn
 		c.activeConns.Add(1)
 
-		tunnelConn = newCountingConn(tunnelConn, &c.bytesIn, &c.bytesOut)
+		idle := time.Duration(c.activeConfig().Config.Tunnel.IdleTimeoutSeconds) * time.Second
+		tunnelConn = newCountingConn(tunnelConn, idle, &c.bytesIn, &c.bytesOut)
 		adapterConn := NewAdapterWrapper(c.iface)
 		transfer, err := NewTransfer(tunnelConn, adapterConn, c.activeConfig(), c.logger)
 		if err != nil {

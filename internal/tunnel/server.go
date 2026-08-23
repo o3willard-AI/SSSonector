@@ -193,6 +193,18 @@ func (s *Server) handleConnection(conn net.Conn) {
 	s.logger.Info("Client connected", zap.String("remote", remoteAddr))
 	s.activeConns.Add(1)
 
+	if tc, ok := conn.(*net.TCPConn); ok {
+		if ka := s.activeConfig().Config.Tunnel.KeepAliveSeconds; ka > 0 {
+			period := time.Duration(ka) * time.Second
+			_ = tc.SetKeepAliveConfig(net.KeepAliveConfig{
+				Enable:   true,
+				Idle:     period,
+				Interval: period / 3,
+				Count:    3,
+			})
+		}
+	}
+
 	var tunnelConn net.Conn
 	var err error
 
@@ -206,7 +218,8 @@ func (s *Server) handleConnection(conn net.Conn) {
 		tunnelConn = conn
 	}
 
-	tunnelConn = newCountingConn(tunnelConn, &s.bytesIn, &s.bytesOut)
+	idle := time.Duration(s.activeConfig().Config.Tunnel.IdleTimeoutSeconds) * time.Second
+	tunnelConn = newCountingConn(tunnelConn, idle, &s.bytesIn, &s.bytesOut)
 
 	adapterConn := NewAdapterWrapper(s.iface)
 	transfer, err := NewTransfer(tunnelConn, adapterConn, s.activeConfig(), s.logger)

@@ -459,3 +459,52 @@ func TestPlaintextGateCoversBrokenCerts(t *testing.T) {
 		t.Errorf("refusal should name the override knob: %v", err)
 	}
 }
+
+// TestLoopbackIdleTimeoutRecovery proves the full dead-peer path: with
+// tunnel.idle_timeout_seconds armed and zero traffic, both sides tear the
+// connection down locally and the client reconnects automatically.
+func TestLoopbackIdleTimeoutRecovery(t *testing.T) {
+	core, observed := observer.New(zapcore.DebugLevel)
+	logger := zap.New(core)
+
+	port := freePort(t)
+	dir := t.TempDir()
+
+	srvCfg := loopbackConfig(t, dir, port)
+	srvCfg.Config.Tunnel.IdleTimeoutSeconds = 1
+	server := NewServer(srvCfg, nil, logger.Named("server"), nil)
+	srvProv, cliProv, _, _ := newLinkedAdapters()
+	server.AdapterNew = srvProv
+
+	cliCfg := loopbackConfig(t, dir, port)
+	cliCfg.Type = config.TypeClient
+	cliCfg.Config.Mode = "client"
+	cliCfg.Config.Network.Name = "tunc"
+	cliCfg.Config.Network.Interface = "tunc"
+	cliCfg.Config.Network.Address = "10.77.0.2/24"
+	cliCfg.Config.Tunnel.ServerAddress = "127.0.0.1"
+	cliCfg.Config.Tunnel.ServerPort = port
+	cliCfg.Config.Tunnel.IdleTimeoutSeconds = 1
+	client := NewClient(cliCfg, nil, logger.Named("client"), nil)
+	client.AdapterNew = cliProv
+
+	if err := server.Start(); err != nil {
+		t.Fatalf("server Start: %v", err)
+	}
+	if err := client.Start(); err != nil {
+		t.Fatalf("client Start: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = client.Stop()
+		_ = server.Stop()
+	})
+
+	waitForLog(t, observed, "Tunnel established", 10*time.Second)
+
+	// Go completely silent past the idle window; recovery must be automatic.
+	waitForLogCount(t, observed, "Tunnel established", 2, 20*time.Second)
+
+	// And the recovered connection is itself healthy: another silence cycle
+	// must produce yet another reconnect.
+	waitForLogCount(t, observed, "Tunnel established", 3, 25*time.Second)
+}

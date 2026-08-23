@@ -167,6 +167,16 @@ jitter reduces the result. Omitting the whole block uses the defaults.
 All four values are read on every failed attempt, so SIGHUP reloads apply to
 subsequent retries immediately (see [Hot Reload](hot_reload.md)).
 
+### Dead-Peer Detection
+- `tunnel.keepalive_seconds`: TCP keepalive probe period (0 = off). A vanished
+  peer is detected in roughly `2 × period` once traffic is idle.
+- `tunnel.idle_timeout_seconds`: close the connection if NO bytes flow for
+  this window (0 = off). Both sides tear down locally; the client then
+  follows its reconnect schedule.
+
+Both are per-connection settings: restart required. See
+[Dead-Peer Detection](dead_peer_detection.md) for the design rationale.
+
 ### Logging Configuration
 - `level`: one of debug, info, warn, error, fatal (required)
 - `format`: `json` (default) or `console`

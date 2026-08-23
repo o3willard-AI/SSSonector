@@ -47,6 +47,8 @@ in effect until restart:
 - `logging.file`, `logging.format` (logger outputs are fixed at startup)
 - `monitor.type`, `monitor.prometheus.port`, `snmp.*`, `metrics.interval`
   (endpoint lifecycle and sampler cadence are fixed at startup)
+- `tunnel.keepalive_seconds`, `tunnel.idle_timeout_seconds`
+  (per-connection settings)
 
 ## Reload Pipeline
 

@@ -141,6 +141,11 @@ type TunnelConfig struct {
 	Compression   bool   `yaml:"compression" json:"compression"`
 
 	Reconnect ReconnectConfig `yaml:"reconnect" json:"reconnect"`
+
+	// Dead-peer detection (seconds; 0 disables). Keepalive drives TCP
+	// probes; IdleTimeout closes connections silent for the whole window.
+	KeepAliveSeconds   int `yaml:"keepalive_seconds" json:"keepalive_seconds"`
+	IdleTimeoutSeconds int `yaml:"idle_timeout_seconds" json:"idle_timeout_seconds"`
 }
 
 // ReconnectConfig tunes the client's automatic reconnection behavior.
