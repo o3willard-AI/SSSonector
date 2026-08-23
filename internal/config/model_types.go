@@ -139,6 +139,33 @@ type TunnelConfig struct {
 	ServerPort    int    `yaml:"server_port" json:"server_port"`
 	Port          int    `yaml:"port" json:"port"`
 	Compression   bool   `yaml:"compression" json:"compression"`
+
+	Reconnect ReconnectConfig `yaml:"reconnect" json:"reconnect"`
+}
+
+// ReconnectConfig tunes the client's automatic reconnection behavior.
+type ReconnectConfig struct {
+	MaxAttempts  int           `yaml:"max_attempts" json:"max_attempts"`
+	InitialDelay time.Duration `yaml:"initial_delay" json:"initial_delay"`
+	MaxDelay     time.Duration `yaml:"max_delay" json:"max_delay"`
+	Jitter       float64       `yaml:"jitter" json:"jitter"`
+}
+
+// Normalized fills zero fields with production defaults.
+func (r ReconnectConfig) Normalized() ReconnectConfig {
+	if r.MaxAttempts <= 0 {
+		r.MaxAttempts = 10
+	}
+	if r.InitialDelay <= 0 {
+		r.InitialDelay = 1 * time.Second
+	}
+	if r.MaxDelay <= 0 {
+		r.MaxDelay = 30 * time.Second
+	}
+	if r.Jitter <= 0 {
+		r.Jitter = 0.2
+	}
+	return r
 }
 
 // SecurityConfig represents security configuration

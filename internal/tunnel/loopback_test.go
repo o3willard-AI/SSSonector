@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -306,4 +307,85 @@ func waitForLogCount(t *testing.T, obs *observer.ObservedLogs, msg string, want 
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("log %q seen %d times, want >= %d within %v", msg, len(obs.FilterMessage(msg).All()), want, timeout)
+}
+
+// TestClientRetryWiringBacksOffThenGivesUp points the client at a closed
+// port with tight reconnect settings and verifies the configured attempt
+// cap and backoff sequence end-to-end through real dial failures.
+func TestClientRetryWiringBacksOffThenGivesUp(t *testing.T) {
+	core, observed := observer.New(zapcore.InfoLevel)
+	logger := zap.New(core)
+
+	port := freePort(t) // nothing listens here
+	dir := t.TempDir()
+
+	cfg := loopbackConfig(t, dir, port)
+	cfg.Type = config.TypeClient
+	cfg.Config.Mode = "client"
+	cfg.Config.Network.Name = "tunc"
+	cfg.Config.Network.Interface = "tunc"
+	cfg.Config.Network.Address = "10.77.0.2/24"
+	cfg.Config.Tunnel.ServerAddress = "127.0.0.1"
+	cfg.Config.Tunnel.ServerPort = port
+	cfg.Config.Tunnel.Reconnect = config.ReconnectConfig{
+		MaxAttempts:  3,
+		InitialDelay: 100 * time.Millisecond,
+		MaxDelay:     400 * time.Millisecond,
+		Jitter:       0.001, // near-deterministic timing for assertions
+	}
+
+	client := NewClient(cfg, nil, logger, nil)
+	a, b := net.Pipe()
+	defer a.Close()
+	defer b.Close()
+	client.AdapterNew = func(name string, _ *adapter.Options) (adapter.Interface, error) {
+		return &fakeInterface{name: name, pipe: b}, nil
+	}
+
+	started := time.Now()
+	if err := client.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Stop() })
+
+	waitForLogCount(t, observed, "Connection failed, retrying", 2, 10*time.Second)
+
+	deadline := time.Now().Add(10 * time.Second)
+	gaveUp := func() bool {
+		for _, e := range observed.All() {
+			if strings.HasPrefix(e.Message, "Max retries exceeded") {
+				return true
+			}
+		}
+		return false
+	}
+	for !gaveUp() {
+		if time.Now().After(deadline) {
+			var msgs []string
+			for _, e := range observed.All() {
+				msgs = append(msgs, e.Message)
+			}
+			t.Fatalf("client never gave up after max_attempts; logs=%v", msgs)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	warns := observed.FilterMessage("Connection failed, retrying").All()
+	if len(warns) < 3 {
+		t.Fatalf("expected at least 3 retry warnings (attempts before final failure), got %d", len(warns))
+	}
+	for i, e := range warns[:3] {
+		want := time.Duration(1<<i) * 100 * time.Millisecond
+		cm := e.ContextMap()
+		got, ok := cm["delay"].(time.Duration)
+		if !ok {
+			t.Fatalf("retry %d missing duration delay field: %+v", i+1, cm)
+		}
+		if diff := want - got; diff < 0 || diff > 2*time.Millisecond {
+			t.Errorf("retry %d delay = %v, want %v (jitter only reduces, <=2ms)", i+1, got, want)
+		}
+	}
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
+		t.Errorf("giving up took too long: %v", elapsed)
+	}
 }

@@ -155,6 +155,18 @@ Validation is mode-aware:
 
 Certificate paths may be absolute or relative to the config file location.
 
+### Tunnel Reconnect (client)
+- `tunnel.reconnect.max_attempts`: dial attempts before giving up (default 10, max 100)
+- `tunnel.reconnect.initial_delay`: first backoff delay (default 1s)
+- `tunnel.reconnect.max_delay`: hard ceiling for any single delay (default 30s)
+- `tunnel.reconnect.jitter`: fraction 0–0.9 by which each delay is randomly reduced
+  (default 0.2) so a restarting fleet desynchronizes instead of stampeding
+
+Delays double per attempt (`initial × 2^(n-1)`, capped at `max_delay`), then
+jitter reduces the result. Omitting the whole block uses the defaults.
+All four values are read on every failed attempt, so SIGHUP reloads apply to
+subsequent retries immediately (see [Hot Reload](hot_reload.md)).
+
 ### Logging Configuration
 - `level`: one of debug, info, warn, error, fatal (required)
 - `format`: `json` (default) or `console`

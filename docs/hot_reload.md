@@ -24,6 +24,7 @@ is delivered.
 | `throttle.rate` | Live limiters are updated in place; new connections pick it up automatically |
 | `logging.level` | Applied atomically via the zap atomic level |
 | `auth.cert_rotation.interval` | Updates the certificate-expiry check interval on live certificate managers |
+| `tunnel.reconnect.*` | Read on every failed dial; subsequent retries use the new schedule |
 
 Notes:
 - If the daemon was started with an explicit `-log-level` flag, that flag

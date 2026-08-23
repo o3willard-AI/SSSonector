@@ -34,6 +34,14 @@ linters:
         # Metric counter/gauge conversions between signed/unsigned widths;
         # values are bounded by their producers.
         - G115
+  exclusions:
+    rules:
+      # Tests may use seeded math/rand for determinism; only production
+      # code paths touching secrets require crypto/rand.
+      - path: _test\.go
+        text: "G404"
+        linters:
+          - gosec
 
 issues:
   max-issues-per-linter: 0

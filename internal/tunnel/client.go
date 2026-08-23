@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/o3willard-AI/SSSonector/internal/config"
+	"math/rand"
 	"net"
 	"strconv"
 	"sync"
@@ -30,9 +31,7 @@ type Client struct {
 	cancel       context.CancelFunc
 	wg           sync.WaitGroup
 	reconnect    bool
-	maxRetries   int
-	retryDelay   time.Duration
-	maxRetryWait time.Duration
+	rng          *rand.Rand
 
 	mu              sync.Mutex
 	currentTransfer *Transfer
@@ -73,17 +72,16 @@ func NewClient(cfg *config.AppConfig, manager config.ConfigManager, logger *zap.
 	}
 
 	client := &Client{
-		config:       cfg,
-		manager:      manager,
-		logger:       logger,
-		monitor:      mon,
-		ctx:          ctx,
-		cancel:       cancel,
-		tlsManager:   tlsManager,
-		reconnect:    true,
-		maxRetries:   10,
-		retryDelay:   time.Second,
-		maxRetryWait: 30 * time.Second,
+		config:     cfg,
+		manager:    manager,
+		logger:     logger,
+		monitor:    mon,
+		ctx:        ctx,
+		cancel:     cancel,
+		tlsManager: tlsManager,
+		reconnect:  true,
+		// #nosec G404 -- jitter timing is not security-sensitive
+		rng: rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 
 	// Initialize facade client if enabled
@@ -191,7 +189,6 @@ func (c *Client) connectLoop() {
 
 	serverAddr := net.JoinHostPort(c.config.Config.Tunnel.ServerAddress, strconv.Itoa(c.config.Config.Tunnel.ServerPort))
 	retryCount := 0
-	currentDelay := c.retryDelay
 
 	for {
 		select {
@@ -222,33 +219,31 @@ func (c *Client) connectLoop() {
 		if err != nil {
 			c.errorsTotal.Add(1)
 			retryCount++
-			if retryCount > c.maxRetries {
+			rc := c.activeConfig().Config.Tunnel.Reconnect.Normalized()
+			if retryCount > rc.MaxAttempts {
 				c.logger.Error("Max retries exceeded, stopping reconnection",
 					zap.Int("attempts", retryCount),
 					zap.Error(err))
 				return
 			}
 
+			delay := computeBackoff(retryCount, rc.InitialDelay, rc.MaxDelay, rc.Jitter, c.rng)
+
 			c.logger.Warn("Connection failed, retrying",
 				zap.Int("attempt", retryCount),
-				zap.Duration("delay", currentDelay),
+				zap.Duration("delay", delay),
 				zap.Error(err))
 
 			select {
-			case <-time.After(currentDelay):
+			case <-time.After(delay):
 			case <-c.ctx.Done():
 				return
 			}
 
-			currentDelay = time.Duration(float64(currentDelay) * 1.5)
-			if currentDelay > c.maxRetryWait {
-				currentDelay = c.maxRetryWait
-			}
 			continue
 		}
 
 		retryCount = 0
-		currentDelay = c.retryDelay
 
 		if viaFacade {
 			// Connection via HTTPS facade is already TLS-encrypted.

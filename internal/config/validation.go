@@ -226,6 +226,20 @@ func (v *Validator) validateTunnel(mode string, config TunnelConfig) error {
 		return fmt.Errorf("unknown mode: %s", mode)
 	}
 
+	rc := config.Reconnect.Normalized()
+	if rc.MaxAttempts > 100 {
+		return fmt.Errorf("reconnect max_attempts too large: %d", rc.MaxAttempts)
+	}
+	if rc.InitialDelay > 5*time.Minute {
+		return fmt.Errorf("reconnect initial_delay too large: %v", rc.InitialDelay)
+	}
+	if rc.MaxDelay < rc.InitialDelay {
+		return fmt.Errorf("reconnect max_delay (%v) must be >= initial_delay (%v)", rc.MaxDelay, rc.InitialDelay)
+	}
+	if rc.Jitter > 0.9 {
+		return fmt.Errorf("reconnect jitter must be <= 0.9, got %v", rc.Jitter)
+	}
+
 	return nil
 }
 
