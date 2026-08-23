@@ -18,6 +18,10 @@ type Transfer struct {
 	srcToDst *throttle.Limiter
 	dstToSrc *throttle.Limiter
 	logger   *zap.Logger
+
+	// shareDst keeps Start() from closing dst when the transfer ends,
+	// for destinations shared across connections (the process-wide TUN).
+	shareDst bool
 }
 
 // NewTransfer creates a new transfer
@@ -41,14 +45,28 @@ func NewTransfer(src, dst net.Conn, cfg *config.AppConfig, logger *zap.Logger) (
 	}, nil
 }
 
-// Start starts the transfer
+// ShareDst marks dst as shared across connections: Start will not close it
+// on return (the owner shuts it down during service Stop).
+func (t *Transfer) ShareDst() { t.shareDst = true }
+
+// Start starts the transfer. It returns as soon as either direction
+// finishes, closing src (and dst unless ShareDst was set) so the remaining
+// direction's blocked Read unblocks instead of leaking.
+//
+// For shared destinations that cannot be closed, a past read deadline
+// aborts the pending adapter Read; it is cleared when the next transfer
+// on the same destination starts.
 func (t *Transfer) Start() error {
-	// Start bidirectional transfer
+	if t.shareDst {
+		if d, ok := t.dst.(deadliner); ok {
+			_ = d.SetReadDeadline(time.Time{}) // clear any prior abort
+		}
+	}
+
 	errChan := make(chan error, 2)
 
 	// Forward src -> dst
 	go func() {
-		// Read from src and write to dst through limiter
 		_, err := io.Copy(t.dst, t.srcToDst)
 		// Propagate EOF: half-close the write side so the peer's read
 		// unblocks and the reverse direction can drain and finish.
@@ -60,7 +78,6 @@ func (t *Transfer) Start() error {
 
 	// Forward dst -> src
 	go func() {
-		// Read from dst and write to src through limiter
 		_, err := io.Copy(t.src, t.dstToSrc)
 		if cw, ok := t.src.(closeWriter); ok {
 			cw.CloseWrite()
@@ -68,17 +85,19 @@ func (t *Transfer) Start() error {
 		errChan <- err
 	}()
 
-	// Wait for first error or completion
 	var err error
-	for i := 0; i < 2; i++ {
-		if e := <-errChan; e != nil {
-			err = e
-		}
+	if e := <-errChan; e != nil {
+		err = e
 	}
 
-	// Close connections
 	t.src.Close()
-	t.dst.Close()
+	if !t.shareDst {
+		t.dst.Close()
+	} else if d, ok := t.dst.(deadliner); ok {
+		// Abort the surviving adapter-side Read so its goroutine exits;
+		// the next Start clears this deadline.
+		_ = d.SetReadDeadline(time.Unix(1, 0))
+	}
 
 	return err
 }

@@ -51,9 +51,17 @@ func (w *adapterWrapper) SetDeadline(t time.Time) error {
 	return nil
 }
 
+// deadliner is implemented by pollable adapters (TUN device files,
+// in-memory pipes) so blocked reads can be aborted at teardown.
+type deadliner interface {
+	SetReadDeadline(t time.Time) error
+}
+
 func (w *adapterWrapper) SetReadDeadline(t time.Time) error {
-	// Read deadlines not supported for adapter
-	return nil
+	if d, ok := w.adapter.(deadliner); ok {
+		return d.SetReadDeadline(t)
+	}
+	return nil // not pollable: reads cannot be aborted by deadline
 }
 
 func (w *adapterWrapper) SetWriteDeadline(t time.Time) error {
