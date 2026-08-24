@@ -1,8 +1,94 @@
-# Configuration Package API Documentation
+# Configuration Package API
 
-## Overview
+Reference for the `internal/config` package. This documents the actual
+interfaces and types as they exist in the code today.
 
-The `config` package provides a comprehensive configuration management system for SSSonector. This document details the API for each component.
+> This is an **internal** Go package. It is not a stable public API and may
+> change without notice. For user-facing configuration, see
+> [configuration_guide.md](../configuration_guide.md).
+
+## Interfaces (`ifaces.go`)
+
+```go
+type ConfigStore interface {
+    Load() (*AppConfig, error)
+    Store(*AppConfig) error
+    ListVersions(configType Type) ([]string, error)
+}
+```
+
+- `Load`: loads the latest configuration from storage.
+- `Store`: persists the configuration to storage.
+- `ListVersions`: lists available version identifiers for a given config type.
+
+```go
+type ConfigValidator interface {
+    Validate(*AppConfig) error
+}
+```
+
+- `Validate`: validates a configuration (value checks, relationships,
+  environment-specific constraints).
+
+```go
+type ConfigManager interface {
+    Get() (*AppConfig, error)
+    Set(*AppConfig) error
+    Update(*AppConfig) error
+    Watch() (<-chan *AppConfig, error)
+    Close() error
+}
+```
+
+- `Get`: returns the current configuration (lazily loads if not yet held; a
+  missing file falls back to defaults, other load errors fail loudly).
+- `Set`: validates, stores, and notifies watchers.
+- `Update`: validates, updates in-memory config, stores, and notifies.
+- `Watch`: returns a channel that receives configuration updates.
+- `Close`: closes all watcher channels.
+
+## Implementations
+
+### FileStore
+
+```go
+func NewFileStore(configDir string) *FileStore
+```
+
+File-based `ConfigStore`. Reads/writes `config.yaml` inside `configDir`
+(permissions `0750` dir / `0600` file) and lists versions by scanning `.yaml`
+files whose `Type` matches.
+
+### Validator
+
+```go
+func NewValidator() *Validator
+```
+
+`ConfigValidator` implementation. Also exposes exported helpers
+`ValidateIPAddress` / `ValidateCIDR`.
+
+### Manager
+
+```go
+func NewManager(store ConfigStore, validator ConfigValidator) *Manager
+```
+
+`ConfigManager` implementation coordinating store + validator + watchers.
+
+### Factory helpers (`config.go`)
+
+```go
+const DefaultConfigDir = "/etc/sssonector"
+
+func CreateManager(configDir string) ConfigManager
+func CreateManagerWithOptions(store ConfigStore, validator ConfigValidator) ConfigManager
+func CreateDefaultConfig() *AppConfig
+func CreateAppConfig(configType Type) *AppConfig
+func CreateConfigLoader() *ConfigLoader
+func LoadConfigFile(filename string) (*AppConfig, error)
+func LoadConfigString(content, format string) (*AppConfig, error)
+```
 
 ## Types
 
@@ -10,259 +96,51 @@ The `config` package provides a comprehensive configuration management system fo
 
 ```go
 type AppConfig struct {
-    Metadata ConfigMetadata  // Configuration metadata
-    Mode     Mode           // Operating mode
-    Network  NetworkConfig  // Network configuration
-    Tunnel   TunnelConfig  // Tunnel configuration
-    Monitor  MonitorConfig // Monitor configuration
-    Throttle ThrottleConfig // Rate limiting configuration
-    Security SecurityConfig // Security configuration
+    Type     Type           // server | client
+    Config   *Config        // nested section configuration
+    Version  string
+    Metadata ConfigMetadata
+    Throttle ThrottleConfig
 }
 ```
-
-The `AppConfig` is the root configuration type that contains all application settings.
 
 ### ConfigMetadata
 
 ```go
 type ConfigMetadata struct {
-    Version       string            // Configuration version
-    CreatedAt     time.Time        // Creation timestamp
-    UpdatedAt     time.Time        // Last update timestamp
-    LastValidator string           // Last validator identifier
-    ValidatedAt   *time.Time       // Last validation timestamp
-    Environment   string           // Deployment environment
-    Region        string           // Geographic region
-    Tags          map[string]string // Custom metadata tags
+    Version       string
+    Created, Modified time.Time
+    CreatedBy     string
+    CreatedAt, UpdatedAt time.Time
+    Environment   string
+    Region        string
+    SchemaVersion string
 }
 ```
 
-Metadata provides tracking and auditing information for configurations.
-
-## Interfaces
-
-### ConfigStore
+### Type constants
 
 ```go
-type ConfigStore interface {
-    Store(cfg *AppConfig) error
-    Load(cfgType ConfigType, version string) (*AppConfig, error)
-    Delete(cfgType ConfigType, version string) error
-    List() ([]*AppConfig, error)
-    ListByType(cfgType ConfigType) ([]*AppConfig, error)
-    ListVersions(cfgType ConfigType) ([]string, error)
-    GetLatest(cfgType ConfigType) (*AppConfig, error)
-}
-```
-
-Methods:
-- `Store`: Stores a configuration
-- `Load`: Loads a configuration by type and version
-- `Delete`: Deletes a configuration
-- `List`: Lists all configurations
-- `ListByType`: Lists configurations by type
-- `ListVersions`: Lists versions for a type
-- `GetLatest`: Gets the latest version
-
-### ConfigValidator
-
-```go
-type ConfigValidator interface {
-    Validate(cfg *AppConfig) error
-    ValidateSchema(cfg *AppConfig, schema []byte) error
-}
-```
-
-Methods:
-- `Validate`: Validates configuration values
-- `ValidateSchema`: Validates against JSON Schema
-
-### ConfigManager
-
-```go
-type ConfigManager interface {
-    GetStore() ConfigStore
-    GetValidator() ConfigValidator
-    GetWatcher() ConfigWatcher
-    Apply(cfg *AppConfig) error
-    Rollback(cfgType ConfigType, version string) error
-    Diff(cfgType ConfigType, version1, version2 string) (string, error)
-    Export(cfg *AppConfig, format ConfigFormat) ([]byte, error)
-    Import(data []byte, format ConfigFormat) (*AppConfig, error)
-}
-```
-
-Methods:
-- `GetStore`: Returns the configuration store
-- `GetValidator`: Returns the validator
-- `GetWatcher`: Returns the watcher
-- `Apply`: Applies a configuration
-- `Rollback`: Rolls back to a version
-- `Diff`: Shows differences between versions
-- `Export`: Exports to a format
-- `Import`: Imports from a format
-
-## Implementations
-
-### FileStore
-
-```go
-func NewFileStore(baseDir string, logger *zap.Logger) *FileStore
-```
-
-File-based implementation of `ConfigStore`:
-- Uses JSON files for storage
-- Organizes by type and version
-- Maintains version history
-- Supports atomic operations
-
-### Validator
-
-```go
-func NewValidator(logger *zap.Logger) *Validator
-```
-
-Default implementation of `ConfigValidator`:
-- Validates field values
-- Checks relationships
-- Enforces constraints
-- Supports JSON Schema
-
-### Manager
-
-```go
-func NewManager(configPath string, store ConfigStore, validator ConfigValidator, logger *zap.Logger) *Manager
-```
-
-Default implementation of `ConfigManager`:
-- Coordinates operations
-- Manages transactions
-- Handles notifications
-- Provides utilities
-
-## Error Types
-
-```go
-var (
-    ErrInvalidConfig    = errors.New("invalid configuration")
-    ErrVersionNotFound  = errors.New("version not found")
-    ErrTypeNotFound     = errors.New("type not found")
-    ErrInvalidFormat    = errors.New("invalid format")
-    ErrValidationFailed = errors.New("validation failed")
-)
-```
-
-## Constants
-
-```go
+type Type string
 const (
-    FormatJSON ConfigFormat = "json"
-    FormatYAML ConfigFormat = "yaml"
-    FormatTOML ConfigFormat = "toml"
-)
-
-const (
-    TypeServer     ConfigType = "server"
-    TypeClient     ConfigType = "client"
-    TypeTunnel     ConfigType = "tunnel"
-    TypeSecurity   ConfigType = "security"
-    TypeMonitoring ConfigType = "monitoring"
+    TypeServer Type = "server"
+    TypeClient Type = "client"
 )
 ```
 
-## Usage Examples
+There is no `ConfigFormat` type and no `Delete/List/ListByType/GetLatest`
+methods on `ConfigStore`; those do not exist in this codebase.
 
-### Creating a Manager
-
-```go
-// Create components
-store := config.NewFileStore("/etc/sssonector/configs", logger)
-validator := config.NewValidator(logger)
-
-// Create manager
-manager := config.NewManager(configPath, store, validator, logger)
-```
-
-### Loading and Validating
+## Usage
 
 ```go
-// Load configuration
-cfg, err := manager.GetStore().Load(config.TypeServer, "1.0.0")
+mgr := config.CreateManager("/etc/sssonector")
+cfg, err := mgr.Get()
 if err != nil {
     return err
 }
-
-// Validate configuration
-if err := manager.GetValidator().Validate(cfg); err != nil {
+if err := mgr.Set(cfg); err != nil {
     return err
 }
+updates, err := mgr.Watch()
 ```
-
-### Applying Changes
-
-```go
-// Update configuration
-cfg.Network.MTU = 1500
-
-// Apply changes
-if err := manager.Apply(cfg); err != nil {
-    return err
-}
-```
-
-### Rolling Back
-
-```go
-// Roll back to previous version
-if err := manager.Rollback(config.TypeServer, "1.0.0"); err != nil {
-    return err
-}
-```
-
-### Exporting and Importing
-
-```go
-// Export configuration
-data, err := manager.Export(cfg, config.FormatJSON)
-if err != nil {
-    return err
-}
-
-// Import configuration
-cfg, err = manager.Import(data, config.FormatJSON)
-if err != nil {
-    return err
-}
-```
-
-## Best Practices
-
-1. **Error Handling**
-   - Check all errors
-   - Use type assertions
-   - Provide context
-   - Log failures
-
-2. **Validation**
-   - Validate early
-   - Use schemas
-   - Check relationships
-   - Verify constraints
-
-3. **Versioning**
-   - Use semantic versions
-   - Keep history
-   - Document changes
-   - Support rollback
-
-4. **Security**
-   - Secure storage
-   - Validate input
-   - Audit changes
-   - Control access
-
-5. **Performance**
-   - Cache results
-   - Batch operations
-   - Use transactions
-   - Handle concurrency

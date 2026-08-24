@@ -1,127 +1,108 @@
 # Code Structure Overview
 
-## Core Components
+A map of the current source tree. Generated from the actual files present in
+`internal/` and the supporting top-level directories — every file listed below
+exists in the repository.
 
-### Tunnel Implementation (`internal/tunnel/`)
-- `tunnel.go`: Core tunnel implementation with optimized data transfer
-  * Bidirectional data streaming with EOF handling
-  * MTU-aware chunked transfers
-  * Exponential backoff retry mechanism
-  * Buffer overflow prevention
-  * Metrics integration
-- `tls.go`: TLS configuration and security settings
-- `tls_config.go`: TLS profile management
-- `buffer.go`: Buffer management and pooling
-- `tunnel_test.go`: Comprehensive test suite
+## Internal Packages (`internal/`)
+
+### Tunnel (`internal/tunnel/`)
+- `client.go`: Client-side tunnel lifecycle and reconnect policy
+- `server.go`: Server-side tunnel listener and session handling
+- `tunnel_common.go`: Shared tunnel logic and connection setup
+- `tls.go`, `tls_config.go`: TLS certificate loading and profile management
+- `transfer.go`: Data-plane copying between endpoints
+- `counters.go`: Byte/connection counters for metrics
+- `backoff.go`: Reconnect backoff scheduling
+- `errors.go`: Tunnel error definitions
+- `adapter_wrapper.go`: Adapter integration for the tunnel
+- Tests: `counters_test.go`, `backoff_test.go`, `loopback_test.go`, `reload_test.go`, `tls_test.go`
 
 ### Certificate Management (`internal/cert/`)
-- `manager.go`: Certificate lifecycle management
-- `generator.go`: Certificate generation utilities
-- `validator.go`: Certificate validation logic
-- `locator.go`: Certificate discovery and loading
-- `generator/`: Certificate generation implementation
-- `validator/`: Detailed validation rules
+- `manager.go`: Certificate lifecycle management (issue, load, rotation)
+- `generator.go`: CA + peer certificate generation
+- `locator.go`: Certificate discovery and path resolution
+- `generator/`: Certificate generation implementation (`generator.go`)
+- Tests: `manager_test.go`, `manager_filelog_test.go`
 
 ### Network Adapters (`internal/adapter/`)
-- `interface.go`: Common adapter interface
+- `interface.go`: Common adapter interface and types
 - `interface_linux.go`: Linux TUN implementation
-- `interface_darwin.go`: macOS network extension
-- `interface_windows.go`: Windows TAP adapter
+- `interface_darwin.go`: macOS implementation
+- `interface_windows.go`: Windows implementation
+- `interface_default.go`: Fallback/no-op implementation
+- `types.go`: Adapter type definitions
+- Tests: `interface_linux_integration_test.go`
 
-### Monitoring System (`internal/monitor/`)
-- `monitor.go`: Core monitoring functionality
+### Monitoring (`internal/monitor/`)
+- `monitor.go`: Core monitoring loop
 - `metrics.go`: Performance metrics collection
-- `logging.go`: Structured logging
-- `snmp.go`: SNMP integration
+- `snmp.go`: SNMP integration and handlers
+- `snmp_wire.go`: SNMP wire encoding/decoding
 - `mib.go`: SNMP MIB definitions
-- `snmp_message.go`: SNMP message handling
-- `snmp_asn1.go`: ASN.1 encoding/decoding
+- `system_metrics.go`: OS-level metrics collection
+- Tests: `monitor_test.go`, `snmp_conformance_test.go`
 
 ### Rate Limiting (`internal/throttle/`)
-- `limiter.go`: Rate limiting implementation
+- `limiter.go`: Rate limiting API
 - `token_bucket.go`: Token bucket algorithm
-- `io.go`: I/O rate control
-- `limiter_test.go`: Rate limiting tests
-
-### Connection Management (`internal/connection/`)
-- `manager.go`: Connection lifecycle
-- `manager_test.go`: Connection tests
+- `constants.go`: Shared throttle constants
+- Tests: `limiter_test.go`, `token_bucket_internal_test.go`
 
 ### Configuration (`internal/config/`)
-- `types.go`: Configuration structures
-- `loader.go`: Configuration loading
+- `config.go`: Manager factory, loader helpers, package entry points
+- `model_types.go`: Configuration data structures (`AppConfig`, section types)
+- `ifaces.go`: Core interfaces (`ConfigStore`, `ConfigValidator`, `ConfigManager`)
+- `filestore.go`: File-based `ConfigStore` implementation
+- `mgr.go`: `ConfigManager` implementation
+- `validation.go`: Configuration validation
+- `loader.go`: Configuration file loading and upgrade
+- Tests: `config_test.go`
 
-### Command Line Interface (`cmd/daemon/` -- unified binary)
+### HTTPS Facade (`internal/facade/`)
+- `server.go`: Facade server (disguises tunnel traffic)
+- `client.go`: Facade client
+- `proxy.go`: Bidirectional proxy copier
+- `token.go`: Token handling
+- Tests: `server_test.go`, `client_test.go`, `token_test.go`
+
+### Provisioning (`internal/provision/`)
+- `bundle.go`: `.ssp` bundle sealing/opening and KDF
+- `code.go`: Pairing-code generation and normalization
+- `redeem.go`: Redemption HTTPS server (`--serve`)
+- `csr.go`: CSR generation and signing
+- `paths.go`: Platform cert-directory defaults and key hardening
+- `tty_unix.go`, `tty_windows.go`: Secret entry with TTY enforcement
+- `acl_unix.go`, `acl_windows.go`: Platform ACL application
+- Tests: `bundle_test.go`, `redeem_test.go`
+
+## Command Line (`cmd/daemon/` — unified binary)
 - `main.go`: Entry point and flag handling
-- `server.go`: Server mode implementation
-- `client.go`: Client mode implementation
+- `provision.go`: `provision` subcommand (create/apply/verify)
+- `reload.go`: Live reload of rate/log settings
+- `logging.go`: Logging setup
+- Tests: `reload_test.go`
 
-## Test Suite
-
-### Integration Tests (`test/`)
-- `test_temp_certs.sh`: Certificate testing
+## Tests & Scripts (`test/`)
+- `run_cert_tests.sh`: Test suite runner
 - `test_cert_generation.sh`: Certificate generation tests
+- `test_temp_certs.sh`: Temporary certificate testing
 - `transfer_certs.sh`: Certificate transfer tests
-- `run_cert_tests.sh`: Certificate test suite runner
 - `test_results.md`: Test results documentation
+- `qa_scripts/`: QA test scripts
 
-### Unit Tests
-- Comprehensive test coverage across all packages
-- Mock implementations for testing
-- Performance benchmarks
-- Error condition testing
+## Configuration (`configs/`)
+- `server.yaml`: Server configuration template
+- `client.yaml`: Client configuration template
+
+## Installers (`installers/`)
+- `windows.nsi`: Windows installer script
+- `linux/`, `macos/`, `windows/`: Platform installer assets
 
 ## Documentation
-
-### User Documentation
-- `README.md`: Project overview and quick start
-- `docs/installation.md`: Installation instructions
-- `docs/certificate_management.md`: Certificate guide
-- `docs/project_context.md`: Project overview
-- `docs/code_structure_snapshot.md`: Code organization
-- `docs/RELEASE_NOTES.md`: Version history
-
-### Platform-specific Guides
-- `docs/linux_install.md`: Linux setup
-- `docs/macos_build.md`: macOS build guide
-- `docs/windows_install.md`: Windows setup
-- `docs/ubuntu_install.md`: Ubuntu-specific guide
-
-### Development Documentation
-- `docs/virtualbox_testing.md`: Testing environment
-- `docs/ai_context_restoration.md`: Development history
-- `docs/ai_recovery_prompt.md`: Recovery procedures
-
-## Build System
-
-### Build Configuration
-- `Makefile`: Build automation
-- `go.mod`: Go module definition
-- `configs/`: Configuration templates
-  * `server.yaml`: Server configuration
-  * `client.yaml`: Client configuration
-
-### Installation
-- `installers/`: Platform installers
-  * `windows.nsi`: Windows installer script
-
-## Recent Improvements
-
-### Tunnel Optimizations
-- Enhanced EOF handling in data transfer
-- Improved buffer management
-- Added retry mechanisms
-- Optimized chunked transfers
-- Better error recovery
-
-### Monitoring Enhancements
-- More detailed metrics collection
-- Improved error tracking
-- Enhanced SNMP integration
-- Better performance analysis
-
-### Testing Improvements
-- Extended test coverage
-- More comprehensive error testing
-- Better mock implementations
-- Enhanced performance benchmarks
+- `docs/provisioning_guide.md`: Walkthrough for `provision` (create/apply/verify)
+- `docs/configuration_guide.md`: Full configuration reference
+- `docs/certificate_management.md`: Certificate chain and permissions
+- `docs/snmp_monitoring.md`: SNMP and metrics
+- `docs/rate_limiting_implementation.md`: Rate limiting details
+- See `docs/README.md` for the complete index.

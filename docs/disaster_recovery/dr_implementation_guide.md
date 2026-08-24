@@ -5,8 +5,13 @@ This document details how the disaster recovery system was created, serving as a
 ## Implementation Process
 
 ### 1. Documentation Structure Creation
+
+> This command is a **historical record** of how the DR directory structure
+> was originally created. You do not need to run it — the directories already
+> exist (this document lives inside them). It is shown only for context.
+
 ```bash
-# Create directory structure
+# Create directory structure (historical; already exists)
 mkdir -p docs/disaster_recovery/{project,backups/{source,configs,tests,qa_data},scripts}
 ```
 
@@ -143,7 +148,7 @@ chmod +x backup.sh restore.sh validate.sh
 
 ### Creating Full Backup
 ```bash
-cd /home/sblanken/Desktop/go/src/github.com/o3willard-AI/SSSonector
+cd /home/sblanken/workspace/SSSonector
 ./docs/disaster_recovery/scripts/backup.sh
 ```
 
