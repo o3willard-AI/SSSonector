@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/o3willard-AI/SSSonector/internal/cert/generator"
+	"github.com/o3willard-AI/SSSonector/internal/config"
 	"github.com/o3willard-AI/SSSonector/internal/provision"
 )
 
@@ -199,6 +200,8 @@ func provisionApply(args []string) error {
 		dir      = fs.String("certs-dir", provision.DefaultCertsDir(), "target certificate directory")
 		force    = fs.Bool("force", false, "overwrite existing files")
 		skipConf = fs.Bool("yes", false, "skip fingerprint confirmation prompt (automation)")
+		csrMode  = fs.Bool("csr", false, "URL source only: generate the key locally and submit a CSR; server signs without ever seeing the key")
+		csrName  = fs.String("csr-cn", "", "CommonName for the CSR (defaults to hostname)")
 	)
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -206,6 +209,10 @@ func provisionApply(args []string) error {
 	if *from == "" || fs.NArg() > 0 {
 		return fmt.Errorf("--from <path> is required")
 	}
+	if *csrMode {
+		return provisionApplyCSR(*from, *dir, *force, *skipConf, *csrName)
+	}
+
 	var bundle []byte
 	var readErr error
 	switch {
@@ -356,25 +363,34 @@ func renderConfigSkeleton(p *provision.PairingPayload) string {
 	return b.String()
 }
 
-// provisionVerify implements T7: expiry / chain / optional expected-fingerprint.
+// provisionVerify implements T7: expiry, chain-vs-CA, optional expected
+// fingerprint (constant-time compare), and rotation-due reporting wired to
+// cert_rotation config when a config file is supplied.
 func provisionVerify(args []string) error {
 	fs := flag.NewFlagSet("provision verify", flag.ExitOnError)
 	var (
 		dir      = fs.String("certs-dir", provision.DefaultCertsDir(), "certificate directory to verify")
 		expectFP = fs.String("expect-fingerprint", "", "fail unless the CA fingerprint equals this SHA-256 hex digest")
 		rotateIn = fs.Duration("rotation-within", 30*24*time.Hour, "warn when expiry falls within this window")
+		cfgPath  = fs.String("config", "", "optional config.yaml; sources cert_rotation.interval as the warn window")
 	)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if *cfgPath != "" {
+		if cfg, err := config.LoadConfigFile(*cfgPath); err == nil && cfg.Config != nil &&
+			cfg.Config.Auth.CertRotation.Interval > 0 {
+			*rotateIn = cfg.Config.Auth.CertRotation.Interval
+		}
+	}
+
+	status := 0
 
 	caPEM, err := os.ReadFile(filepath.Join(*dir, "ca.crt"))
 	if err != nil {
 		return fmt.Errorf("read CA: %w", err)
 	}
 	fp := provision.Fingerprint(caPEM)
-	status := 0
-
 	if *expectFP != "" {
 		if provision.CodesMatch(strings.ToLower(*expectFP), fp) {
 			fmt.Printf("fingerprint:  MATCH    %s\n", fp)
@@ -386,38 +402,63 @@ func provisionVerify(args []string) error {
 		fmt.Printf("fingerprint:  %s\n", fp)
 	}
 
-	checkOne := func(file string) {
-		data, err := os.ReadFile(filepath.Join(*dir, file))
-		if err != nil {
-			fmt.Printf("%-12s MISSING (%v)\n", file, err)
+	block, _ := pem.Decode(caPEM)
+	if block == nil {
+		return fmt.Errorf("CA file unparseable")
+	}
+	caCert, err := x509ParseBlock(block)
+	if err != nil {
+		return fmt.Errorf("CA parse: %w", err)
+	}
+	pool := x509.NewCertPool()
+	pool.AddCert(caCert)
+
+	checkLeaf := func(file string, isCA bool) {
+		data, rerr := os.ReadFile(filepath.Join(*dir, file))
+		if rerr != nil {
+			fmt.Printf("%-12s MISSING (%v)\n", file, rerr)
 			status = 1
 			return
 		}
-		block, _ := pem.Decode(data)
-		if block == nil {
+		lblock, _ := pem.Decode(data)
+		if lblock == nil {
 			fmt.Printf("%-12s UNPARSEABLE PEM\n", file)
 			status = 1
 			return
 		}
-		crt, err := x509ParseBlock(block)
-		if err != nil {
-			fmt.Printf("%-12s PARSE ERROR: %v\n", file, err)
+		crt, perr := x509ParseBlock(lblock)
+		if perr != nil {
+			fmt.Printf("%-12s PARSE ERROR: %v\n", file, perr)
 			status = 1
 			return
 		}
+
+		verifyOpts := x509.VerifyOptions{
+			Roots:     pool,
+			KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
+		}
+		if _, verr := crt.Verify(verifyOpts); verr != nil {
+			fmt.Printf("%-12s CHAIN FAIL: %v\n", file, verr)
+			status = 1
+			return
+		}
+
 		days := int(time.Until(crt.NotAfter).Hours() / 24)
 		state := "ok"
-		if time.Now().After(crt.NotAfter) {
+		switch {
+		case time.Now().After(crt.NotAfter):
 			state = "EXPIRED"
 			status = 1
-		} else if days <= int((*rotateIn).Hours()/24) {
-			state = fmt.Sprintf("ROTATION-DUE (<%dd)", int((*rotateIn).Hours()/24)+1)
+		case days <= int((*rotateIn).Hours()/24)+1:
+			state = fmt.Sprintf("ROTATION-DUE (<%dd)", days+1)
 		}
-		fmt.Printf("%-12s expires %-12s (%3dd) [%s] CN=%s\n", file, crt.NotAfter.UTC().Format("2006-01-02"), days, state, crt.Subject.CommonName)
+		fmt.Printf("%-12s expires %s (%3dd) [%s] CN=%s\n",
+			file, crt.NotAfter.UTC().Format("2006-01-02"), days, state, crt.Subject.CommonName)
 	}
-	checkOne("ca.crt")
-	checkOne("server.crt")
-	checkOne("client.crt")
+
+	checkLeaf("ca.crt", true)
+	checkLeaf("server.crt", false)
+	checkLeaf("client.crt", false)
 
 	if status != 0 {
 		return fmt.Errorf("verification reported problems above")
@@ -435,3 +476,81 @@ func x509ParseBlock(block *pem.Block) (*x509.Certificate, error) {
 }
 
 var _ = json.Marshal // reserved for Phase 2 redemption payloads
+
+// provisionApplyCSR implements T6: the private key is generated locally;
+// only the CSR travels. The server signs it and returns leaf + CA PEM.
+// The pairing code authenticates exactly like bundle redemption.
+func provisionApplyCSR(from, dir string, force bool, skipConf bool, cn string) error {
+	if !strings.HasPrefix(from, "https://") && !strings.HasPrefix(from, "http://") {
+		return fmt.Errorf("--csr requires an https redemption URL")
+	}
+	if !provision.IsStdinTerminal() {
+		return fmt.Errorf("%w: CSR enrollment needs interactive code entry", provision.ErrNotTerminal)
+	}
+	codeRaw, err := provision.PromptHidden("Enter pairing code: ")
+	if err != nil {
+		return err
+	}
+	code, err := provision.NormalizePairingCode(codeRaw)
+	if err != nil {
+		return err
+	}
+	if cn == "" {
+		host, _ := os.Hostname()
+		cn = host
+	}
+
+	keyPath := filepath.Join(dir, "client.key")
+	if _, err := os.Stat(keyPath); err == nil && !force {
+		return fmt.Errorf("refusing to overwrite existing %s (use --force)", keyPath)
+	}
+	csrPEM, err := provision.GenerateKeyAndCSR(dir, cn)
+	if err != nil {
+		return err
+	}
+
+	tr := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}} // #nosec G402 -- AEAD/code-authenticated exchange; see design doc
+	cl := &http.Client{Timeout: 30 * time.Second, Transport: tr}
+	req, rerr := http.NewRequest(http.MethodPost, strings.TrimSuffix(from, "/pair/"+code)+"/pair-csr/"+code, strings.NewReader(csrPEM))
+	if rerr != nil {
+		return rerr
+	}
+	req.Header.Set("Content-Type", "application/x-pem-file")
+
+	resp, gerr := cl.Do(req)
+	if gerr != nil {
+		return fmt.Errorf("submit CSR: %w", gerr)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	switch resp.StatusCode {
+	case http.StatusOK:
+	case http.StatusForbidden:
+		return fmt.Errorf("signing rejected: invalid pairing code")
+	case http.StatusTooManyRequests:
+		return fmt.Errorf("rate limited; retry later")
+	case http.StatusGone:
+		return fmt.Errorf("enrollment already redeemed or expired")
+	default:
+		return fmt.Errorf("signing failed: HTTP %d", resp.StatusCode)
+	}
+
+	leafPEM, caPEM, err := provision.SplitLeafAndCA(body)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return err
+	}
+	// #nosec G306 -- certificates are public material; 0644 is conventional
+	if werr := os.WriteFile(filepath.Join(dir, "client.crt"), []byte(leafPEM), 0o644); werr != nil {
+		return werr
+	}
+	// #nosec G306 -- CA certificate is public material; 0644 is conventional
+	if werr := os.WriteFile(filepath.Join(dir, "ca.crt"), []byte(caPEM), 0o644); werr != nil {
+		return werr
+	}
+	fmt.Printf("client certificate installed: %s\n", filepath.Join(dir, "client.crt"))
+	fmt.Println("Key never left this machine. Complete config.yaml auth paths if needed.")
+	return nil
+}

@@ -107,6 +107,25 @@ config:
 See the [Configuration Guide](configuration_guide.md) for monitoring,
 throttle, facade, and hot-reload options.
 
+
+## Provisioning Quick Start (PowerShell)
+
+Enroll a client without manual certificate handling:
+
+```powershell
+.\sssonector.exe provision apply --from .\office-a.ssp
+# Enter the pairing code when prompted, confirm the CA fingerprint.
+```
+
+Server side generates the bundle:
+```powershell
+.\sssonector.exe provision create --role client --name office `
+    --server-addr vpn.example.com --server-port 18443 --out office.ssp
+```
+
+Certificates install to %ProgramData%\SSSonector\certs with owner-only ACLs.
+See docs/certificate_management.md for network redemption and CSR mode.
+
 ## Windows Service Setup
 
 1. Create service using PowerShell:

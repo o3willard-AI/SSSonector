@@ -5,8 +5,11 @@ import (
 	"crypto/subtle"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +26,7 @@ type RedemptionServer struct {
 	bundle      []byte
 	code        string // normalized
 	ttl         time.Duration
+	caDir       string // enables CSR signing when non-empty
 	consumeOnce sync.Once
 	done        chan struct{} // closed when bundle delivered OR ttl expired
 	srv         *http.Server
@@ -79,6 +83,9 @@ func (r *RedemptionServer) ServeTLS(ctx context.Context, certFile, keyFile strin
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/pair/", r.handlePair)
+	if r.caDir != "" {
+		mux.HandleFunc("/pair-csr/", r.handlePairCSR)
+	}
 
 	r.srv = &http.Server{
 		Handler:           mux,
@@ -163,3 +170,53 @@ func (r *RedemptionServer) markConsumed() bool {
 		return false
 	}
 }
+
+// handlePairCSR signs a client-submitted CSR after code authentication.
+// Request: POST /pair-csr/<code>, body = PEM CERTIFICATE REQUEST.
+// Response: 200 body = leaf PEM followed by CA PEM. Single consumption and
+// rate limiting match the bundle endpoint.
+func (r *RedemptionServer) handlePairCSR(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	codeParam := strings.TrimPrefix(req.URL.Path, "/pair-csr/")
+	clientIP, _, _ := net.SplitHostPort(req.RemoteAddr)
+
+	if !r.allowAttempt(clientIP) {
+		http.Error(w, "too many attempts", http.StatusTooManyRequests)
+		return
+	}
+	submitted, err := NormalizePairingCode(codeParam)
+	if err != nil || subtle.ConstantTimeCompare([]byte(submitted), []byte(r.code)) != 1 {
+		http.Error(w, "invalid code", http.StatusForbidden)
+		return
+	}
+	if r.markConsumed() {
+		http.Error(w, "already redeemed", http.StatusGone)
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(req.Body, 16<<10))
+	if err != nil {
+		http.Error(w, "read error", http.StatusBadRequest)
+		return
+	}
+	leaf, err := SignCSR(string(body), r.caDir, 0)
+	if err != nil {
+		http.Error(w, "sign failed", http.StatusBadRequest)
+		return
+	}
+	caPEM, rerr := os.ReadFile(filepath.Join(r.caDir, "ca.crt"))
+	if rerr != nil {
+		http.Error(w, "CA unavailable", http.StatusInternalServerError)
+		return
+	}
+	close(r.done)
+	w.Header().Set("Content-Type", "application/x-pem-file")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write([]byte(leaf + "\n" + string(caPEM)))
+}
+
+// EnableCSRSigning activates the /pair-csr endpoint backed by caDir.
+func (r *RedemptionServer) EnableCSRSigning(caDir string) { r.caDir = caDir }

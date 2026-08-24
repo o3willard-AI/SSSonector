@@ -2,262 +2,117 @@
 
 ## Overview
 
-SSSonector uses X.509 certificates for secure authentication and encryption. This guide covers certificate management features, including generation, validation, and rotation.
+SSSonector uses mutual X.509 certificates (client + server, anchored by a
+local CA) for authentication and encryption. All certificate lifecycle
+operations are handled through the `provision` subcommands of the daemon:
 
-## Command Line Flags
-
-SSSonector provides five key certificate management flags:
-
-1. `-test-without-certs`: Run with temporary certificates
-   - Generates ephemeral certificates for testing
-   - Not suitable for production use
-   - Certificates are automatically cleaned up
-
-2. `-generate-certs-only`: Generate certificates without starting service
-   - Creates production-grade certificates
-   - Useful for pre-deployment setup
-   - Generates both client and server certificates
-
-3. `-keyfile`: Specify certificate directory
-   - Custom location for certificate storage
-   - Supports both relative and absolute paths
-   - Default: `/etc/sssonector/certs`
-
-4. `-keygen`: Generate production certificates
-   - Creates long-lived production certificates
-   - Includes full certificate chain
-   - Configurable key sizes and algorithms
-
-5. `-validate-certs`: Validate existing certificates
-   - Checks certificate validity
-   - Verifies certificate chain
-   - Reports expiration status
-
-## Certificate Structure
-
-### Directory Layout
 ```
-/etc/sssonector/certs/
-├── ca/
-│   ├── ca.crt
-│   └── ca.key
-├── server/
-│   ├── server.crt
-│   └── server.key
-└── client/
-    ├── client.crt
-    └── client.key
+sssonector provision create|apply|verify [flags]
 ```
 
-### File Permissions
-```bash
-# CA certificates
-ca.crt: 644 (rw-r--r--)
-ca.key: 600 (rw-------)
+There are no certificate-related flags on the main daemon. Older guides
+referencing `-keygen`, `-validate-certs`, `-generate-certs-only`, `-keyfile`
+or `-test-without-certs` describe a surface that never shipped; this page is
+the authoritative replacement.
 
-# Server certificates
-server.crt: 644 (rw-r--r--)
-server.key: 600 (rw-------)
+## Quick Start (server -> client)
 
-# Client certificates
-client.crt: 644 (rw-r--r--)
-client.key: 600 (rw-------)
-```
-
-## Certificate Generation
-
-### Production Certificates
-```bash
-# Generate complete certificate set
-sssonector -keygen
-
-# Specify custom options
-sssonector -keygen \
-  -key-type rsa \
-  -key-size 4096 \
-  -days 365 \
-  -country "US" \
-  -org "Example Corp"
-```
-
-### Testing Certificates
-```bash
-# Generate temporary certificates
-sssonector -test-without-certs
-
-# Generate test certificates without starting service
-sssonector -generate-certs-only -test
-```
-
-### Custom Location
-```bash
-# Generate certificates in custom location
-sssonector -keygen -keyfile /path/to/certs
-
-# Use existing certificates from custom location
-sssonector -keyfile /path/to/certs
-```
-
-## Certificate Validation
-
-### Basic Validation
-```bash
-# Validate all certificates
-sssonector -validate-certs
-
-# Validate specific certificate
-sssonector -validate-certs -cert /path/to/cert.crt
-```
-
-### Detailed Validation
-```bash
-# Show detailed validation information
-sssonector -validate-certs -verbose
-
-# Check certificate chain
-sssonector -validate-certs -check-chain
-
-# Verify against CA
-sssonector -validate-certs -ca /path/to/ca.crt
-```
-
-## Certificate Rotation
-
-### Automatic Rotation
-The certificate manager now supports automatic certificate rotation:
-
-```yaml
-certificates:
-  auto_rotate: true
-  rotation_threshold_days: 30
-  backup_enabled: true
-  backup_location: "/etc/sssonector/certs/backup"
-```
-
-### Manual Rotation
-```bash
-# Rotate all certificates
-sssonector -rotate-certs
-
-# Rotate specific certificate
-sssonector -rotate-cert -cert server
-```
-
-## Monitoring
-
-### Certificate Status
-```bash
-# View certificate status
-sssonector -cert-status
-
-# Monitor expiration
-sssonector -cert-monitor
-```
-
-### Metrics
-The monitoring system now includes certificate-related metrics:
-
-```yaml
-monitor:
-  cert_metrics:
-    enabled: true
-    check_interval: 3600
-    alert_threshold_days: 30
-```
-
-## Security Considerations
-
-### Key Protection
-- Use secure permissions (600 for private keys)
-- Store keys in secure location
-- Use hardware security modules when available
-
-### Certificate Policies
-- Regular rotation (recommended: 1 year)
-- Strong key sizes (RSA 4096, ECC P-384)
-- Proper chain of trust
-
-### Best Practices
-1. Regular validation checks
-2. Automated rotation
-3. Secure backup storage
-4. Audit logging
-5. Access control
-
-## Troubleshooting
-
-### Common Issues
-
-1. Certificate Validation Failures
-   ```bash
-   # Check certificate validity
-   openssl verify -CAfile ca.crt cert.crt
-   
-   # View certificate details
-   openssl x509 -in cert.crt -text -noout
-   ```
-
-2. Permission Problems
-   ```bash
-   # Fix permissions
-   chmod 600 private.key
-   chmod 644 public.crt
-   ```
-
-3. Chain Issues
-   ```bash
-   # Verify chain
-   openssl verify -verbose -CAfile ca.crt -untrusted intermediate.crt cert.crt
-   ```
-
-### Logging
-Enhanced certificate-related logging is available:
+On the **server** host:
 
 ```bash
-# Enable certificate debugging
-sssonector -log-level debug -cert-debug
-
-# View certificate operations
-tail -f /var/log/sssonector/cert.log
+# First run creates CA + server pair under /etc/sssonector/certs,
+# then mints a unique client certificate and wraps an encrypted bundle:
+echo "<high-entropy-secret>" > /etc/sssonector/token_secret
+sssonector provision create --role client \
+    --name office-a \
+    --server-addr vpn.example.com --server-port 18443 \
+    --out office-a.ssp
+# prints:
+#   pairing code:   XXXX-XXXX
+#   CA fingerprint: <sha256-hex>
 ```
 
-## Integration
+Share the **pairing code out-of-band** (voice/SMS). The `.ssp` file itself
+may travel by any transport — scp, USB, HTTP — because it is sealed with
+XChaCha20-Poly1305 under a key derived from the pairing code.
 
-### SNMP Monitoring
-Certificate status is now available via SNMP:
+On the **client** host:
 
 ```bash
-# Query certificate status
-snmpwalk -v2c -c public localhost .1.3.6.1.4.1.X.cert
-
-# Monitor expiration
-snmpget -v2c -c public localhost .1.3.6.1.4.1.X.cert.expiry
+sssonector provision apply --from office-a.ssp
+# prompts for the pairing code (hidden entry),
+# shows role/server/fingerprint, asks for confirmation,
+# installs ca.crt + client.crt + client.key (0600) and a config skeleton.
 ```
 
-### Metrics Integration
-Certificate metrics are exposed for monitoring systems:
+## Network Redemption
+
+Skip the manual file move entirely:
 
 ```bash
-# Prometheus metrics
-cert_expiry_days{cert="server"} 180
-cert_validation_status{cert="client"} 1
+# Server: serve instead of writing a file (Ctrl+C or redemption ends it)
+sssonector provision create --role client --name office-a \
+    --server-addr vpn.example.com --server-port 18443 --serve
+
+# Client: redeem over the network
+sssonector provision apply --from https://vpn.example.com:9443/pair/XXXX-XXXX
 ```
 
-## Backup and Recovery
+- The endpoint is **single-consumption**: one successful redemption per
+  pairing code; afterwards it answers 410 Gone.
+- Default TTL is 15 minutes (`--serve-ttl`).
+- Redemption attempts are rate limited per client IP (429 on excess).
+- TLS certificate warnings during redemption are expected — authenticity
+  comes from the AEAD envelope, not the transport.
 
-### Backup Procedures
+## CSR Mode (recommended default)
+
+For deployments where the private key should never leave the client machine:
+
 ```bash
-# Backup certificates
-sssonector -backup-certs
+# Client: generate key locally, submit CSR
+sssonector provision apply --from https://vpn.example.com:9443/pair/XXXX-XXXX --csr
 
-# Restore from backup
-sssonector -restore-certs -backup backup.tar.gz
+# Server side must have been started with CSR signing enabled; see design doc.
 ```
 
-### Emergency Recovery
-```bash
-# Generate emergency certificates
-sssonector -emergency-certs
+The key is generated locally with restrictive permissions and never
+transmitted. The server signs the submitted CSR using the CA and returns the
+leaf certificate plus the CA certificate. Once shipped, this is the documented
+default; encrypted-bundle mode remains available for headless/automation
+flows where generating keys locally is impractical.
 
-# Restore from last known good
-sssonector -restore-last-good
+## Verification
+
+```bash
+# Full check: parse, chain-vs-CA, expiry with rotation window
+sssonector provision verify
+
+# Pin expectations (e.g., compare against fingerprint from the operator)
+sssonector provision verify --expect-fingerprint <sha256-hex>
+
+# Source the rotation warning window from config
+sssonector provision verify --config /etc/sssonector/config.yaml
+```
+
+Exit code is non-zero when any certificate is expired, unparseable, fails
+chain validation, or mismatches `--expect-fingerprint`.
+
+## Rotation
+
+Certificates are issued with a 180-day validity; the CA lasts one year.
+`cert_rotation.enabled` plus `auth.cert_rotation.interval` in the config
+control the background check cadence, and `provision verify` reports
+`ROTATION-DUE` when expiry falls inside the configured interval. Re-run
+`provision create --role client` to issue fresh material for a device, or
+`apply --csr` flows once CSR signing is enabled server-side.
+
+## File Locations & Permissions
+
+| Platform | Directory | Key perms |
+|---|---|---|
+| Linux | `/etc/sssonector/certs` | 0600 via chmod |
+| macOS | `/Library/Application Support/sssonector/certs` | 0600 |
+| Windows | `%ProgramData%\SSSonector\certs` | Owner/Administrators/SYSTEM ACL |
+
+`provision apply` refuses to overwrite existing files without `--force`.

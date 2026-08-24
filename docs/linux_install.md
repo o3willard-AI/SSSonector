@@ -150,6 +150,28 @@ throttle:
 See the [Configuration Guide](configuration_guide.md) for monitoring,
 SNMP, Prometheus, facade, and hot-reload options.
 
+
+## Provisioning Quick Start
+
+Enroll a client without manual openssl/file-copy work.
+
+Server side (owns CA + token secret):
+```bash
+echo "<high-entropy-secret>" > /etc/sssonector/token_secret
+sssonector provision create --role client --name office-a \
+    --server-addr vpn.example.com --server-port 18443 --out office-a.ssp
+# Note the printed pairing code and CA fingerprint.
+```
+
+Client side:
+```bash
+sssonector provision apply --from office-a.ssp
+# Enter the pairing code when prompted, confirm the CA fingerprint, done.
+```
+
+See docs/certificate_management.md for network redemption (--serve),
+CSR mode (key never leaves the client), and verification.
+
 ## Systemd Service Setup
 
 1. Create service file:

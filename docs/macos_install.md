@@ -291,3 +291,15 @@ EOL
    - Partial SNMP implementation
    - Limited system metrics availability
    - DTrace probe limitations
+
+## Provisioning Quick Start
+
+```bash
+echo "<high-entropy-secret>" > /etc/sssonector/token_secret   # server side
+sssonector provision create --role client --server-addr vpn.example.com \
+    --server-port 18443 --out office-a.ssp
+sssonector provision apply --from office-a.ssp                 # client side
+```
+
+See docs/certificate_management.md for network redemption and CSR mode.
+
