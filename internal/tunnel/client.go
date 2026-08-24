@@ -32,6 +32,7 @@ type Client struct {
 	wg           sync.WaitGroup
 	reconnect    bool
 	rng          *rand.Rand
+	giveUp       chan struct{}
 
 	mu              sync.Mutex
 	currentTransfer *Transfer
@@ -81,7 +82,8 @@ func NewClient(cfg *config.AppConfig, manager config.ConfigManager, logger *zap.
 		tlsManager: tlsManager,
 		reconnect:  true,
 		// #nosec G404 -- jitter timing is not security-sensitive
-		rng: rand.New(rand.NewSource(time.Now().UnixNano())),
+		rng:    rand.New(rand.NewSource(time.Now().UnixNano())),
+		giveUp: make(chan struct{}),
 	}
 
 	// Initialize facade client if enabled
@@ -142,6 +144,13 @@ func (c *Client) Start() error {
 	c.startMetricsSampler()
 
 	return nil
+}
+
+// GiveUpChan is closed when the reconnect schedule is exhausted. Callers
+// (the daemon main) should treat this as a fatal condition and exit
+// non-zero so a service manager restarts the unit.
+func (c *Client) GiveUpChan() <-chan struct{} {
+	return c.giveUp
 }
 
 // startMetricsSampler periodically publishes tunnel counters to the monitor
@@ -230,6 +239,7 @@ func (c *Client) connectLoop() {
 				c.logger.Error("Max retries exceeded, stopping reconnection",
 					zap.Int("attempts", retryCount),
 					zap.Error(err))
+				close(c.giveUp)
 				return
 			}
 

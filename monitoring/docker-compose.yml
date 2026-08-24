@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v3.14.0
     container_name: SSSonector-prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
@@ -11,6 +11,9 @@ services:
       - '--web.console.templates=/usr/share/prometheus/consoles'
     extra_hosts:
       - 'host.docker.internal:host-gateway'
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
     ports:
       - "9090:9090"
     volumes:
@@ -21,7 +24,10 @@ services:
       - monitoring
 
   snmp-exporter:
-    image: prom/snmp-exporter:latest
+    image: prom/snmp-exporter:v0.30.1
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
     container_name: SSSonector-snmp-exporter
     ports:
       - "9116:9116"
@@ -32,7 +38,9 @@ services:
       - monitoring
 
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:13.1.4
+    security_opt:
+      - no-new-privileges:true
     container_name: SSSonector-grafana
     ports:
       - "3000:3000"

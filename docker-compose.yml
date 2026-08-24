@@ -5,12 +5,14 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: sssonector:latest
+    image: sssonector:local
     container_name: sssonector
     restart: unless-stopped
     cap_add:
       - NET_ADMIN
       - NET_RAW
+    security_opt:
+      - no-new-privileges:true
     devices:
       - /dev/net/tun:/dev/net/tun
     volumes:
@@ -34,7 +36,10 @@ services:
         max-file: "3"
 
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v3.14.0
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
     container_name: sssonector-prometheus
     restart: unless-stopped
     volumes:
@@ -53,7 +58,9 @@ services:
       - sssonector
 
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:13.1.4
+    security_opt:
+      - no-new-privileges:true
     container_name: sssonector-grafana
     restart: unless-stopped
     volumes:

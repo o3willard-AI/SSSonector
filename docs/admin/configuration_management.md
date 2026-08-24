@@ -257,6 +257,10 @@ grep "configuration" /var/log/sssonector/audit.log
 
 ## Automation Examples
 
+The scripts below are **illustrative examples** — they are not shipped with
+the repository. Create them in your own tooling directory if you want this
+behavior, adapting paths and thresholds to your environment.
+
 ### 1. Monitoring Script
 
 ```bash

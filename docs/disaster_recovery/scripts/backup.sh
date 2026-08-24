@@ -126,13 +126,13 @@ verify_backup() {
     if [ ! -d "${BACKUP_DIR}/configs" ]; then
         error "Configuration backup verification failed"
         return 1
-    }
+    fi
     
     # Check test data
     if [ ! -d "${BACKUP_DIR}/tests" ]; then
         error "Test data backup verification failed"
         return 1
-    }
+    fi
     
     log "Backup verification completed successfully"
 }

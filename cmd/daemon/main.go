@@ -237,8 +237,25 @@ func main() {
 
 	errChan := make(chan error, 1)
 	go func() {
-		errChan <- tnl.Start()
+		// Start returns nil once its workers are running; only a real
+		// failure wakes the shutdown path. A nil would otherwise make the
+		// daemon exit cleanly the instant it finished starting.
+		if err := tnl.Start(); err != nil {
+			errChan <- err
+		}
 	}()
+
+	// A client that exhausts its reconnect schedule is fatal: surface it as
+	// a non-zero exit so Restart=on-failure revives the unit.
+	if c, ok := tnl.(*tunnel.Client); ok {
+		go func() {
+			select {
+			case <-c.GiveUpChan():
+				errChan <- fmt.Errorf("reconnect attempts exhausted")
+			case <-sigChan:
+			}
+		}()
+	}
 
 	logger.Info("Service started",
 		zap.String("version", Version),
@@ -246,12 +263,14 @@ func main() {
 		zap.String("mode", mode),
 	)
 
+	exitCode := 0
 	select {
 	case sig := <-sigChan:
 		logger.Info("Received signal", zap.String("signal", sig.String()))
 	case err := <-errChan:
 		if err != nil {
 			logger.Error("Service error", zap.Error(err))
+			exitCode = 1
 		}
 	}
 
@@ -260,4 +279,8 @@ func main() {
 	}
 
 	logger.Info("Service stopped")
+	_ = logger.Sync()
+	if exitCode != 0 {
+		os.Exit(exitCode)
+	}
 }

@@ -50,14 +50,14 @@ build-linux: build-linux-amd64 build-linux-arm64
 build-linux-amd64: prepare
 	GOOS=linux GOARCH=amd64 ${GO_BUILD} -o ${BUILD_DIR}/linux/amd64/${BINARY_NAME} ./cmd/daemon
 	cp init/systemd/sssonector.service ${BUILD_DIR}/linux/amd64/
-	cp scripts/install.sh ${BUILD_DIR}/linux/amd64/
+	cp scripts/install-from-source.sh ${BUILD_DIR}/linux/amd64/
 	tar czf ${BUILD_DIR}/packages/${BINARY_NAME}-${VERSION}-linux-amd64.tar.gz -C ${BUILD_DIR}/linux/amd64 .
 
 .PHONY: build-linux-arm64
 build-linux-arm64: prepare
 	GOOS=linux GOARCH=arm64 ${GO_BUILD} -o ${BUILD_DIR}/linux/arm64/${BINARY_NAME} ./cmd/daemon
 	cp init/systemd/sssonector.service ${BUILD_DIR}/linux/arm64/
-	cp scripts/install.sh ${BUILD_DIR}/linux/arm64/
+	cp scripts/install-from-source.sh ${BUILD_DIR}/linux/arm64/
 	tar czf ${BUILD_DIR}/packages/${BINARY_NAME}-${VERSION}-linux-arm64.tar.gz -C ${BUILD_DIR}/linux/arm64 .
 
 # Windows builds
@@ -162,6 +162,19 @@ release: build build-security docs
 	cp LICENSE ${BUILD_DIR}/
 	cp CHANGELOG.md ${BUILD_DIR}/
 	tar czf ${BUILD_DIR}/${BINARY_NAME}-${VERSION}-release.tar.gz -C ${BUILD_DIR} .
+
+# Install from a locally built package (Linux). Delegates to scripts/install-from-source.sh,
+# which installs the binary, service unit, and default config.
+.PHONY: install
+install: build-linux-amd64
+	mkdir -p bin
+	cp ${BUILD_DIR}/linux/amd64/${BINARY_NAME} bin/sssonector
+	sudo ./scripts/install-from-source.sh
+
+# macOS install helper (delegates to scripts/install_macos.sh)
+.PHONY: install-macos
+install-macos:
+	./scripts/install_macos.sh
 
 # Development helpers
 .PHONY: run

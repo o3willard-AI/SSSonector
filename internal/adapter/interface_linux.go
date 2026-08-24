@@ -6,6 +6,7 @@ package adapter
 import (
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/vishvananda/netlink"
 	"go.uber.org/zap"
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -97,7 +99,11 @@ func (i *linuxInterface) initialize() error {
 
 	i.removeStaleLink()
 
-	file, err := os.OpenFile("/dev/net/tun", os.O_RDWR, 0)
+	// Open via raw syscall and wrap with os.NewFile afterwards. Going through
+	// (*os.File).Fd() for the attach ioctl flips the descriptor back to
+	// blocking mode behind the runtime poller's back, which poisons every
+	// subsequent Read on real kernels with ErrNotPollable.
+	rawFD, err := syscall.Open("/dev/net/tun", syscall.O_RDWR, 0)
 	if err != nil {
 		i.opts.Logger.Error("Failed to open TUN device file",
 			zap.String("path", "/dev/net/tun"),
@@ -107,29 +113,27 @@ func (i *linuxInterface) initialize() error {
 		return fmt.Errorf("failed to open /dev/net/tun: %w", err)
 	}
 
-	ifreq, err := createIfreq(i.name)
+	ifr, err := createIfreq(i.name)
 	if err != nil {
-		file.Close()
+		syscall.Close(rawFD)
 		i.setState(StateError)
 		return err
 	}
 
 	// #nosec G103 -- TUN ioctl requires an ifreq struct; the layout is fixed
 	// by the kernel ABI and the interface name is validated in New().
-	// #nosec G103 -- TUN ioctl requires an ifreq struct; the layout is fixed
-	// by the kernel ABI and the interface name is validated in New().
-	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, file.Fd(), uintptr(TUNSETIFF), uintptr(unsafe.Pointer(&ifreq[0])))
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(rawFD), uintptr(TUNSETIFF), uintptr(unsafe.Pointer(&ifr[0])))
 	if errno != 0 {
 		i.opts.Logger.Error("TUNSETIFF ioctl failed",
 			zap.String("name", i.name),
 			zap.Uint("errno", uint(errno)),
 			zap.String("errno_name", errnoName(errno)),
 		)
-		file.Close()
+		syscall.Close(rawFD)
 		i.setState(StateError)
 		return fmt.Errorf("failed to create TUN interface: %v", errno)
 	}
-	i.file = file
+	i.file = os.NewFile(uintptr(rawFD), "/dev/net/tun")
 	i.mtu = 1500 // Default MTU
 	i.setState(StateReady)
 	i.opts.Logger.Info("TUN interface initialized", zap.String("name", i.name))
@@ -257,7 +261,8 @@ func (i *linuxInterface) applyConfiguration(cfg *Config, addr *netlink.Addr) err
 		}
 		found := false
 		for _, a := range addrs {
-			if a.String() == addr.String() {
+			// Compare CIDRs: netlink.Addr.String() appends the link name.
+			if a.IPNet.String() == addr.IPNet.String() {
 				found = true
 				break
 			}
@@ -283,7 +288,38 @@ func addrStrings(addrs []netlink.Addr) []string {
 }
 
 func (i *linuxInterface) Read(p []byte) (int, error) {
-	return i.file.Read(p)
+	n, err := i.file.Read(p)
+	if err != nil {
+		fd := i.file.Fd()
+		fdinfo := ""
+		if b, rerr := os.ReadFile(fmt.Sprintf("/proc/self/fdinfo/%d", fd)); rerr == nil {
+			fdinfo = strings.SplitN(string(b), "\n", 2)[0]
+		}
+		linkNow, lerr := netlink.LinkByName(i.name)
+		linkState := fmt.Sprintf("lookup_err=%v", lerr)
+		if lerr == nil {
+			a := linkNow.Attrs()
+			linkState = fmt.Sprintf("name=%s mtu=%d flags=%v", a.Name, a.MTU, a.Flags)
+		}
+		i.opts.Logger.Error("TUN raw read failed",
+			zap.Error(err),
+			zap.String("errtype", fmt.Sprintf("%T", err)),
+			zap.Uintptr("fd", fd),
+			zap.String("fdinfo_first_line", fdinfo),
+			zap.Bool("file_nonblock", i.fileNonBlock()),
+			zap.String("link_state", linkState),
+		)
+	}
+	return n, err
+}
+
+// fileNonBlock reports whether the fd is in non-blocking mode (diagnostics)
+func (i *linuxInterface) fileNonBlock() bool {
+	fl, err := unix.FcntlInt(i.file.Fd(), unix.F_GETFL, 0)
+	if err != nil {
+		return false
+	}
+	return fl&unix.O_NONBLOCK != 0
 }
 
 func (i *linuxInterface) Write(p []byte) (int, error) {

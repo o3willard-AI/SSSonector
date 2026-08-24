@@ -4,7 +4,6 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net"
-	"strings"
 	"sync"
 	"time"
 
@@ -19,6 +18,11 @@ type TLSConfig struct {
 	CAFile        string
 	SecurityLevel SecurityLevel // Added security level configuration
 	ServerName    string        // Added server name for client verification
+
+	// InsecureSkipVerify disables peer certificate verification (client
+	// side) and client-certificate enforcement (server side). TEST/LAB
+	// USE ONLY: must be set explicitly; nothing infers it from paths.
+	InsecureSkipVerify bool
 }
 
 // TLSManager handles TLS operations
@@ -40,9 +44,7 @@ func NewTLSManager(config *TLSConfig, logger *zap.Logger) (*TLSManager, error) {
 		return nil, fmt.Errorf("logger is required")
 	}
 
-	skipVerify := config.CertFile != "" && strings.Contains(config.CertFile, "/tmp/")
-
-	manager, err := cert.NewManager(config.CertFile, config.KeyFile, config.CAFile, false, skipVerify, logger)
+	manager, err := cert.NewManager(config.CertFile, config.KeyFile, config.CAFile, false, config.InsecureSkipVerify, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create certificate manager: %w", err)
 	}
@@ -64,14 +66,12 @@ func (t *TLSManager) GetClientConfig() (*tls.Config, error) {
 	// Apply security level configuration
 	config := GetTLSSecurityLevel(t.config.SecurityLevel, baseConfig)
 
-	// Additional client-specific settings
-	config.InsecureSkipVerify = false // Never skip verification on client
+	// Additional client-specific settings. Verification stays on unless
+	// explicitly opted out via InsecureSkipVerify (test/lab use only).
 	if t.config.ServerName != "" {
 		config.ServerName = t.config.ServerName
-	} else if strings.Contains(t.config.CertFile, "/tmp/") {
-		// For tests, allow insecure skip verify if no server name is set
-		config.InsecureSkipVerify = true
 	}
+	config.InsecureSkipVerify = t.config.InsecureSkipVerify
 
 	return config, nil
 }
@@ -128,9 +128,7 @@ func (t *TLSManager) getServerCertManager() (*cert.Manager, error) {
 		return t.serverCertManager, nil
 	}
 
-	skipVerify := t.config.CertFile != "" && strings.Contains(t.config.CertFile, "/tmp/")
-
-	manager, err := cert.NewManager(t.config.CertFile, t.config.KeyFile, t.config.CAFile, true, skipVerify, t.logger)
+	manager, err := cert.NewManager(t.config.CertFile, t.config.KeyFile, t.config.CAFile, true, t.config.InsecureSkipVerify, t.logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create server certificate manager: %w", err)
 	}

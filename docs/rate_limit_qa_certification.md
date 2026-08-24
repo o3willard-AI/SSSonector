@@ -74,7 +74,7 @@ This document outlines the certification process for SSSonector's rate limiting 
 ### 1. Pre-test Setup
 ```bash
 # Deploy test environment
-./deploy_test_environment.sh
+cd test/qa_scripts && ./build_and_deploy.sh
 
 # Verify environment
 ./verify_vm_access.exp

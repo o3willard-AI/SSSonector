@@ -193,35 +193,29 @@ cd /home/sblanken/Desktop/go/src/github.com/o3willard-AI/SSSonector
 
 ## Script Usage
 
+All three scripts are full-component operations: each backup captures
+source, configs, tests, and QA data as one unit; restore and validation
+operate on that whole unit. There are no component-selection flags.
+
 ### backup.sh
 ```bash
-# Create backup
 ./backup.sh
-
-# Backup specific components
-./backup.sh --source-only
-./backup.sh --config-only
-./backup.sh --qa-only
 ```
+Creates a timestamped archive under `backups/<timestamp>/` containing
+`source/`, `configs/`, `tests/`, and `qa/`, plus a manifest. Keeps the
+last 5 backups.
 
 ### restore.sh
 ```bash
-# Restore latest
+# Restore the latest backup
 ./restore.sh
 
-# Restore specific backup
+# Restore a specific backup by its directory timestamp
 ./restore.sh 20250206_123456
 
-# Restore specific components
-./restore.sh --source-only 20250206_123456
+# Restore AND delete the archive afterwards (only once the restored
+# state has been verified good)
+./restore.sh --delete 20250206_123456
 ```
-
-### validate.sh
-```bash
-# Full validation
-./validate.sh
-
-# Specific checks
-./validate.sh --environment
-./validate.sh --build
-./validate.sh --qa
+Restores every component from the chosen archive after verifying it.
+Without an argument the latest archive is used.

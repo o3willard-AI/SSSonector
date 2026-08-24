@@ -54,6 +54,14 @@ CI enforces the same gates plus govulncheck and Gitleaks. Never merge red.
 - Fix drifted fixtures to match the *current* documented schema; if the
   schema is wrong, change the schema deliberately — not silently both.
 
+## Commits
+
+- Sign every commit (SSH or GPG: `git config commit.gpgsign true` plus
+  `user.signingkey`). Unsigned commits fail provenance review even when all
+  other gates pass.
+- One logical change per commit; do not commit binaries,
+  object files, logs, QA snapshots, or editor state (.gitignore covers them).
+
 ## Supply chain / CI
 
 - All GitHub Actions are pinned by commit SHA (verified against the remote).

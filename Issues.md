@@ -11,11 +11,12 @@ This file tracks currently-true issues only.
    IP_PKTINFO or move counting to a packet-oriented layer if packet metrics
    become a requirement.
 3. **Adapter requires privileged interface setup** — Linux TUN creation
-   shells out to `sudo ip tuntap/ip link`; deployments need root or
-   passwordless sudo for those commands, and environments without
-   `/dev/net/tun` fail at startup by design (fail closed).
-4. **Docker image tags unpinned** — `monitoring/docker-compose.yml` uses
-   `:latest` for prometheus/snmp-exporter/grafana (pre-existing P3 hygiene;
+   and configuration use the native ioctl + netlink UAPI (commit 7a2b3e5,
+   zero shell-outs); the process must run as root or hold CAP_NET_ADMIN
+   (shipped systemd unit sets `AmbientCapabilities=CAP_NET_ADMIN`).
+   Environments without `/dev/net/tun` fail at startup by design (fail
+   closed).
+
    pin when the stack is next exercised).
 5. **Kubernetes deployment artifacts pruned** — the manifest shipped a
    legacy JSON ConfigMap the current loader cannot parse, and the k8s
@@ -51,6 +52,39 @@ This file tracks currently-true issues only.
 - ~~Silent plaintext downgrade~~ — missing/broken certificates now refuse to
   start unless `security.allow_plaintext` is explicitly enabled; both roles
   gate before serving or dialing.
+## Resolved (2026-08 external audit remediation)
+
+- ~~Docker image tags unpinned~~ — both compose files pinned to verified
+  stables (prometheus v3.14.0, snmp-exporter v0.30.1, grafana 13.1.4);
+  monitoring stack additionally runs `no-new-privileges` + read-only
+  filesystems; root compose tags the locally built image `sssonector:local`.
+- ~~Semgrep: compose hardening~~ — addressed by the same change.
+
+## Resolved (2026-08 external audits — code + docs)
+
+- ~~F1 /tmp/ TLS skip heuristic~~ · ~~D1 Dockerfile toolchain~~ ·
+  ~~D2 stale Issues.md #3~~ — fixed in e0210ea (auditors ran against the
+  parent commit); verified present on HEAD.
+- ~~H1 DR scripts unrunnable~~ — three `}`→`fi` syntax errors fixed;
+  all three pass `bash -n`.
+- ~~H2 phantom DR flags~~ — README Script Usage rewritten to the real
+  interfaces (positional timestamp restore, --delete, no selection flags).
+- ~~H3 nonexistent make install~~ — real `install`/`install-macos` targets
+  added (delegate to install-from-source/install_macos helpers).
+- ~~M1 imaginary interface_tests suite~~ — README deleted per
+  wire-it-or-delete-it.
+- ~~M2–M4 missing QA scripts~~ — references repointed at
+  test/qa_scripts/{build_and_deploy,cleanup}.sh and setup_net_snmp.sh.
+- ~~M5 nonexistent --socket flag~~ — snippet removed from DEVELOPMENT.md.
+- ~~L1 dual install.sh~~ — scripts/install.sh renamed to
+  scripts/install-from-source.sh (root installer keeps its documented name).
+
+## Resolved (2026-08 lab E2E follow-up)
+
+- ~~Client give-up exits cleanly~~ — exhausting `tunnel.reconnect.max_attempts`
+  now surfaces as a fatal error (non-zero exit), so `Restart=on-failure`
+  revives the unit and the retry cycle starts fresh when the peer returns.
+
 ## Resolved (2026-08 quick-wins batch)
 
 - ~~Limiter hit metrics not exposed~~ — `sssonector_throttle_hits_total{direction}`

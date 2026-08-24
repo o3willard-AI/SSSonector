@@ -1,5 +1,8 @@
 # Build stage
-FROM golang:1.21-alpine AS builder
+FROM golang:1.26-alpine AS builder
+# GOTOOLCHAIN=local forces an exact toolchain match: air-gapped builds fail
+# fast instead of silently fetching a toolchain over the network.
+ENV GOTOOLCHAIN=local
 
 # Install build dependencies
 RUN apk add --no-cache gcc musl-dev linux-headers

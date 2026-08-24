@@ -128,12 +128,14 @@ func TestTLSHandshake(t *testing.T) {
 		t.Fatalf("Failed to create server TLS manager: %v", err)
 	}
 
-	// Create client TLS manager
+	// Create client TLS manager. ServerName must match the dial address;
+	// the generated server cert carries an IP SAN for 127.0.0.1.
 	clientConfig := &TLSConfig{
 		CertFile:      filepath.Join(tempDir, "client.crt"),
 		KeyFile:       filepath.Join(tempDir, "client.key"),
 		CAFile:        filepath.Join(tempDir, "ca.crt"),
 		SecurityLevel: SecurityModern,
+		ServerName:    "127.0.0.1",
 	}
 	clientManager, err := NewTLSManager(clientConfig, zap.NewNop())
 	if err != nil {
@@ -222,4 +224,34 @@ func containsAllCiphers(have, want []uint16) bool {
 	}
 
 	return len(wantMap) == 0
+}
+
+// TestNoImplicitSkipVerifyForTmpPaths is the regression guard for the
+// removed content-sniffing heuristic: certificate paths under /tmp/ must
+// NOT implicitly disable peer verification.
+func TestNoImplicitSkipVerifyForTmpPaths(t *testing.T) {
+	tempDir := t.TempDir() // lives under /tmp on Linux
+	if err := generator.GenerateTemporaryCertificates(tempDir); err != nil {
+		t.Fatalf("generate certificates: %v", err)
+	}
+	cfg := &TLSConfig{
+		CertFile:      filepath.Join(tempDir, "server.crt"),
+		KeyFile:       filepath.Join(tempDir, "server.key"),
+		CAFile:        filepath.Join(tempDir, "ca.crt"),
+		ServerName:    "127.0.0.1",
+		SecurityLevel: SecurityModern,
+	}
+
+	mgr, err := NewTLSManager(cfg, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewTLSManager: %v", err)
+	}
+
+	clientCfg, err := mgr.GetClientConfig()
+	if err != nil {
+		t.Fatalf("GetClientConfig: %v", err)
+	}
+	if clientCfg.InsecureSkipVerify {
+		t.Error("InsecureSkipVerify must default to false regardless of /tmp/ path")
+	}
 }

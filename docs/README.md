@@ -71,7 +71,7 @@ This documentation covers all aspects of the system including architecture, HTTP
 ### 1. Environment Setup
 ```bash
 # Deploy QA environment
-./deploy_test_environment.sh
+cd test/qa_scripts && ./build_and_deploy.sh && cd -
 
 # Verify deployment
 ./check_qa_env.exp
@@ -79,8 +79,8 @@ This documentation covers all aspects of the system including architecture, HTTP
 
 ### 2. SNMP Configuration
 ```bash
-# Setup SNMP monitoring
-./setup_snmp_monitoring.sh
+# Setup SNMP monitoring (installs Net-SNMP packages)
+sudo ./scripts/setup_net_snmp.sh
 
 # Verify SNMP
 ./verify_snmp.exp

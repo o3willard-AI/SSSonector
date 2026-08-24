@@ -58,9 +58,9 @@
 - Enterprise MIB: Implementation pending
 
 ### 3. Environment Management
-- `cleanup_test_environment.sh`
-- `deploy_test_environment.sh`
-- `setup_snmp_monitoring.sh`
+- `test/qa_scripts/cleanup.sh`
+- `test/qa_scripts/build_and_deploy.sh`
+- SNMP packages: `scripts/setup_net_snmp.sh`
 - Purpose: Environment maintenance
 - Status: Operational
 

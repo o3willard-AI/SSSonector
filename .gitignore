@@ -54,3 +54,8 @@ go*.tar.gz
 
 # Local QA deploy snapshots
 qa_deploy_*/
+
+# Third-party audit/defect reports stay out of the public tree (workspace root)
+/AUDIT-REPORT.md
+/DOCS-AUDIT-REPORT.md
+/*-AUDIT-REPORT.md

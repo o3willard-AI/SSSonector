@@ -161,7 +161,7 @@ validate_build() {
     if [ $? -ne 0 ]; then
         error "Project build failed"
         return 1
-    }
+    fi
     
     # Run basic tests
     if [ -f "test/run_cert_tests.sh" ]; then

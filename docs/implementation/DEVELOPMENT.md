@@ -192,11 +192,6 @@ Run tests:
 make test
 ```
 
-Run with custom socket:
-```bash
-./sssonector --socket=/path/to/socket
-```
-
 ## Contributing
 
 1. Follow Go coding standards

@@ -344,6 +344,12 @@ func TestClientRetryWiringBacksOffThenGivesUp(t *testing.T) {
 		return &fakeInterface{name: name, pipe: b}, nil
 	}
 
+	giveUpSeen := make(chan struct{})
+	go func() {
+		<-client.GiveUpChan()
+		close(giveUpSeen)
+	}()
+
 	started := time.Now()
 	if err := client.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
@@ -370,6 +376,12 @@ func TestClientRetryWiringBacksOffThenGivesUp(t *testing.T) {
 			t.Fatalf("client never gave up after max_attempts; logs=%v", msgs)
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+
+	select {
+	case <-giveUpSeen:
+	case <-time.After(5 * time.Second):
+		t.Fatal("GiveUpChan was not closed after exhausting attempts")
 	}
 
 	warns := observed.FilterMessage("Connection failed, retrying").All()

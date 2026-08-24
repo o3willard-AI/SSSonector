@@ -94,7 +94,7 @@ verify_backup() {
     if [ ! -f "${backup_path}/source/go.mod" ]; then
         error "Source code verification failed"
         exit 1
-    }
+    fi
 }
 
 # Restore source code
