@@ -206,3 +206,46 @@ func saveCertAndKey(certDir, name string, certBytes []byte, key *rsa.PrivateKey)
 
 	return nil
 }
+
+// LoadCA loads existing CA certificate and key material from a directory
+// previously populated by GenerateCertificates.
+func LoadCA(certDir string) (*x509.Certificate, *rsa.PrivateKey, error) {
+	caCertPEM, err := os.ReadFile(filepath.Join(certDir, "ca.crt"))
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to read CA certificate: %w", err)
+	}
+	block, _ := pem.Decode(caCertPEM)
+	if block == nil {
+		return nil, nil, fmt.Errorf("failed to decode CA certificate PEM")
+	}
+	ca, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to parse CA certificate: %w", err)
+	}
+
+	keyBytes, err := os.ReadFile(filepath.Join(certDir, "ca.key"))
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to read CA key (provisioning requires the CA private key): %w", err)
+	}
+	caKeyBlock, _ := pem.Decode(keyBytes)
+	if caKeyBlock == nil {
+		return nil, nil, fmt.Errorf("failed to decode CA key PEM")
+	}
+	caKey, err := x509.ParsePKCS1PrivateKey(caKeyBlock.Bytes)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to parse CA key: %w", err)
+	}
+	return ca, caKey, nil
+}
+
+// IssueClientCert mints a fresh end-entity client certificate into certDir,
+// signed by the CA material already present there. Used by provisioning so
+// every enrolled client gets a unique certificate without reusing the
+// original GenerateCertificates trio.
+func IssueClientCert(certDir string) error {
+	ca, caKey, err := LoadCA(certDir)
+	if err != nil {
+		return err
+	}
+	return generateEndEntityCert(certDir, "client", ca, caKey, defaultCertDuration)
+}

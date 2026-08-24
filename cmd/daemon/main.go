@@ -71,6 +71,14 @@ func main() {
 
 	var explicitMode string
 	if args := flag.Args(); len(args) > 0 {
+		if args[0] == "provision" {
+			// Provisioning subcommands bypass the service lifecycle entirely.
+			if err := runProvision(args[1:]); err != nil {
+				fmt.Fprintf(os.Stderr, "provision: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
 		explicitMode = strings.ToLower(strings.TrimSpace(args[0]))
 		if explicitMode == "version" {
 			fmt.Printf("sssonector %s\n", Version)

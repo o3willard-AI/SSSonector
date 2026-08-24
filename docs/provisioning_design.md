@@ -67,7 +67,21 @@ AEAD ciphertext(XChaCha20-Poly1305 or AES-256-GCM):
 
 - KDF: Argon2id (memory/time params fixed at v1; upgradeable via version byte).
 - Pairing code is display-grouped (XXXX-XXXX, RFC 1751-ish alphabet minus
-  ambiguous glyphs), ≥ ~48 bits entropy, rate-limitable at redemption.
+  ambiguous glyphs), ~40 bits entropy (32-symbol set), rate-limitable at
+  redemption.
+
+### Amendment 1 — pairing-code entropy (Phase 1)
+
+The original "~48 bits" aspiration conflicts with the XXXX-XXXX display
+example: a 32-symbol unambiguous alphabet at 8 characters yields exactly
+40 bits. 40 bits is accepted deliberately. The only viable attack is
+online guessing during the TTL window, and it is bounded by redemption
+rate limiting (~hundreds of attempts) against a ~10^12 space. Offline
+brute force requires possession of the AEAD bundle itself, in which case
+the attacker already holds every secret the code protects. If a future
+deployment needs more margin without lengthening the code, raise the
+alphabet to mixed-case (58 symbols → 48 bits) behind kdf-id/version bump.
+
 - Fingerprint of CA embedded so `apply` can pin it before network trust.
 
 ## Tasks
