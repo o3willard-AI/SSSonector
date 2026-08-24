@@ -15,12 +15,62 @@ Companion reference: [certificate_management.md](certificate_management.md)
 
 ### Server side — create the bundle
 
-```bash
-# Layout: token_secret lives NEXT TO the certs directory
-mkdir -p /etc/sssonector/certs
-echo "<high-entropy-secret>" > /etc/sssonector/token_secret
-chmod 600 /etc/sssonector/token_secret
+This is three separate steps. Run each block on its own and read its
+explanatory note before moving on — some users skip the first step entirely.
 
+#### Step 1 — Prepare the directory
+
+> **If you installed via curl (`install.sh`) or `make install`, skip this
+> block.** The installer already created a certs directory for you
+> (`/etc/sssonector/instances/<name>/certs`) and the `provision create`
+> command auto-creates any missing directory on first run. The `mkdir`
+> below is **only** for manual/sandbox setups that pass a custom
+> `--certs-dir`.
+
+```bash
+mkdir -p /etc/sssonector/certs
+```
+
+That gives `provision create` an explicit home for the CA material. If you
+used the installer you are already done here — move straight to Step 2. The
+rest of this walkthrough uses `/etc/sssonector/certs` as the example value;
+substitute your own `--certs-dir` if you chose one.
+
+#### Step 2 — Create the `token_secret` file
+
+Before `provision create` can run, a shared secret must exist. This is the
+**facade** secret — the same value must appear in both the server and client
+configs later, so `create` bakes it into every bundle it issues.
+
+The file must be created first because `provision create` reads it at
+enrollment time (Step 3) and fails if it is absent.
+
+```bash
+openssl rand -hex 32 > /etc/sssonector/token_secret
+chmod 600 /etc/sssonector/token_secret
+```
+
+A few facts about this file:
+
+- **It is a FILE, not a directory** — a single regular file named exactly
+  `token_secret`, containing one line of high-entropy text.
+- **Its exact path** is one level above your `--certs-dir`. With the default
+  `/etc/sssonector/certs`, that means `/etc/sssonector/token_secret`. The
+  command reads it as `certs-dir/../token_secret` — so if your certs dir is
+  `/etc/sssonector/certs`, the file goes at `/etc/sssonector/token_secret`.
+- **Why it lives outside `certs/`:** it is a facade secret, not certificate
+  material. Certificates get replicated to peers; the shared secret must not
+  ride along with them, so it sits in the config root alongside the `certs/`
+  subdirectory rather than inside it.
+- **It must match the server config's `facade.token_secret` exactly.** The
+  value is trimmed and baked into every bundle (and the client's skeleton
+  config), so both ends share the identical secret from day one.
+
+#### Step 3 — Run `provision create`
+
+Now that the directory and secret are in place, mint the enrollment bundle:
+
+```bash
 sssonector provision create --role client \
     --name office-a \
     --server-addr 192.0.2.10 --server-port 18443 \
@@ -38,12 +88,19 @@ CA fingerprint: b6dd4fa04a89dcb854c35716b74ca814d952761e708badd9d759126f908398a3
 Share the CODE out-of-band (voice/SMS). The .ssp file itself may travel by any transport — it is unreadable without the code.
 ```
 
+Read the three things it prints:
+
+- **pairing code** — share this out-of-band (voice/SMS/chat); it unlocks the
+  bundle on the client.
+- **CA fingerprint** — verify it against the fingerprint shown on the client
+  during `apply`; a match confirms the bundle and tunnel trust are genuine.
+- **.ssp file** (`--out`) — the bundle itself; transfer it by any transport
+  (scp, USB, HTTP). It is AEAD-encrypted, so it is unreadable without the
+  code.
+
 Notes:
 - First run bootstraps CA + server pair automatically (`ca.crt`, `server.*`,
   plus the enrolled `client.*`).
-- The **token_secret** file must sit one level above the certs dir. This is
-  deliberate: certificates get replicated to peers; the shared secret must
-  not ride along.
 
 ### Share out-of-band
 
