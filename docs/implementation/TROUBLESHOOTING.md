@@ -15,7 +15,8 @@ ls -l /var/run/sssonector.sock
 
 2. Check service status:
 ```bash
-sssonectorctl status
+systemctl status sssonector@<instance>
+journalctl -u "sssonector@*" -f
 ```
 - Look for specific error messages
 - Verify service state
@@ -48,7 +49,7 @@ ps aux | grep sssonector
 
 1. Check service load:
 ```bash
-sssonectorctl metrics
+curl -s http://127.0.0.1:9090/metrics | grep sssonector_
 ```
 
 2. Verify system resources:
@@ -67,9 +68,10 @@ df -h
 
 ### Invalid Configuration
 
-1. Validate config file:
+1. Validate config file (start the daemon — it refuses to start on invalid
+   config and logs the offending field):
 ```bash
-sssonectorctl validate --config=/etc/sssonector/config.json
+sssonector -config /etc/sssonector/config.yaml
 ```
 
 2. Check config permissions:
@@ -85,9 +87,10 @@ ls -l /etc/sssonector/config.json
 
 ### Hot Reload Failures
 
-1. Check reload status:
+1. Trigger a live reload and watch for rejection:
 ```bash
-sssonectorctl reload
+kill -HUP $(pidof sssonector)
+journalctl -u sssonector -f | grep -E "reloaded|requires restart"
 ```
 
 2. Verify config changes:
@@ -107,7 +110,7 @@ diff /etc/sssonector/config.json /etc/sssonector/config.json.bak
 
 1. Check monitoring status:
 ```bash
-sssonectorctl metrics
+curl -s http://127.0.0.1:9090/metrics | grep sssonector_
 ```
 
 2. Verify Prometheus endpoint:
@@ -123,14 +126,15 @@ curl http://localhost:9090/metrics
 
 ### Health Check Failures
 
-1. Run health check:
+1. Run health check (daemon exposes it next to /metrics):
 ```bash
-sssonectorctl health
+curl -s http://127.0.0.1:19090/healthz
 ```
 
 2. Check component status:
 ```bash
-sssonectorctl status
+systemctl status sssonector
+ip -br addr show tun0
 ```
 
 3. Common issues:
@@ -145,7 +149,8 @@ sssonectorctl status
 
 1. Check certificate status:
 ```bash
-sssonectorctl status
+openssl x509 -in /etc/sssonector/certs/server.crt -noout -dates -subject
+openssl verify -CAfile /etc/sssonector/certs/ca.crt /etc/sssonector/certs/*.crt
 ```
 
 2. Verify certificate files:
@@ -166,9 +171,13 @@ ls -l /etc/sssonector/certs/
 journalctl -u sssonector
 ```
 
-2. Verify credentials:
+2. Verify credentials (mTLS chain + key pairing):
 ```bash
-sssonectorctl verify-auth
+openssl verify -CAfile /etc/sssonector/certs/ca.crt /etc/sssonector/certs/client.crt
+openssl pkey -in /etc/sssonector/certs/client.key -noout && echo "key parses"
+openssl x509 -in /etc/sssonector/certs/client.crt -noout -pubkey | \
+  openssl sha256
+openssl pkey -in /etc/sssonector/certs/client.key -pubout | openssl sha256
 ```
 
 3. Common issues:
@@ -253,7 +262,9 @@ sudo ufw allow 443/tcp
 
 1. Check tunnel status:
 ```bash
-sssonectorctl status
+systemctl is-active sssonector@<instance>
+curl -s http://127.0.0.1:19090/healthz
+ping <remote-tun-address>
 ```
 
 2. Verify network interface:
@@ -271,7 +282,7 @@ ip link show
 
 1. Check rate limiting:
 ```bash
-sssonectorctl metrics
+curl -s http://127.0.0.1:19090/metrics | grep throttle
 ```
 
 2. Monitor network performance:
@@ -327,24 +338,29 @@ journalctl -u sssonector -n 100
 
 ## Debugging Tips
 
-1. Enable debug logging:
+1. Enable debug logging live (no restart):
 ```bash
-sssonectorctl set-log-level debug
+sed -i "s/level: info/level: debug/" /etc/sssonector/config.yaml
+kill -HUP $(pidof sssonector)
 ```
 
 2. Collect diagnostics:
 ```bash
-sssonectorctl diagnostics
+journalctl -u sssonector --since "-1h" > sssonector-diagnostics.txt
+ss -s; ip -br addr; ip route
 ```
 
 3. Monitor real-time:
 ```bash
-sssonectorctl monitor --follow
+journalctl -u sssonector -f
+watch -n2 'curl -s http://127.0.0.1:19090/healthz'
 ```
 
 4. Generate support bundle:
 ```bash
-sssonectorctl support-bundle
+{ journalctl -u sssonector --since "-24h"; \
+  curl -s http://127.0.0.1:19090/metrics; \
+  ip -br addr; ss -s; } > sssonector-support.txt 2>&1
 ```
 
 ## Common Error Codes
@@ -364,7 +380,8 @@ sssonectorctl support-bundle
 
 2. Generate debug info:
 ```bash
-sssonectorctl debug-info > debug.txt
+journalctl -u sssonector --since "-24h" > debug.txt
+curl -s http://127.0.0.1:19090/metrics >> debug.txt
 ```
 
 3. Contact support:

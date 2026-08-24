@@ -219,12 +219,41 @@ main() {
     log "Restore completed successfully"
 }
 
-# Parse command line arguments
-if [ $# -eq 1 ]; then
-    main "$1"
-else
-    main
-fi
+show_usage() {
+    echo "Usage: $0 [backup_timestamp]"
+    echo ""
+    echo "Restores source, configs, tests, and QA data from the given backup"
+    echo "(or the newest archive when no timestamp is given)."
+}
+
+# Parse command line arguments: exactly one optional positional timestamp.
+# Unknown flags or extra arguments are rejected rather than silently
+# restoring a different archive than the operator intended.
+case $# in
+    0)
+        main
+        ;;
+    1)
+        case "$1" in
+            -h|--help)
+                show_usage
+                ;;
+            -*)
+                error "Unknown option: $1"
+                show_usage
+                exit 1
+                ;;
+            *)
+                main "$1"
+                ;;
+        esac
+        ;;
+    *)
+        error "Too many arguments (expected at most one backup timestamp)"
+        show_usage
+        exit 1
+        ;;
+esac
 
 # Exit with success
 exit 0

@@ -5,196 +5,105 @@ This document provides information for developers working on the SSSonector code
 ## Project Structure
 
 ```
+cmd/
+  └── daemon/          # The single binary (server | client subcommands)
 internal/
-  ├── adapter/         # Network interface adapters
-  ├── buffer/          # Multi-tier buffer pool management
-  ├── cert/            # Certificate lifecycle and rotation
-  ├── config/          # Configuration management
-  │   ├── types/       # Configuration type definitions
-  │   ├── validator/   # Configuration validation rules
-  │   ├── store/       # File-based config storage
-  │   ├── manager/     # Thread-safe config manager
-  │   └── loader.go    # Version detection and upgrade
-  ├── connection/      # Connection lifecycle management
+  ├── adapter/         # TUN device lifecycle (native ioctl + netlink)
+  ├── cert/            # Certificate manager + rotation
+  │   └── generator/   # Test/lab certificate generation
+  ├── config/          # Single-package config: load, validate, store
   ├── facade/          # HTTPS facade for firewall traversal
   │   ├── server.go    # HTTPS server with WebSocket upgrade
   │   ├── client.go    # Direct-connect with facade fallback
   │   ├── token.go     # HMAC-SHA256 token generation/validation
-  │   └── proxy.go     # Bidirectional TCP proxy
-  ├── memory/          # Memory management and GC control
-  ├── monitor/         # Monitoring and metrics
-  ├── pool/            # Connection pooling
-  ├── security/        # Security and authentication
-  ├── service/         # Core service implementation
-  │   ├── control/     # Service control interface
-  │   ├── daemon/      # Daemon management
-  │   ├── platform/    # Platform-specific code
-  │   ├── base.go      # Base service implementation
-  │   └── types.go     # Service type definitions
-  ├── throttle/        # Rate limiting (token bucket + dynamic)
-  └── tunnel/          # Tunnel implementation
+  │   └── proxy.go     # Bidirectional TCP proxy (half-close reference)
+  ├── monitor/         # Prometheus /metrics, /healthz, SNMP agent
+  ├── throttle/        # Reservation/debt token-bucket rate limiting
+  └── tunnel/          # Server/client roles, transfer loop, TLS
+docs/                  # Operator and design documentation
+scripts/               # Installers and lab tooling
 ```
 
-## Service Control System
+There is deliberately no `internal/service` control-socket system, no
+`sssonectorctl` companion CLI, and no separate connection/pool/memory/security
+packages — earlier generations of this tree accumulated those; they were
+deleted under the wire-it-or-delete-it rule.
 
-The service control system provides a unified interface for managing and monitoring the SSSonector service. It consists of several components:
+## Daemon Interface
 
-### Service Interface
+The one binary is `cmd/daemon`:
 
-The core service interface (`internal/service/types.go`) defines the contract for service operations:
-
-```go
-type Service interface {
-    Start() error
-    Stop() error
-    Reload() error
-    Status() (*ServiceStatus, error)
-    Metrics() (*ServiceMetrics, error)
-    Health() error
-}
-```
-
-Service states are represented by the `ServiceState` type:
-- `StateStarting`: Service is initializing
-- `StateRunning`: Service is operational
-- `StateStopping`: Service is shutting down
-- `StateStopped`: Service is not running
-- `StateReloading`: Service is reloading configuration
-- `StateFailed`: Service encountered an error
-
-### Control Commands
-
-Service control commands (`ServiceCommand` type) include:
-- `CmdStatus`: Get service status
-- `CmdMetrics`: Get service metrics
-- `CmdHealth`: Perform health check
-- `CmdStart`: Start the service
-- `CmdStop`: Stop the service
-- `CmdReload`: Reload configuration
-
-### Control Server
-
-The control server (`internal/service/control/interface.go`) provides:
-- Unix socket-based communication
-- Command handling and routing
-- Response serialization
-- Error handling
-
-Configuration:
-```go
-type ControlServer struct {
-    service    service.Service
-    socket     net.Listener
-    socketPath string
-}
-```
-
-The socket path can be configured via:
-```go
-func (c *ControlServer) SetSocketPath(path string)
-```
-
-### Control Client
-
-The control client (`internal/service/control/client.go`) provides:
-- Socket connection management
-- Command execution
-- Response deserialization
-- Error handling
-
-Usage:
-```go
-client, err := control.NewClient(cfg, logger)
-client.SetSocketPath("/var/run/sssonector.sock")
-response, err := client.ExecuteCommand(service.CmdStatus, nil)
-```
-
-### Base Service Implementation
-
-The base service (`internal/service/base.go`) provides:
-- Core service lifecycle management
-- Status and metrics tracking
-- Configuration management
-- Error handling
-
-### CLI Interface
-
-The command-line interface (`cmd/sssonectorctl/main.go`) supports:
-- All service commands
-- Socket path configuration
-- JSON output formatting
-- Error reporting
-
-Example usage:
 ```bash
-sssonectorctl status
-sssonectorctl --socket=/var/run/custom.sock metrics
-sssonectorctl reload
+sssonector [server|client] -config /etc/sssonector/config.yaml
+sssonector -log-level debug ...
+sssonector -version
 ```
+
+- Mode comes from the positional argument or the config; ambiguity is fatal.
+- Invalid configuration aborts startup with the offending field named.
+- Runtime operations are external by design:
+  - **systemd** owns start/stop/restart (`Restart=on-failure` pairs with the
+    non-zero exit on reconnect exhaustion).
+  - **SIGHUP** reloads the hot subset (throttle rates, log level, certificate
+    rotation interval); structural changes are logged as restart-required.
+  - **Prometheus endpoint** serves `/metrics` and `/healthz` on the configured
+    port (`monitor.prometheus.listen_address` controls exposure).
+  - **journalctl** is the log surface when run under systemd.
 
 ## Error Handling
 
-Service errors are represented by the `ServiceError` type with specific error codes:
-- `ErrNotRunning`: Service is not running
-- `ErrAlreadyRunning`: Service is already running
-- `ErrInvalidCommand`: Invalid command received
-- `ErrInvalidConfig`: Invalid configuration
-- `ErrInternal`: Internal service error
+Errors follow standard Go conventions:
+
+- Wrap with context at every layer (`fmt.Errorf("...: %w", err)`).
+- Fail closed on anything security-relevant: missing certificates,
+  ambiguous run mode, invalid configuration.
+- Data-path goroutines report failures through returned errors; the
+  transfer loop tears connections down instead of leaking readers.
+- Client reconnect exhaustion closes `Client.GiveUpChan()`, which makes the
+  daemon exit non-zero so systemd restarts it.
 
 ## Configuration
 
-The service control system uses the following configuration:
+Configuration is a single YAML schema (`metadata.schema_version: "2.0.0"`):
 
-```go
-type ServiceOptions struct {
-    Name      string // Service name
-    ConfigDir string // Configuration directory
-    DataDir   string // Data directory
-    LogDir    string // Log directory
-}
-```
-
-Default socket path: `/var/run/sssonector.sock`
+- Loaded by `internal/config` (loader → validator). Only the current schema
+  is accepted; legacy layouts are rejected explicitly.
+- Validation runs at startup **and** on every SIGHUP reload; rejected
+  reloads keep the previous config active.
+- See `docs/configuration_guide.md` for the full key reference and
+  `docs/hot_reload.md` for what may change at runtime.
 
 ## Development Guidelines
 
-1. Error Handling
-   - Use `ServiceError` for service-specific errors
-   - Include error codes for categorization
-   - Provide descriptive error messages
-
-2. Command Implementation
-   - Add new commands in `service/types.go`
-   - Implement command handling in control server
-   - Update CLI interface for new commands
-
-3. Testing
-   - Write unit tests for new commands
-   - Test error conditions
-   - Verify socket communication
-   - Test platform-specific behavior
-
-4. Documentation
-   - Update this document for new features
-   - Document command parameters
-   - Include usage examples
-   - Document error conditions
+1. Read `AGENTS.md` before writing code — its rules (one implementation per
+   concept, wire-it-or-delete-it, fail-closed security, deterministic timing
+   tests) are enforced in review and CI.
+2. Error handling: wrap with `%w`; never swallow; never fall back silently.
+3. New behavior ships with tests that can fail — see
+   `docs/testing/mutation-testing.md` for the critical-path bar.
+4. Platform-specific TUN code lives behind `AdapterNew`, so logic tests run
+   unprivileged over in-memory pipes (see `internal/tunnel/loopback_test.go`).
 
 ## Building and Testing
 
-Build the service:
+Build the daemon:
 ```bash
-make build
+make build-linux-amd64
 ```
 
-Run tests:
+Run the full test suite (race detector on):
 ```bash
-make test
+go test -race -count=1 ./...
+```
+
+Lint gate:
+```bash
+golangci-lint run ./...
 ```
 
 ## Contributing
 
-1. Follow Go coding standards
-2. Add tests for new features
-3. Update documentation
-4. Run full test suite before submitting
+1. Follow Go coding standards and AGENTS.md.
+2. Add tests for new features; keep changed-line coverage ≥80%.
+3. Update documentation in the same change set.
+4. Run the full test suite and lint gate before submitting.

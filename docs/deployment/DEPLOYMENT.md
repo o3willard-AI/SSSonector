@@ -1,6 +1,5 @@
 # SSSonector Deployment Guide
 
-> **Note:** The `sssonectorctl` companion CLI referenced below is not part of the current build. Equivalent operations: `sssonector -help`, `systemctl status sssonector@<instance>`, and the Prometheus endpoint on port 9090.
 
 ## Overview
 
@@ -264,18 +263,20 @@ systemctl status sssonector
 # View logs
 journalctl -u sssonector -f
 
-# Check configuration
-sssonectorctl validate --config /etc/sssonector/config.json
+# Validate configuration (fail fast; names the offending field)
+/home/sblanken/e2e/bin/sssonector -config /etc/sssonector/config.yaml || true
+# The daemon itself also refuses to start on invalid config and logs why
 ```
 
 ### 2. Connection Issues
 
 ```bash
 # Test connectivity
-sssonectorctl test --target example.com:8443
+nc -vz example.com 8443
 
-# Check certificates
-sssonectorctl cert verify
+# Check certificates (against the CA the peers trust)
+openssl verify -CAfile /etc/sssonector/certs/ca.crt \
+    /etc/sssonector/certs/server.crt /etc/sssonector/certs/client.crt
 
 # Monitor traffic
 tcpdump -i any port 8443
@@ -284,14 +285,12 @@ tcpdump -i any port 8443
 ### 3. Performance Issues
 
 ```bash
-# Enable debug logging
-sssonectorctl debug --enable
-
-# Profile CPU usage
-sssonectorctl profile cpu
+# Enable debug logging: edit config level to debug, then reload live
+sed -i "s/level: info/level: debug/" /etc/sssonector/config.yaml
+kill -HUP $(pidof sssonector)
 
 # Monitor metrics
-curl http://localhost:8080/metrics
+curl -s http://localhost:9091/metrics | grep sssonector_
 ```
 
 ## Best Practices

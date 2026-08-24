@@ -76,7 +76,7 @@ brew install go
 git clone https://github.com/o3willard-AI/SSSonector.git
 cd SSSonector
 make build
-sudo make install
+sudo make install-macos
 ```
 
 ## Configuration Examples

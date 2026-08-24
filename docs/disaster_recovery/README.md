@@ -213,9 +213,11 @@ last 5 backups.
 # Restore a specific backup by its directory timestamp
 ./restore.sh 20250206_123456
 
-# Restore AND delete the archive afterwards (only once the restored
-# state has been verified good)
-./restore.sh --delete 20250206_123456
+# Show usage
+./restore.sh --help
 ```
 Restores every component from the chosen archive after verifying it.
-Without an argument the latest archive is used.
+Without an argument the newest archive is used. Unknown flags or extra
+arguments are rejected with an error — the script never silently falls
+back to a different archive than the one you named. Archives are removed
+manually when no longer needed (backup retention keeps the last 5).
