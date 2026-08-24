@@ -1,12 +1,16 @@
 package main
 
 import (
+	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -51,6 +55,9 @@ func provisionCreate(args []string) error {
 		certsDir   = fs.String("certs-dir", provision.DefaultCertsDir(), "directory holding CA material; created with a fresh CA when absent")
 		serverAddr = fs.String("server-addr", "", "tunnel server address clients dial (required for role=client)")
 		serverPort = fs.Int("server-port", 0, "tunnel server port clients dial (required for role=client)")
+		serve      = fs.Bool("serve", false, "also serve the bundle at https://<listen>/pair/<code> until redeemed or TTL")
+		listen     = fs.String("listen", ":9443", "redemption listener address when --serve is set")
+		serveTTL   = fs.Duration("serve-ttl", 15*time.Minute, "redemption window")
 	)
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -158,7 +165,25 @@ func provisionCreate(args []string) error {
 	fmt.Printf("pairing code:   %s\n", code)
 	fmt.Printf("CA fingerprint: %s\n", payload.FingerprintOfCA)
 	fmt.Println("Share the CODE out-of-band (voice/SMS). The .ssp file itself may travel by any transport — it is unreadable without the code.")
-	return nil
+
+	if !*serve {
+		return nil
+	}
+
+	red, err := provision.NewRedemptionServer(bundle, code, *serveTTL)
+	if err != nil {
+		return err
+	}
+	if err := red.Listen(*listen); err != nil {
+		return err
+	}
+	certFile := filepath.Join(*certsDir, "server.crt")
+	keyFile := filepath.Join(*certsDir, "server.key")
+	fmt.Printf("serving redemption at https://%s/pair/%s (TTL %v, single-consumption)...\n",
+		red.Addr(), code, *serveTTL)
+	fmt.Println("Client: sssonector provision apply --from https://" + red.Addr() + "/pair/" + code)
+	// Ctrl+C aborts the offer early; consumption or TTL closes the endpoint.
+	return red.ServeTLS(context.Background(), certFile, keyFile)
 }
 
 func overwriteForced() bool {
@@ -181,9 +206,37 @@ func provisionApply(args []string) error {
 	if *from == "" || fs.NArg() > 0 {
 		return fmt.Errorf("--from <path> is required")
 	}
-	bundle, err := os.ReadFile(*from)
-	if err != nil {
-		return fmt.Errorf("read bundle: %w", err)
+	var bundle []byte
+	var readErr error
+	switch {
+	case strings.HasPrefix(*from, "https://"), strings.HasPrefix(*from, "http://"):
+		tr := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}} // #nosec G402 -- authenticity comes from the AEAD tag under the code-derived key; the pinned CA fingerprint governs subsequent tunnel trust
+		cl := &http.Client{Timeout: 30 * time.Second, Transport: tr}
+		resp, gerr := cl.Get(*from)
+		if gerr != nil {
+			return fmt.Errorf("redeem %s: %w", *from, gerr)
+		}
+		defer resp.Body.Close()
+		switch resp.StatusCode {
+		case http.StatusOK:
+		case http.StatusForbidden:
+			return fmt.Errorf("redemption rejected: invalid pairing code")
+		case http.StatusTooManyRequests:
+			return fmt.Errorf("redemption rate limited; retry later")
+		case http.StatusGone:
+			return fmt.Errorf("bundle already redeemed or expired")
+		default:
+			return fmt.Errorf("redemption failed: HTTP %d", resp.StatusCode)
+		}
+		bundle, readErr = io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		if readErr != nil {
+			return fmt.Errorf("read redeemed bundle: %w", readErr)
+		}
+	default:
+		bundle, readErr = os.ReadFile(*from)
+		if readErr != nil {
+			return fmt.Errorf("read bundle: %w", readErr)
+		}
 	}
 
 	if !provision.IsStdinTerminal() {
