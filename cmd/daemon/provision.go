@@ -175,6 +175,8 @@ func provisionCreate(args []string) error {
 	if err != nil {
 		return err
 	}
+	// CSR enrollment rides the same offer: clients submit signing requests.
+	red.EnableCSRSigning(*certsDir)
 	if err := red.Listen(*listen); err != nil {
 		return err
 	}
@@ -233,7 +235,8 @@ func provisionApply(args []string) error {
 		case http.StatusGone:
 			return fmt.Errorf("bundle already redeemed or expired")
 		default:
-			return fmt.Errorf("redemption failed: HTTP %d", resp.StatusCode)
+			detail, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+			return describeRedemptionFailure(resp.StatusCode, string(detail))
 		}
 		bundle, readErr = io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		if readErr != nil {
@@ -467,6 +470,28 @@ func provisionVerify(args []string) error {
 	return nil
 }
 
+// describeRedemptionFailure translates redemption HTTP outcomes into
+// operator-actionable errors.
+func describeRedemptionFailure(status int, detail string) error {
+	switch status {
+	case http.StatusForbidden:
+		return fmt.Errorf("redemption rejected: invalid pairing code (%d)", status)
+	case http.StatusTooManyRequests:
+		return fmt.Errorf("redemption rate limited; retry later (%d)", status)
+	case http.StatusGone:
+		return fmt.Errorf("enrollment already redeemed or expired (%d)", status)
+	}
+	return fmt.Errorf("redemption failed: HTTP %d %s", status, strings.TrimSpace(detail))
+}
+
+// describeCSRSigningFailure keeps distinct phrasing for signing rejections.
+func describeCSRSigningFailure(status int, detail string) error {
+	if status == http.StatusBadRequest {
+		return fmt.Errorf("server rejected CSR: %s", strings.TrimSpace(detail))
+	}
+	return describeRedemptionFailure(status, detail)
+}
+
 // x509ParseBlock decodes the first certificate in a PEM block.
 func x509ParseBlock(block *pem.Block) (*x509.Certificate, error) {
 	if block == nil || block.Type != "CERTIFICATE" {
@@ -511,7 +536,14 @@ func provisionApplyCSR(from, dir string, force bool, skipConf bool, cn string) e
 
 	tr := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}} // #nosec G402 -- AEAD/code-authenticated exchange; see design doc
 	cl := &http.Client{Timeout: 30 * time.Second, Transport: tr}
-	req, rerr := http.NewRequest(http.MethodPost, strings.TrimSuffix(from, "/pair/"+code)+"/pair-csr/"+code, strings.NewReader(csrPEM))
+	// Derive the redemption base regardless of whether `from` carries the
+	// display or normalized code form.
+	base := from
+	if i := strings.LastIndex(base, "/pair/"); i >= 0 {
+		base = base[:i]
+	}
+	csrURL := strings.TrimRight(base, "/") + "/pair-csr/" + code
+	req, rerr := http.NewRequest(http.MethodPost, csrURL, strings.NewReader(csrPEM))
 	if rerr != nil {
 		return rerr
 	}
@@ -523,16 +555,8 @@ func provisionApplyCSR(from, dir string, force bool, skipConf bool, cn string) e
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	switch resp.StatusCode {
-	case http.StatusOK:
-	case http.StatusForbidden:
-		return fmt.Errorf("signing rejected: invalid pairing code")
-	case http.StatusTooManyRequests:
-		return fmt.Errorf("rate limited; retry later")
-	case http.StatusGone:
-		return fmt.Errorf("enrollment already redeemed or expired")
-	default:
-		return fmt.Errorf("signing failed: HTTP %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		return describeCSRSigningFailure(resp.StatusCode, string(body))
 	}
 
 	leafPEM, caPEM, err := provision.SplitLeafAndCA(body)

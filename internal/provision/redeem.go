@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -34,6 +35,9 @@ type RedemptionServer struct {
 
 	mu       sync.Mutex
 	attempts map[string]int
+
+	delivered  atomic.Bool // set when the offer has been delivered once
+	responseMu sync.Mutex  // serializes terminal response writes
 }
 
 // MaxAttemptsPerClient bounds guessing during the TTL window.
@@ -82,10 +86,17 @@ func (r *RedemptionServer) ServeTLS(ctx context.Context, certFile, keyFile strin
 	defer cancel()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/pair/", r.handlePair)
-	if r.caDir != "" {
-		mux.HandleFunc("/pair-csr/", r.handlePairCSR)
-	}
+	mux.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
+		fmt.Printf("[HTTPDBG] %s %s from %s caDir=%q\n", req.Method, req.URL.RequestURI(), req.RemoteAddr, r.caDir)
+		switch {
+		case strings.HasPrefix(req.URL.Path, "/pair-csr/") && r.caDir != "":
+			r.handlePairCSR(w, req)
+		case strings.HasPrefix(req.URL.Path, "/pair/"):
+			r.handlePair(w, req)
+		default:
+			http.NotFound(w, req)
+		}
+	})
 
 	r.srv = &http.Server{
 		Handler:           mux,
@@ -96,9 +107,8 @@ func (r *RedemptionServer) ServeTLS(ctx context.Context, certFile, keyFile strin
 	go func() {
 		select {
 		case <-time.After(r.ttl):
-		case <-r.done: // consumed
-			// Small grace so the winning response flushes before shutdown.
-			time.Sleep(500 * time.Millisecond)
+		case <-r.done: // consumed; give the flushed response a moment to drain
+			time.Sleep(250 * time.Millisecond)
 		case <-ctx.Done():
 		}
 		_ = r.srv.Close()
@@ -108,20 +118,14 @@ func (r *RedemptionServer) ServeTLS(ctx context.Context, certFile, keyFile strin
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
 	}
-	if r.consumed() && (err == nil || errors.Is(err, net.ErrClosed)) {
+	if r.deliveredYet() && (err == nil || errors.Is(err, net.ErrClosed)) {
 		return nil // normal post-redemption shutdown
 	}
 	return err
 }
 
-func (r *RedemptionServer) consumed() bool {
-	r.consumeOnce.Do(func() {})
-	select {
-	case <-r.done:
-		return true
-	default:
-		return false
-	}
+func (r *RedemptionServer) deliveredYet() bool {
+	return r.delivered.Load()
 }
 
 func (r *RedemptionServer) handlePair(w http.ResponseWriter, req *http.Request) {
@@ -146,9 +150,7 @@ func (r *RedemptionServer) handlePair(w http.ResponseWriter, req *http.Request) 
 		http.Error(w, "already redeemed", http.StatusGone)
 		return
 	}
-	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Cache-Control", "no-store")
-	_, _ = w.Write(r.bundle)
+	r.finishAndShutdown(w, r.bundle)
 }
 
 // allowAttempt enforces the per-client guess budget for this TTL window.
@@ -159,16 +161,24 @@ func (r *RedemptionServer) allowAttempt(clientIP string) bool {
 	return r.attempts[clientIP] <= MaxAttemptsPerClient
 }
 
+// markConsumed returns true when this caller LOST the race (already taken).
 func (r *RedemptionServer) markConsumed() bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	select {
-	case <-r.done:
-		return true
-	default:
-		close(r.done)
-		return false
+	return !r.delivered.CompareAndSwap(false, true)
+}
+
+// finishAndShutdown flushes the terminal response, then triggers listener
+// shutdown. Safe against double-close because done closes exactly once here.
+func (r *RedemptionServer) finishAndShutdown(w http.ResponseWriter, body []byte) {
+	r.responseMu.Lock()
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write(body)
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
 	}
+	r.responseMu.Unlock()
+
+	r.consumeOnce.Do(func() { close(r.done) })
 }
 
 // handlePairCSR signs a client-submitted CSR after code authentication.
@@ -187,8 +197,10 @@ func (r *RedemptionServer) handlePairCSR(w http.ResponseWriter, req *http.Reques
 		http.Error(w, "too many attempts", http.StatusTooManyRequests)
 		return
 	}
-	submitted, err := NormalizePairingCode(codeParam)
-	if err != nil || subtle.ConstantTimeCompare([]byte(submitted), []byte(r.code)) != 1 {
+	submitted, nerr := NormalizePairingCode(codeParam)
+	fmt.Printf("[CSRDBG] path=%q submitted=%q stored=%q nerr=%v\n",
+		req.URL.Path, submitted, r.code, nerr)
+	if nerr != nil || subtle.ConstantTimeCompare([]byte(submitted), []byte(r.code)) != 1 {
 		http.Error(w, "invalid code", http.StatusForbidden)
 		return
 	}
@@ -204,7 +216,9 @@ func (r *RedemptionServer) handlePairCSR(w http.ResponseWriter, req *http.Reques
 	}
 	leaf, err := SignCSR(string(body), r.caDir, 0)
 	if err != nil {
-		http.Error(w, "sign failed", http.StatusBadRequest)
+		// Signing failures are almost always malformed submissions; the
+		// underlying reason carries no secret material.
+		http.Error(w, fmt.Sprintf("sign failed: %v", err), http.StatusBadRequest)
 		return
 	}
 	caPEM, rerr := os.ReadFile(filepath.Join(r.caDir, "ca.crt"))
@@ -212,10 +226,7 @@ func (r *RedemptionServer) handlePairCSR(w http.ResponseWriter, req *http.Reques
 		http.Error(w, "CA unavailable", http.StatusInternalServerError)
 		return
 	}
-	close(r.done)
-	w.Header().Set("Content-Type", "application/x-pem-file")
-	w.Header().Set("Cache-Control", "no-store")
-	_, _ = w.Write([]byte(leaf + "\n" + string(caPEM)))
+	r.finishAndShutdown(w, []byte(leaf+"\n"+string(caPEM)))
 }
 
 // EnableCSRSigning activates the /pair-csr endpoint backed by caDir.
