@@ -60,11 +60,22 @@ This file tracks currently-true issues only.
   filesystems; root compose tags the locally built image `sssonector:local`.
 - ~~Semgrep: compose hardening~~ — addressed by the same change.
 
+8. **Provisioning & key-sharing gap (T1–T9)** — first-run enrollment requires
+   manual openssl + file transfer with no pairing/verification story.
+   ADR accepted (`docs/provisioning_design.md`, Status: ACCEPTED):
+   `provision create|apply|verify` subcommands in `cmd/daemon`, encrypted
+   `.ssp` bundles (Argon2id + XChaCha20-Poly1305), CSR mode as documented
+   default once shipped. Implementation in progress.
+
 ## Resolved (2026-08 external audits — code + docs)
 
 - ~~F1 /tmp/ TLS skip heuristic~~ · ~~D1 Dockerfile toolchain~~ ·
   ~~D2 stale Issues.md #3~~ — fixed in e0210ea (auditors ran against the
   parent commit); verified present on HEAD.
+- ~~Phantom certificate flags~~ (`-keygen`, `-validate-certs`,
+  `-generate-certs-only`, `-keyfile`, `-test-without-certs`) — superseded by
+  the accepted provisioning design; real `provision` subcommands replace
+  them; `docs/certificate_management.md` rewritten in the same change set.
 - ~~H1 DR scripts unrunnable~~ — three `}`→`fi` syntax errors fixed;
   all three pass `bash -n`.
 - ~~H2 phantom DR flags~~ — README Script Usage rewritten to the real

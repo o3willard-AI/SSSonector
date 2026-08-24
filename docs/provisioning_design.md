@@ -1,6 +1,6 @@
 # Provisioning & Key Sharing Design
 
-> Status: PROPOSED · Owner: maintainers · Scope: first-run enrollment of clients
+> Status: ACCEPTED · Owner: maintainers · Scope: first-run enrollment of clients
 > (and server bootstrap) across Linux, macOS, and Windows.
 
 ## Problem
