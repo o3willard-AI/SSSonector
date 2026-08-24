@@ -86,25 +86,6 @@ Start-Service SSonector
 Get-Service SSonector
 ```
 
-### 3. Cloud Deployment
-
-#### Kubernetes
-
-1. Apply configuration:
-```bash
-kubectl apply -f deploy/kubernetes/
-```
-
-2. Verify deployment:
-```bash
-kubectl get pods -l app=sssonector
-```
-
-3. Check logs:
-```bash
-kubectl logs -l app=sssonector
-```
-
 ## Configuration
 
 ### 1. Basic Configuration
