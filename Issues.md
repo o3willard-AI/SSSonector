@@ -67,6 +67,12 @@ This file tracks currently-true issues only.
    `.ssp` bundles (Argon2id + XChaCha20-Poly1305), CSR mode as documented
    default once shipped. Implementation in progress.
 
+9. **Non-interactive enrollment absent** - `provision apply` requires a TTY
+   by design (fail-closed); fully unattended enrollment (env/config injected
+   pairing secret for CI/lab automation) is deliberately not implemented.
+   Revisit behind an explicit design decision with a documented threat-model
+   tradeoff.
+
 ## Resolved (2026-08 external audits — code + docs)
 
 - ~~F1 /tmp/ TLS skip heuristic~~ · ~~D1 Dockerfile toolchain~~ ·

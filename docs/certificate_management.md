@@ -2,6 +2,11 @@
 
 ## Overview
 
+> **How-to moved:** worked examples for issuing, installing and verifying
+> certificates live in the [Provisioning Guide](provisioning_guide.md)
+> (`sssonector provision create|apply|verify`). This page is the reference
+> for chain layout, on-disk permissions, and rotation semantics.
+
 SSSonector uses mutual X.509 certificates (client + server, anchored by a
 local CA) for authentication and encryption. All certificate lifecycle
 operations are handled through the `provision` subcommands of the daemon:

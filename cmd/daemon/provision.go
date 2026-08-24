@@ -416,13 +416,19 @@ func provisionVerify(args []string) error {
 	pool := x509.NewCertPool()
 	pool.AddCert(caCert)
 
-	checkLeaf := func(file string, isCA bool) {
+	leavesSeen := 0
+	checkLeaf := func(file string) {
 		data, rerr := os.ReadFile(filepath.Join(*dir, file))
+		if errors.Is(rerr, os.ErrNotExist) {
+			fmt.Printf("%-12s [absent - skipped]\n", file)
+			return
+		}
 		if rerr != nil {
-			fmt.Printf("%-12s MISSING (%v)\n", file, rerr)
+			fmt.Printf("%-12s READ ERROR (%v)\n", file, rerr)
 			status = 1
 			return
 		}
+		leavesSeen++
 		lblock, _ := pem.Decode(data)
 		if lblock == nil {
 			fmt.Printf("%-12s UNPARSEABLE PEM\n", file)
@@ -459,9 +465,13 @@ func provisionVerify(args []string) error {
 			file, crt.NotAfter.UTC().Format("2006-01-02"), days, state, crt.Subject.CommonName)
 	}
 
-	checkLeaf("ca.crt", true)
-	checkLeaf("server.crt", false)
-	checkLeaf("client.crt", false)
+	checkLeaf("ca.crt")
+	checkLeaf("server.crt")
+	checkLeaf("client.crt")
+	if leavesSeen == 0 {
+		fmt.Println("no certificates found to verify")
+		status = 1
+	}
 
 	if status != 0 {
 		return fmt.Errorf("verification reported problems above")

@@ -1,0 +1,8 @@
+# Allowlist for synthetic test fixtures that trip generic detectors.
+[allowlist]
+  description = "test-only fake PEM/HMAC material"
+  paths = [
+    "internal/provision/bundle_test.go",
+    "internal/facade/server_test.go",
+    "internal/facade/client_test.go",
+  ]

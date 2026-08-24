@@ -74,6 +74,17 @@ go build -o sssonector.exe .\cmd\tunnel
 ```
 
 ## Configuration Examples
+### Obtain certificates
+
+Use provisioning (recommended):
+```bash
+.\sssonector.exe provision create --role client --out client.ssp   # server side
+sssonector provision apply --from client.ssp                        # client side
+```
+Full walkthrough incl. network redemption and CSR mode:
+[provisioning_guide.md](provisioning_guide.md).
+
+
 
 Complete reference examples live in `configs/` and `templates/`. The
 current schema requires `metadata.schema_version: "2.0.0"`; configs are
