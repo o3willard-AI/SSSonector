@@ -111,6 +111,50 @@ chmod +x sssonector-linux-amd64
 sudo mv sssonector-linux-amd64 /usr/local/bin/sssonector
 ```
 
+### Provisioning (first tunnel up)
+
+> Applies when: two Linux hosts on the same subnet, each installed with the
+> one-line installer above. This uses network redemption with CSR mode — the
+> client's private key never leaves the machine and no manual file transfer is
+> needed. For offline transfer, Windows/macOS, rotation, troubleshooting, and
+> all other scenarios, see the [Provisioning Guide](docs/provisioning_guide.md).
+
+**On the server** — create the shared secret, then mint the enrollment bundle.
+The server blocks serving the offer until redeemed or its 15-minute TTL expires;
+it prints `pairing code:   ABCD-EFGH`, a `CA fingerprint`, and the redemption
+URL:
+
+```bash
+openssl rand -hex 32 > /etc/sssonector/token_secret   # a FILE, one level above certs/
+chmod 600 /etc/sssonector/token_secret
+sssonector provision create --role client --server-addr 192.0.2.10 \
+    --server-port 8443 --certs-dir /etc/sssonector/certs \
+    --serve --listen :9443 --out /tmp/client.ssp
+```
+
+**On the client** — redeem the offer; the key is generated locally and only a
+signing request travels to the server. Enter the pairing code when prompted;
+it installs `client.crt` + `ca.crt` and prints `Key never left this machine.`:
+
+```bash
+sssonector provision apply \
+    --from https://198.51.100.10:9443/pair/ABCD-EFGH --csr
+```
+
+**Start + verify** — the daemon runs with a config file (CSR mode installs
+certificates only and writes none — provide one per the Configuration Guide),
+then watch for the established-tunnel log line and ping the peer TUN IP:
+
+```bash
+sssonector -config /etc/sssonector/config.yaml server   # server host
+sssonector -config /etc/sssonector/config.yaml client   # client host
+journalctl -f | grep "Tunnel established"                # client shows it first
+ping 10.77.0.2                                          # from server, to client TUN IP
+```
+
+See the [Provisioning Guide](docs/provisioning_guide.md) for offline transfer,
+Windows/macOS, rotation, troubleshooting, and all other scenarios.
+
 ## Lifecycle Management
 
 ### Upgrade
