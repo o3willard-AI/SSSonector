@@ -83,15 +83,15 @@ The installer will:
 curl -fsSL https://raw.githubusercontent.com/o3willard-AI/SSSonector/main/install.sh | \
   sudo SSSONECTOR_MODE=server \
        SSSONECTOR_INSTANCE=tunnel-a \
-       SSSONECTOR_ADDRESS=10.0.1.1/24 \
+       SSSONECTOR_ADDRESS=10.77.0.1/24 \
        bash
 
 # Non-interactive client install
 curl -fsSL https://raw.githubusercontent.com/o3willard-AI/SSSonector/main/install.sh | \
   sudo SSSONECTOR_MODE=client \
        SSSONECTOR_INSTANCE=tunnel-a \
-       SSSONECTOR_ADDRESS=10.0.1.2/24 \
-       SSSONECTOR_SERVER=your-server-ip \
+       SSSONECTOR_ADDRESS=10.77.0.2/24 \
+       SSSONECTOR_SERVER=192.0.2.10 \
        bash
 ```
 
@@ -269,7 +269,7 @@ config:
   network:
     name: tun1
     interface: tun1
-    address: 10.0.1.1/24
+    address: 10.77.0.1/24
     mtu: 1500
   tunnel:
     listen_address: 0.0.0.0
@@ -314,10 +314,10 @@ config:
   network:
     name: tun1
     interface: tun1
-    address: 10.0.1.2/24
+    address: 10.77.0.2/24
     mtu: 1500
   tunnel:
-    server_address: 192.168.1.10
+    server_address: 192.0.2.10
     server_port: 8443
     protocol: tcp
   auth:
@@ -348,13 +348,13 @@ SSSonector uses a point-to-point architecture: one instance per client-server pa
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        SERVER (192.168.1.10)                     │
+│                        SERVER (192.0.2.10)                      │
 │                                                                  │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐           │
 │  │  Instance    │  │  Instance    │  │  Instance    │           │
 │  │  client-a    │  │  client-b    │  │  client-c    │           │
 │  │  tun1        │  │  tun2        │  │  tun3        │           │
-│  │  10.0.1.1    │  │  10.0.2.1    │  │  10.0.3.1    │           │
+│  │  10.77.1.1   │  │  10.77.2.1   │  │  10.77.3.1   │           │
 │  │  port 8443   │  │  port 8444   │  │  port 8445   │           │
 │  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘           │
 └─────────┼────────────────┼────────────────┼────────────────────┘
@@ -363,7 +363,7 @@ SSSonector uses a point-to-point architecture: one instance per client-server pa
           ▼                ▼                ▼
      ┌─────────┐      ┌─────────┐      ┌─────────┐
      │Client A │      │Client B │      │Client C │
-     │10.0.1.2 │      │10.0.2.2 │      │10.0.3.2 │
+     │10.77.1.2│      │10.77.2.2│      │10.77.3.2│
      └─────────┘      └─────────┘      └─────────┘
 ```
 
@@ -371,7 +371,7 @@ SSSonector uses a point-to-point architecture: one instance per client-server pa
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        SERVER (192.168.1.10)                     │
+│                        SERVER (192.0.2.10)                      │
 │                                                                  │
 │  ┌─────────────────────────────────────────────────────────┐     │
 │  │              HTTPS Facade (:443)                         │     │
