@@ -71,6 +71,34 @@ CI enforces the same gates plus govulncheck and Gitleaks. Never merge red.
 - Commits: keep one logical change per commit; do not commit binaries,
   object files, logs, QA snapshots, or editor state (.gitignore covers them).
 
+## Platform binary builders
+
+Build each platform's binary on its native runner so the release carries
+genuine per-OS artifacts (see `.github/workflows/release.yml` for the matrix
+and authoritative naming). Bring the binary online by uploading it as a
+release asset alongside `SHA256SUMS`. Version is injected via
+`-X main.Version=<tag>`; the Linux agent provides `sssonector-linux-amd64` /
+`sssonector-linux-arm64`.
+
+- **macOS builder** — produce and upload:
+  - `sssonector-darwin-amd64`
+  - `sssonector-darwin-arm64`
+  - Build on a macOS host (or the `macos-latest` runner):
+    `CGO_ENABLED=0 GOOS=darwin GOARCH=<arch> go build -trimpath \
+    -ldflags="-s -w -X main.Version=<tag>" -o dist/sssonector-darwin-<arch> ./cmd/daemon`
+  - Sanity: `./dist/sssonector-darwin-<arch> -version` must print the tag.
+
+- **Windows builder** — produce:
+  - `sssonector-windows-amd64.exe`
+  - Build on a Windows host (or the `windows-latest` runner):
+    `CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath \
+    -ldflags="-s -w -X main.Version=v<tag>" -o dist/sssonector-windows-amd64.exe ./cmd/daemon`
+  - Sanity: run `dist\sssonector-windows-amd64.exe -version` and confirm it
+    prints the tag.
+
+Upload both to the same GitHub release as the Linux artifacts and the
+`SHA256SUMS` manifest before marking the release live.
+
 ## Documentation
 
 - Update docs in the same PR that changes behavior. Drift between docs and
