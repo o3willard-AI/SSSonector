@@ -1,6 +1,6 @@
 # SSSonector
 
-SSSonector (**Secure SSL Connector**) is a high-performance, secure tunnel service designed to enable point-to-point communication over the public internet. Tunnel traffic is indistinguishable from normal HTTPS web traffic, allowing it to traverse firewalls and network infrastructure that only permits standard web browsing.
+SSSonector (**Secure SSL Connector**) is a high-performance, secure tunnel service designed to enable point-to-point communication over the internet or any untrusted network links. Tunnel traffic can be made indistinguishable from normal HTTPS web traffic, allowing it to traverse firewalls and network infrastructure that only permits standard web browsing.
 
 ## Features
 
