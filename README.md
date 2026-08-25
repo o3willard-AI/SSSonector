@@ -114,10 +114,13 @@ sudo mv sssonector-linux-amd64 /usr/local/bin/sssonector
 ### Provisioning (first tunnel up)
 
 > Applies when: two Linux hosts on the same subnet, each installed with the
-> one-line installer above. This uses network redemption with CSR mode — the
-> client's private key never leaves the machine and no manual file transfer is
-> needed. For offline transfer, Windows/macOS, rotation, troubleshooting, and
-> all other scenarios, see the [Provisioning Guide](docs/provisioning_guide.md).
+> one-line installer above. Example addressing: **192.0.2.0/24** is the LAN
+> outside the tunnel (server `192.0.2.10`, client `192.0.2.20`); **10.77.0.0/24**
+> is the network inside the tunnel (server `10.77.0.1`, client `10.77.0.2`).
+> This uses network redemption with CSR mode — the client's private key never
+> leaves the machine and no manual file transfer is needed. For offline
+> transfer, Windows/macOS, rotation, troubleshooting, and all other scenarios,
+> see the [Provisioning Guide](docs/provisioning_guide.md).
 
 **On the server** — create the shared secret, then mint the enrollment bundle.
 The server blocks serving the offer until redeemed or its 15-minute TTL expires;
@@ -138,7 +141,7 @@ it installs `client.crt` + `ca.crt` and prints `Key never left this machine.`:
 
 ```bash
 sssonector provision apply \
-    --from https://198.51.100.10:9443/pair/ABCD-EFGH --csr
+    --from https://192.0.2.10:9443/pair/ABCD-EFGH --csr
 ```
 
 **Start + verify** — the daemon runs with a config file (CSR mode installs
