@@ -77,7 +77,7 @@ func provisionCreate(args []string) error {
 	// unique client certificate per enrollment.
 	if _, err := os.Stat(filepath.Join(*certsDir, "ca.crt")); errors.Is(err, os.ErrNotExist) {
 		fmt.Fprintf(os.Stderr, "No CA found in %s; generating new CA + server pair...\n", *certsDir)
-		if err := generator.GenerateCertificates(*certsDir); err != nil {
+		if err := generator.GenerateCertificates(*certsDir, *serverAddr); err != nil {
 			return fmt.Errorf("generate certificates: %w", err)
 		}
 	}

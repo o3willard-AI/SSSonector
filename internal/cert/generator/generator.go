@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -22,7 +23,7 @@ const (
 )
 
 // GenerateCertificates generates a complete set of certificates in the specified directory
-func GenerateCertificates(certDir string) error {
+func GenerateCertificates(certDir string, serverIPs ...string) error {
 	// Generate CA key pair
 	caKey, err := rsa.GenerateKey(rand.Reader, defaultKeySize)
 	if err != nil {
@@ -55,7 +56,7 @@ func GenerateCertificates(certDir string) error {
 	}
 
 	// Generate server certificates
-	if err := generateEndEntityCert(certDir, "server", ca, caKey, defaultCertDuration); err != nil {
+	if err := generateEndEntityCert(certDir, "server", ca, caKey, defaultCertDuration, serverIPs...); err != nil {
 		return fmt.Errorf("failed to generate server certificate: %v", err)
 	}
 
@@ -117,8 +118,10 @@ func GenerateTemporaryCertificates(certDir string) error {
 	return nil
 }
 
-// generateEndEntityCert generates a certificate for either server or client
-func generateEndEntityCert(certDir, name string, ca *x509.Certificate, caKey *rsa.PrivateKey, duration time.Duration) error {
+// generateEndEntityCert generates a certificate for either server or client.
+// serverIPs, when provided, are added as IP SANs on the server certificate so
+// clients can verify the server by the address they dial.
+func generateEndEntityCert(certDir, name string, ca *x509.Certificate, caKey *rsa.PrivateKey, duration time.Duration, serverIPs ...string) error {
 	key, err := rsa.GenerateKey(rand.Reader, defaultKeySize)
 	if err != nil {
 		return fmt.Errorf("failed to generate %s private key: %v", name, err)
@@ -137,20 +140,18 @@ func generateEndEntityCert(certDir, name string, ca *x509.Certificate, caKey *rs
 		BasicConstraintsValid: true,
 	}
 
-	// Add IP SANs for server and client certificates
+	// Add IP SANs so TLS verification succeeds when peers connect by IP.
 	switch name {
 	case "server":
-		template.IPAddresses = []net.IP{
-			net.ParseIP("127.0.0.1"),      // localhost
-			net.ParseIP("192.168.50.210"), // server IP
-			net.ParseIP("192.168.50.211"), // client IP
+		ips := []net.IP{net.ParseIP("127.0.0.1")} // localhost
+		for _, s := range serverIPs {
+			if ip := net.ParseIP(strings.TrimSpace(s)); ip != nil {
+				ips = append(ips, ip)
+			}
 		}
+		template.IPAddresses = ips
 	case "client":
-		template.IPAddresses = []net.IP{
-			net.ParseIP("127.0.0.1"),      // localhost
-			net.ParseIP("192.168.50.210"), // server IP
-			net.ParseIP("192.168.50.211"), // client IP
-		}
+		template.IPAddresses = []net.IP{net.ParseIP("127.0.0.1")}
 	}
 
 	certBytes, err := x509.CreateCertificate(rand.Reader, template, ca, &key.PublicKey, caKey)
