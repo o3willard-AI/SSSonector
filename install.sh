@@ -273,13 +273,13 @@ create_server_config() {
     
     generate_certificates "$name"
     
-    sed -e "s/{{INSTANCE_NAME}}/$name/g" \
-        -e "s/{{TUN_INTERFACE}}/$tun/g" \
-        -e "s/{{TUN_ADDRESS}}/$address/g" \
-        -e "s/{{LISTEN_PORT}}/$port/g" \
-        -e "s/{{PROMETHEUS_PORT}}/$prom_port/g" \
-        -e "s/{{RATE_LIMIT}}/$rate/g" \
-        -e "s/{{RATE_BURST}}/$burst/g" \
+    sed -e "s|{{INSTANCE_NAME}}|$name|g" \
+        -e "s|{{TUN_INTERFACE}}|$tun|g" \
+        -e "s|{{TUN_ADDRESS}}|$address|g" \
+        -e "s|{{LISTEN_PORT}}|$port|g" \
+        -e "s|{{PROMETHEUS_PORT}}|$prom_port|g" \
+        -e "s|{{RATE_LIMIT}}|$rate|g" \
+        -e "s|{{RATE_BURST}}|$burst|g" \
         "${template_dir}/server.yaml.template" > "$instance_path/config.yaml"
     
     log_info "Server instance created: $instance_path"
@@ -307,14 +307,14 @@ create_client_config() {
     
     generate_certificates "$name"
     
-    sed -e "s/{{INSTANCE_NAME}}/$name/g" \
-        -e "s/{{TUN_INTERFACE}}/$tun/g" \
-        -e "s/{{TUN_ADDRESS}}/$address/g" \
-        -e "s/{{SERVER_ADDRESS}}/$server/g" \
-        -e "s/{{SERVER_PORT}}/$server_port/g" \
-        -e "s/{{PROMETHEUS_PORT}}/$prom_port/g" \
-        -e "s/{{RATE_LIMIT}}/$rate/g" \
-        -e "s/{{RATE_BURST}}/$burst/g" \
+    sed -e "s|{{INSTANCE_NAME}}|$name|g" \
+        -e "s|{{TUN_INTERFACE}}|$tun|g" \
+        -e "s|{{TUN_ADDRESS}}|$address|g" \
+        -e "s|{{SERVER_ADDRESS}}|$server|g" \
+        -e "s|{{SERVER_PORT}}|$server_port|g" \
+        -e "s|{{PROMETHEUS_PORT}}|$prom_port|g" \
+        -e "s|{{RATE_LIMIT}}|$rate|g" \
+        -e "s|{{RATE_BURST}}|$burst|g" \
         "${template_dir}/client.yaml.template" > "$instance_path/config.yaml"
     
     log_info "Client instance created: $instance_path"
