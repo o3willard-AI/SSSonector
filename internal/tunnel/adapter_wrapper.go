@@ -6,7 +6,58 @@ import (
 	"time"
 
 	"github.com/o3willard-AI/SSSonector/internal/adapter"
+	"github.com/o3willard-AI/SSSonector/internal/nat"
 )
+
+// natIntercept wraps a net.Conn (the TUN adapter) and routes packets
+// through the NAT engine before/after the normal data path. A nil
+// engine means NAT is disabled and the wrapper is fully transparent.
+type natIntercept struct {
+	net.Conn
+	engine *nat.Engine
+	// fromTunnel: true if this conn's reads deliver tunnel-originated
+	// packets (server role). False means this conn faces the egress
+	// (server LAN) side and carries return traffic.
+	fromTunnel bool
+}
+
+// NewNATIntercept wraps conn with NAT processing. Returns conn itself
+// when engine is nil (NAT disabled: zero behavior change).
+func NewNATIntercept(conn net.Conn, engine *nat.Engine, fromTunnel bool) net.Conn {
+	if engine == nil {
+		return conn
+	}
+	return &natIntercept{Conn: conn, engine: engine, fromTunnel: fromTunnel}
+}
+
+func (n *natIntercept) Read(b []byte) (int, error) {
+	c, err := n.Conn.Read(b)
+	if err != nil || c == 0 {
+		return c, err
+	}
+	pkt := b[:c]
+	if n.fromTunnel {
+		// Packets from the tunnel: forward path (ACL + SNAT).
+		out, perr := n.engine.ProcessTunnelPacket(pkt)
+		if perr != nil {
+			return 0, nil // drop: fail closed without killing the stream
+		}
+		if len(out) != len(pkt) {
+			// In-place rewrite only shrinks never; sizes equal.
+			return len(pkt), nil
+		}
+		return len(out), nil
+	}
+	// Egress side: return traffic of translated flows.
+	if _, perr := n.engine.ProcessEgressPacket(pkt); perr != nil {
+		return 0, nil // drop
+	}
+	return c, nil
+}
+
+func (n *natIntercept) Write(b []byte) (int, error) {
+	return n.Conn.Write(b)
+}
 
 // adapterWrapper wraps an adapter.Interface to implement net.Conn
 type adapterWrapper struct {

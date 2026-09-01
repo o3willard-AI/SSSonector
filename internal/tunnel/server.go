@@ -12,6 +12,7 @@ import (
 	"github.com/o3willard-AI/SSSonector/internal/adapter"
 	"github.com/o3willard-AI/SSSonector/internal/facade"
 	"github.com/o3willard-AI/SSSonector/internal/monitor"
+	"github.com/o3willard-AI/SSSonector/internal/nat"
 	"go.uber.org/zap"
 )
 
@@ -25,6 +26,8 @@ type Server struct {
 	iface        adapter.Interface
 	tlsManager   *TLSManager
 	facadeServer *facade.Server
+	natEngine    *nat.Engine
+	natGCStop    chan struct{}
 	wg           sync.WaitGroup
 	ctx          context.Context
 	cancel       context.CancelFunc
@@ -107,6 +110,26 @@ func (s *Server) Start() error {
 	}
 	s.iface = iface
 
+	// NAT engine (phase 2: forward path). Disabled config → nil engine,
+	// zero data-path change.
+	natCfg := s.activeConfig().Config.NAT
+	if natCfg.Enabled && natCfg.Forward.Enabled {
+		eng, err := nat.NewEngine(&natCfg, nat.Options{
+			EgressIP: s.egressAddress(),
+		}, s.logger)
+		if err != nil {
+			s.logger.Error("NAT engine startup failed; NAT is OFF",
+				zap.Error(err))
+			// Fail closed: NAT disabled, tunnel continues un-NATed.
+		} else if eng != nil {
+			s.natEngine = eng
+			s.natGCStop = make(chan struct{})
+			eng.StartGC(s.natGCStop, 0)
+			s.logger.Info("NAT forward engine started",
+				zap.Int("forward_rules", len(natCfg.Forward.Rules)))
+		}
+	}
+
 	listenAddr := fmt.Sprintf("%s:%d", s.activeConfig().Config.Tunnel.ListenAddress, s.activeConfig().Config.Tunnel.ListenPort)
 	s.logger.Info("Starting tunnel server",
 		zap.String("address", listenAddr),
@@ -145,6 +168,32 @@ func (s *Server) Start() error {
 		}
 	}
 
+	return nil
+}
+
+// egressAddress resolves the SNAT source address: the first non-tunnel
+// interface address on this host. Returns nil when discovery fails, in
+// which case forward NAT fails closed (engine construction errors out).
+func (s *Server) egressAddress() net.IP {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return nil
+	}
+	_, tunnelNet, _ := net.ParseCIDR(s.activeConfig().Config.Network.Address)
+	for _, a := range addrs {
+		ipNet, ok := a.(*net.IPNet)
+		if !ok {
+			continue
+		}
+		ip4 := ipNet.IP.To4()
+		if ip4 == nil || ip4.IsLoopback() || ip4.IsLinkLocalUnicast() {
+			continue
+		}
+		if tunnelNet != nil && tunnelNet.Contains(ip4) {
+			continue
+		}
+		return ip4
+	}
 	return nil
 }
 
@@ -222,6 +271,13 @@ func (s *Server) handleConnection(conn net.Conn) {
 	tunnelConn = newCountingConn(tunnelConn, idle, &s.bytesIn, &s.bytesOut)
 
 	adapterConn := NewAdapterWrapper(s.iface)
+	// NAT intercept on the adapter side: reads deliver packets leaving
+	// toward the egress (server LAN); fromTunnel=false means egress-side
+	// processing for return traffic. The tunnel side is processed when
+	// packets enter via the transfer source path.
+	if s.natEngine != nil {
+		adapterConn = NewNATIntercept(adapterConn, s.natEngine, false)
+	}
 	transfer, err := NewTransfer(tunnelConn, adapterConn, s.activeConfig(), s.logger)
 	if err != nil {
 		s.logger.Error("Failed to create transfer", zap.Error(err), zap.String("remote", remoteAddr))
@@ -271,9 +327,19 @@ func (s *Server) ApplyConfig(newCfg *config.AppConfig) error {
 	oldCfg := s.config
 	s.config = newCfg
 	transfer := s.currentTransfer
+	natEngine := s.natEngine
 	s.mu.Unlock()
 
 	applyRuntimeSettings(s.logger, oldCfg, newCfg, transfer, s.tlsManager)
+
+	// Hot-apply NAT rules when the engine is running and the config kept
+	// it enabled (structural toggles are warned as restart-required).
+	if natEngine != nil && newCfg.Config.NAT.Enabled && newCfg.Config.NAT.Forward.Enabled {
+		if err := natEngine.ReloadRules(&newCfg.Config.NAT); err != nil {
+			s.logger.Error("NAT rules hot-reload failed; keeping previous rules",
+				zap.Error(err))
+		}
+	}
 	return nil
 }
 
@@ -332,6 +398,12 @@ func (s *Server) currentTransferSnapshotLocked() *Transfer {
 // Stop stops the tunnel server
 func (s *Server) Stop() error {
 	s.logger.Info("Stopping tunnel server")
+
+	// Stop the NAT GC loop first
+	if s.natGCStop != nil {
+		close(s.natGCStop)
+		s.natGCStop = nil
+	}
 
 	// Stop the HTTPS facade first
 	if s.facadeServer != nil {
