@@ -101,6 +101,12 @@ func logRestartRequiredChanges(logger *zap.Logger, oldCfg, newCfg *config.AppCon
 	warnIfChanged("snmp.enabled", oldC.SNMP.Enabled != newC.SNMP.Enabled)
 	warnIfChanged("snmp.port", oldC.SNMP.Port != newC.SNMP.Port)
 	warnIfChanged("metrics.interval", oldC.Metrics.Interval != newC.Metrics.Interval)
+
+	// NAT enable/disable is structural (engine lifecycle); rule and
+	// listener changes are hot-applied by the engine's ReloadRules.
+	warnIfChanged("nat.enabled", oldC.NAT.Enabled != newC.NAT.Enabled)
+	warnIfChanged("nat.forward.enabled", oldC.NAT.Forward.Enabled != newC.NAT.Forward.Enabled)
+	warnIfChanged("nat.reverse.enabled", oldC.NAT.Reverse.Enabled != newC.NAT.Reverse.Enabled)
 }
 
 // sampleThrottle accumulates per-transfer hit deltas into cumulative
