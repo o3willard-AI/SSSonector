@@ -1,6 +1,7 @@
 package nat
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/o3willard-AI/SSSonector/internal/config"
@@ -32,6 +33,54 @@ func (e *Engine) ReloadRules(newCfg *config.NATConfig) error {
 		zap.Int("forward_rules", len(newCfg.Forward.Rules)),
 		zap.Int("reverse_listeners", len(newCfg.Reverse.Listeners)),
 	)
+	return nil
+}
+
+// ReverseReloadable is implemented by the reverse path for SIGHUP
+// listener updates: add/remove published ports without restart.
+type ReverseReloader interface {
+	ReloadListeners(listeners []config.NATListenerRule) error
+}
+
+// ReloadListeners converges running listeners toward the configured set:
+// removed listeners are stopped, new ones started, existing ones left
+// running (their ACL is refreshed in place). Bind failures of new
+// listeners are reported but never tear down existing listeners.
+func (r *ReverseNAT) ReloadListeners(listeners []config.NATListenerRule) error {
+	r.mu.Lock()
+	current := make(map[int]*publicListener, len(r.listeners))
+	for p, pl := range r.listeners {
+		current[p] = pl
+	}
+	r.mu.Unlock()
+
+	desired := make(map[int]config.NATListenerRule, len(listeners))
+	for _, l := range listeners {
+		desired[l.ListenPort] = l
+	}
+
+	var errs []error
+	// Stop listeners no longer configured.
+	for p := range current {
+		if _, keep := desired[p]; !keep {
+			if err := r.StopListener(p); err != nil {
+				errs = append(errs, fmt.Errorf("stop %d: %w", p, err))
+			}
+		}
+	}
+	// Start newly configured listeners.
+	for p, rule := range desired {
+		if _, running := current[p]; running {
+			continue
+		}
+		if err := r.StartListener(rule); err != nil {
+			errs = append(errs, fmt.Errorf("start %d: %w", p, err))
+		}
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("listener reload partial: %v", errs)
+	}
 	return nil
 }
 

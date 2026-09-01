@@ -27,6 +27,7 @@ type Server struct {
 	tlsManager   *TLSManager
 	facadeServer *facade.Server
 	natEngine    *nat.Engine
+	natReverse   *nat.ReverseNAT
 	natGCStop    chan struct{}
 	wg           sync.WaitGroup
 	ctx          context.Context
@@ -130,6 +131,35 @@ func (s *Server) Start() error {
 		}
 	}
 
+	// Reverse PAT (phase 3): publish peer services on public ports. The
+	// netstack's link writer sends frames into the tunnel; inbound
+	// tunnel frames are delivered to the stack in handleConnection's
+	// data path via s.natReverse.DeliverTunnelPacket.
+	if natCfg.Enabled && natCfg.Reverse.Enabled && len(natCfg.Reverse.Listeners) > 0 {
+		tunIP, _, _ := net.ParseCIDR(s.activeConfig().Config.Network.Address)
+		if tunIP == nil {
+			s.logger.Error("NAT reverse path requires a tunnel address; reverse PAT is OFF")
+		} else {
+			writer := &tunnelPacketWriter{server: s}
+			rev, err := nat.NewReverseNAT(writer, tunIP, s.activeConfig().Config.Network.Address, s.logger)
+			if err != nil {
+				s.logger.Error("NAT reverse engine startup failed; reverse PAT is OFF",
+					zap.Error(err))
+			} else {
+				s.natReverse = rev
+				for _, l := range natCfg.Reverse.Listeners {
+					if err := rev.StartListener(l); err != nil {
+						// Non-fatal: other listeners still start.
+						s.logger.Error("NAT listener bind failed",
+							zap.Int("port", l.ListenPort), zap.Error(err))
+					}
+				}
+				s.logger.Info("NAT reverse listeners started",
+					zap.Int("listeners", len(natCfg.Reverse.Listeners)))
+			}
+		}
+	}
+
 	listenAddr := fmt.Sprintf("%s:%d", s.activeConfig().Config.Tunnel.ListenAddress, s.activeConfig().Config.Tunnel.ListenPort)
 	s.logger.Info("Starting tunnel server",
 		zap.String("address", listenAddr),
@@ -169,6 +199,41 @@ func (s *Server) Start() error {
 	}
 
 	return nil
+}
+
+// mirrorReader wraps the tunnel connection and mirrors every read frame
+// into the reverse netstack while the normal data path consumes it too.
+type mirrorReader struct {
+	net.Conn
+	mirror func([]byte)
+}
+
+// Read implements net.Conn: reads pass through and are mirrored.
+func (m *mirrorReader) Read(b []byte) (int, error) {
+	n, err := m.Conn.Read(b)
+	if n > 0 {
+		m.mirror(b[:n])
+	}
+	return n, err
+}
+
+// tunnelPacketWriter sends netstack-originated frames into the active
+// tunnel connection. WritePacket is a no-op success when no tunnel is
+// up: netstack retransmits handle the gap (frame loss until connected).
+type tunnelPacketWriter struct {
+	server *Server
+}
+
+// WritePacket implements nat.PacketWriter.
+func (w *tunnelPacketWriter) WritePacket(p []byte) error {
+	w.server.mu.Lock()
+	conn := w.server.activeConn
+	w.server.mu.Unlock()
+	if conn == nil {
+		return nil // tunnel down: netstack TCP retransmits recover
+	}
+	_, err := conn.Write(p)
+	return err
 }
 
 // egressAddress resolves the SNAT source address: the first non-tunnel
@@ -278,6 +343,17 @@ func (s *Server) handleConnection(conn net.Conn) {
 	if s.natEngine != nil {
 		adapterConn = NewNATIntercept(adapterConn, s.natEngine, false)
 	}
+
+	// Reverse PAT: mirror tunnel-originated frames into the netstack so
+	// published services receive peer-initiated connections. The frame
+	// also continues through the normal TUN path (peer may address this
+	// host's TUN IP directly).
+	var mirrorToReverse func([]byte)
+	if s.natReverse != nil {
+		mirrorToReverse = func(p []byte) { s.natReverse.DeliverTunnelPacket(p) }
+		tunnelConn = &mirrorReader{Conn: tunnelConn, mirror: mirrorToReverse}
+	}
+
 	transfer, err := NewTransfer(tunnelConn, adapterConn, s.activeConfig(), s.logger)
 	if err != nil {
 		s.logger.Error("Failed to create transfer", zap.Error(err), zap.String("remote", remoteAddr))
@@ -337,6 +413,17 @@ func (s *Server) ApplyConfig(newCfg *config.AppConfig) error {
 	if natEngine != nil && newCfg.Config.NAT.Enabled && newCfg.Config.NAT.Forward.Enabled {
 		if err := natEngine.ReloadRules(&newCfg.Config.NAT); err != nil {
 			s.logger.Error("NAT rules hot-reload failed; keeping previous rules",
+				zap.Error(err))
+		}
+	}
+
+	// Reverse listeners hot-apply: converge running listeners to config.
+	s.mu.Lock()
+	rev := s.natReverse
+	s.mu.Unlock()
+	if rev != nil && newCfg.Config.NAT.Enabled && newCfg.Config.NAT.Reverse.Enabled {
+		if err := rev.ReloadListeners(newCfg.Config.NAT.Reverse.Listeners); err != nil {
+			s.logger.Error("NAT listener hot-reload failed; previous listeners kept",
 				zap.Error(err))
 		}
 	}
@@ -403,6 +490,12 @@ func (s *Server) Stop() error {
 	if s.natGCStop != nil {
 		close(s.natGCStop)
 		s.natGCStop = nil
+	}
+
+	// Stop reverse listeners + netstack
+	if s.natReverse != nil {
+		s.natReverse.Stop()
+		s.natReverse = nil
 	}
 
 	// Stop the HTTPS facade first
