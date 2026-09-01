@@ -34,6 +34,16 @@ This file tracks currently-true issues only.
 8. **Coverage gaps in platform-specific code** — `internal/adapter` platform
    backends and OS-coupled monitor collectors cannot be integration-tested in
    unprivileged CI; they are exercised via QA runs on TUN-capable hosts.
+9. **NAT/PAT is TCP + IPv4 only** — the forward SNAT parser rejects
+   non-TCP/non-IPv4 packets (fail closed), and reverse PAT publishes TCP
+   services only. UDP requires connectionless flow tracking on the
+   forward path and netstack UDP endpoints on the reverse path; IPv6
+   needs dual-stack ACLs and translation. Not planned unless a
+   deployment demands it.
+10. **NAT end-to-end QA on TUN-capable hosts pending** — unit and
+    in-memory wire tests cover the engines; full jump-host and
+    service-publishing flows against real kernels are exercised via the
+    QA VMs (192.168.101.171/.172) before release tagging.
 
 ## Resolved (2026-08 backlog execution)
 

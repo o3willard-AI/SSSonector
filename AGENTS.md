@@ -31,6 +31,11 @@ CI enforces the same gates plus govulncheck and Gitleaks. Never merge red.
    as the reference implementation.
 5. **No sleeps while holding locks.** Pace via reservation/debt models
    (see `internal/throttle/token_bucket.go`).
+6. **NAT is default-deny.** The `internal/nat` engine must fail closed:
+   absent config disables NAT entirely; every flow needs an explicit
+   rule; ACL denies, malformed packets, and untranslated egress packets
+   are dropped, never passed through. Any change that weakens this is a
+   security regression.
 
 ## Security rules (non-negotiable)
 
