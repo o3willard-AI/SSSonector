@@ -50,6 +50,13 @@ SSSonector (**Secure SSL Connector**) is a high-performance, secure tunnel servi
 - Burst allowance
 - Fair queuing support
 
+### NAT/PAT (Optional)
+- Forward NAT (jump host): tunnel clients reach networks on the server's other interfaces, stateful SNAT in-daemon (no ip_forward/nftables)
+- Reverse PAT (service publishing): public listeners relay TCP through the tunnel to services behind the peer's TUN
+- Fail-closed ACLs for both directions: explicit CIDR + port allowlists, default deny
+- Hot-reloadable rules and listeners via SIGHUP; enable/disable requires restart
+- Full observability: Prometheus counters + SNMP OIDs for every NAT decision
+
 ## Quick Start
 
 ### Installation
@@ -405,6 +412,7 @@ See [Multi-Instance Deployment Guide](docs/multi_instance_deployment.md) for det
 - [Multi-Instance Deployment](docs/multi_instance_deployment.md)
 - [Configuration Guide](docs/configuration_guide.md)
 - [HTTPS Facade Design](docs/implementation/https_facade.md)
+- [NAT/PAT Design](docs/implementation/nat_pat.md)
 - [Certificate Management](docs/certificate_management.md)
 - Platform-specific guides:
   - [Linux Installation](docs/linux_install.md)

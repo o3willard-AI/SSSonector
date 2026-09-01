@@ -242,6 +242,56 @@ WebSocket upgrades over a legitimate HTTPS web server.
 - `facade.token_secret`: **Required when the facade is enabled; must match server exactly**
 - `facade.tls.cert_file`, `facade.tls.key_file`, `facade.tls.ca_file`: Optional separate TLS config
 
+### NAT/PAT Configuration (Optional)
+
+Optional forward NAT and reverse PAT. Absent/false = fully off; the data
+path is unchanged. See [NAT/PAT Design](implementation/nat_pat.md).
+
+```yaml
+config:
+  nat:
+    enabled: true            # master switch (restart to enable/disable)
+    forward:                 # jump-host: tunnel clients reach server LANs
+      enabled: true
+      rules:                 # first match wins; no match = deny
+        - comment: "client may reach server LAN web"
+          src_cidr: 10.77.0.0/24
+          dst_cidr: 192.168.10.0/24
+          ports: [80, 443]
+    reverse:                 # publishing: public ports -> peer services
+      enabled: true
+      listeners:
+        - comment: "publish home web server"
+          listen_port: 8080
+          dst: "10.77.0.2:80"
+          allowed_cidrs: ["203.0.113.0/24"]
+```
+
+**Options:**
+- `nat.enabled`: Master switch (default false). Enabling/disabling or
+  toggling `forward.enabled`/`reverse.enabled` requires a restart; rule
+  and listener changes hot-apply on SIGHUP.
+- `forward.rules[].src_cidr` / `dst_cidr`: explicit CIDR allowlists
+  (required). Rules whose `dst_cidr` overlaps the tunnel subnet are
+  rejected (loop hazard).
+- `forward.rules[].ports`: permitted destination ports; a rule with no
+  ports can never match (fail closed).
+- `reverse.listeners[].listen_port`: public TCP port bound on this host.
+- `reverse.listeners[].dst`: tunnel-side service, `host:port`, host must
+  be an IP.
+- `reverse.listeners[].allowed_cidrs`: public-source allowlist; required,
+  non-empty, default deny.
+
+Both use cases:
+- **Jump host**: server enables `forward`; tunnel clients SNAT into the
+  server's LAN (no `ip_forward`/nftables needed — the daemon translates).
+- **Publishing (reverse proxy)**: the internet-facing host enables
+  `reverse`; public traffic relays through the tunnel to a service on
+  the low-cost side.
+
+Metrics: `sssonector_nat_*` on `/metrics`; SNMP OIDs
+`.1.3.6.1.4.1.54321.3.6–.3.11`.
+
 ## Path Resolution Rules
 
 1. Certificate paths:
