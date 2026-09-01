@@ -250,6 +250,24 @@ func (m *Monitor) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "# HELP sssonector_throttle_burst_bytes Burst allowance in bytes.\n")
 	fmt.Fprintf(w, "# TYPE sssonector_throttle_burst_bytes gauge\n")
 	fmt.Fprintf(w, "sssonector_throttle_burst_bytes %f\n", snap.ThrottleBurst)
+	fmt.Fprintf(w, "# HELP sssonector_nat_forwarded_packets_total Forward-NAT packets translated tunnel to egress.\n")
+	fmt.Fprintf(w, "# TYPE sssonector_nat_forwarded_packets_total counter\n")
+	fmt.Fprintf(w, "sssonector_nat_forwarded_packets_total %d\n", snap.NATForwardedPackets)
+	fmt.Fprintf(w, "# HELP sssonector_nat_return_packets_total Forward-NAT return packets reverse-translated egress to tunnel.\n")
+	fmt.Fprintf(w, "# TYPE sssonector_nat_return_packets_total counter\n")
+	fmt.Fprintf(w, "sssonector_nat_return_packets_total %d\n", snap.NATReturnPackets)
+	fmt.Fprintf(w, "# HELP sssonector_nat_dropped_packets_total NAT-dropped packets (ACL denies, malformed, no translation).\n")
+	fmt.Fprintf(w, "# TYPE sssonector_nat_dropped_packets_total counter\n")
+	fmt.Fprintf(w, "sssonector_nat_dropped_packets_total %d\n", snap.NATDroppedPackets)
+	fmt.Fprintf(w, "# HELP sssonector_nat_flows_active Live NAT conntrack entries.\n")
+	fmt.Fprintf(w, "# TYPE sssonector_nat_flows_active gauge\n")
+	fmt.Fprintf(w, "sssonector_nat_flows_active %d\n", snap.NATActiveFlows)
+	fmt.Fprintf(w, "# HELP sssonector_nat_listener_accepts_total Reverse-PAT public connections accepted.\n")
+	fmt.Fprintf(w, "# TYPE sssonector_nat_listener_accepts_total counter\n")
+	fmt.Fprintf(w, "sssonector_nat_listener_accepts_total %d\n", snap.NATListenerAccepts)
+	fmt.Fprintf(w, "# HELP sssonector_nat_acl_denied_total Reverse-PAT listener connections denied by ACL.\n")
+	fmt.Fprintf(w, "# TYPE sssonector_nat_acl_denied_total counter\n")
+	fmt.Fprintf(w, "sssonector_nat_acl_denied_total %d\n", snap.NATACLDenies)
 	fmt.Fprintf(w, "# HELP sssonector_cpu_usage_percent Process CPU usage percentage.\n")
 	fmt.Fprintf(w, "# TYPE sssonector_cpu_usage_percent gauge\n")
 	fmt.Fprintf(w, "sssonector_cpu_usage_percent %f\n", snap.CPUUsage)
@@ -278,6 +296,12 @@ func (m *Monitor) UpdateMetrics(bytesIn, bytesOut, packetsIn, packetsOut, errors
 // pacing configuration sampled from the live data path.
 func (m *Monitor) UpdateThrottleMetrics(hitsIn, hitsOut uint64, rate, burst float64) {
 	m.metrics.SetThrottle(hitsIn, hitsOut, rate, burst)
+}
+
+// UpdateNATMetrics records NAT/PAT subsystem counters sampled from the
+// engine and reverse path. All values replace the previous sample.
+func (m *Monitor) UpdateNATMetrics(forwarded, returned, dropped, activeFlows, listenerAccepts, aclDenies int64) {
+	m.metrics.SetNAT(forwarded, returned, dropped, activeFlows, listenerAccepts, aclDenies)
 }
 
 // GetMetrics returns current metrics

@@ -465,6 +465,10 @@ func (s *Server) startMetricsSampler() {
 					&s.mu)
 				s.monitor.UpdateThrottleMetrics(inH, outH, rate, burst)
 
+				if s.natEngine != nil || s.natReverse != nil {
+					s.sampleNATMetrics()
+				}
+
 				state := "listening"
 				if s.activeConns.Load() > 0 {
 					state = "connected"
@@ -473,6 +477,25 @@ func (s *Server) startMetricsSampler() {
 			}
 		}
 	}()
+}
+
+// sampleNATMetrics publishes NAT engine and reverse-path counters to
+// the monitor. Called from the metrics sampler goroutine only.
+func (s *Server) sampleNATMetrics() {
+	var forwarded, returned, dropped, activeFlows, accepts, denies int64
+	if s.natEngine != nil {
+		st := s.natEngine.Stats()
+		forwarded = int64(st.ForwardedPackets)
+		returned = int64(st.ReturnPackets)
+		dropped = int64(st.DroppedPackets)
+		activeFlows = int64(st.ActiveFlows)
+	}
+	if s.natReverse != nil {
+		acc, den, _ := s.natReverse.Stats()
+		accepts = int64(acc)
+		denies = int64(den)
+	}
+	s.monitor.UpdateNATMetrics(forwarded, returned, dropped, activeFlows, accepts, denies)
 }
 
 // currentTransferSnapshotLocked returns the active transfer for sampling.

@@ -67,6 +67,14 @@ type Metrics struct {
 	ThrottleHitsOut int64   // requests that had to wait, outbound direction
 	ThrottleRate    float64 // effective paced rate (bytes/sec incl. TCP overhead)
 	ThrottleBurst   float64 // burst allowance in bytes
+
+	// NAT metrics
+	NATForwardedPackets int64 // tunnel→egress translated packets
+	NATReturnPackets    int64 // egress→tunnel reverse-translated packets
+	NATDroppedPackets   int64 // ACL denies + malformed + no-translation drops
+	NATActiveFlows      int64 // live conntrack entries
+	NATListenerAccepts  int64 // reverse-PAT public connections accepted
+	NATACLDenies        int64 // reverse-PAT listener ACL denies
 }
 
 // NewMetrics creates a new metrics instance
@@ -86,6 +94,20 @@ func (m *Metrics) SetThrottle(hitsIn, hitsOut uint64, rate, burst float64) {
 	atomic.StoreInt64(&m.ThrottleHitsOut, int64(hitsOut))
 	m.ThrottleRate = rate
 	m.ThrottleBurst = burst
+}
+
+// SetNAT records NAT/PAT subsystem counters. All values replace the
+// previous sample (they are engine-owned cumulative counters, not
+// deltas the monitor accumulates).
+func (m *Metrics) SetNAT(forwarded, returned, dropped, activeFlows, listenerAccepts, aclDenies int64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	atomic.StoreInt64(&m.NATForwardedPackets, forwarded)
+	atomic.StoreInt64(&m.NATReturnPackets, returned)
+	atomic.StoreInt64(&m.NATDroppedPackets, dropped)
+	atomic.StoreInt64(&m.NATActiveFlows, activeFlows)
+	atomic.StoreInt64(&m.NATListenerAccepts, listenerAccepts)
+	atomic.StoreInt64(&m.NATACLDenies, aclDenies)
 }
 
 // Reset resets all metrics to zero
@@ -156,6 +178,13 @@ func (m *Metrics) Clone() *Metrics {
 		ThrottleHitsOut: atomic.LoadInt64(&m.ThrottleHitsOut),
 		ThrottleRate:    m.ThrottleRate,
 		ThrottleBurst:   m.ThrottleBurst,
+
+		NATForwardedPackets: atomic.LoadInt64(&m.NATForwardedPackets),
+		NATReturnPackets:    atomic.LoadInt64(&m.NATReturnPackets),
+		NATDroppedPackets:   atomic.LoadInt64(&m.NATDroppedPackets),
+		NATActiveFlows:      atomic.LoadInt64(&m.NATActiveFlows),
+		NATListenerAccepts:  atomic.LoadInt64(&m.NATListenerAccepts),
+		NATACLDenies:        atomic.LoadInt64(&m.NATACLDenies),
 	}
 }
 

@@ -30,6 +30,13 @@ const (
 
 	hitsInOID  = baseOID + ".3.4" // Counter64: Throttle wait events, inbound
 	hitsOutOID = baseOID + ".3.5" // Counter64: Throttle wait events, outbound
+
+	natFwdOID       = baseOID + ".3.6"  // Counter64: NAT forwarded packets
+	natRetOID       = baseOID + ".3.7"  // Counter64: NAT return packets
+	natDropOID      = baseOID + ".3.8"  // Counter64: NAT dropped packets
+	natFlowsOID     = baseOID + ".3.9"  // Gauge32: NAT active flows
+	natAcceptsOID   = baseOID + ".3.10" // Counter64: Reverse-PAT accepts
+	natACLDeniesOID = baseOID + ".3.11" // Counter64: Reverse-PAT ACL denies
 )
 
 // SNMP community strings
@@ -99,6 +106,13 @@ func NewMIBTree(metrics *Metrics) *MIBTree {
 
 	tree.addCounter64(hitsInOID, "rateLimitHitsIn", "Throttle wait events, inbound direction", 0, "read-only")
 	tree.addCounter64(hitsOutOID, "rateLimitHitsOut", "Throttle wait events, outbound direction", 0, "read-only")
+
+	tree.addCounter64(natFwdOID, "natForwardedPackets", "NAT packets translated tunnel to egress", 0, "read-only")
+	tree.addCounter64(natRetOID, "natReturnPackets", "NAT return packets reverse-translated egress to tunnel", 0, "read-only")
+	tree.addCounter64(natDropOID, "natDroppedPackets", "NAT dropped packets (ACL denies, malformed, no translation)", 0, "read-only")
+	tree.addGauge32(natFlowsOID, "natActiveFlows", "Live NAT conntrack entries", 0, "read-only")
+	tree.addCounter64(natAcceptsOID, "natListenerAccepts", "Reverse-PAT public connections accepted", 0, "read-only")
+	tree.addCounter64(natACLDeniesOID, "natACLDenies", "Reverse-PAT listener connections denied by ACL", 0, "read-only")
 
 	return tree
 }
@@ -225,6 +239,18 @@ func (t *MIBTree) UpdateMetrics(metrics *Metrics) {
 			newEntry.Value = metrics.ThrottleHitsIn
 		case hitsOutOID:
 			newEntry.Value = metrics.ThrottleHitsOut
+		case natFwdOID:
+			newEntry.Value = metrics.NATForwardedPackets
+		case natRetOID:
+			newEntry.Value = metrics.NATReturnPackets
+		case natDropOID:
+			newEntry.Value = metrics.NATDroppedPackets
+		case natFlowsOID:
+			newEntry.Value = int32(metrics.NATActiveFlows)
+		case natAcceptsOID:
+			newEntry.Value = metrics.NATListenerAccepts
+		case natACLDeniesOID:
+			newEntry.Value = metrics.NATACLDenies
 		}
 		newEntries[oid] = newEntry
 	}
