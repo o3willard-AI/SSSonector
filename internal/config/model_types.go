@@ -89,6 +89,7 @@ type Config struct {
 	Metrics  MetricsConfig  `yaml:"metrics" json:"metrics"`
 	SNMP     SNMPConfig     `yaml:"snmp" json:"snmp"`
 	Facade   FacadeConfig   `yaml:"facade" json:"facade"`
+	NAT      NATConfig      `yaml:"nat" json:"nat"`
 }
 
 // LoggingConfig represents logging configuration
@@ -298,6 +299,74 @@ type FacadeTLSConfig struct {
 	CertFile string `yaml:"cert_file" json:"cert_file"`
 	KeyFile  string `yaml:"key_file" json:"key_file"`
 	CAFile   string `yaml:"ca_file" json:"ca_file"`
+}
+
+// NATConfig represents the optional NAT/PAT subsystem configuration.
+// Absent or disabled, the daemon performs no translation of any kind;
+// the data path remains the raw L3 pipe it is today.
+type NATConfig struct {
+	// Enabled activates the NAT/PAT engine. Defaults to false: an empty
+	// or missing nat section never enables translation (fail closed).
+	Enabled bool `yaml:"enabled" json:"enabled"`
+	// Forward configures stateful forward NAT (jump-host use case):
+	// tunnel-side clients reaching networks on this host's other
+	// interfaces via source-NAT.
+	Forward NATForwardConfig `yaml:"forward" json:"forward"`
+	// Reverse configures reverse PAT (service publishing): public
+	// listeners on this host relayed through the tunnel to a service
+	// behind the peer's TUN.
+	Reverse NATReverseConfig `yaml:"reverse" json:"reverse"`
+}
+
+// NATForwardConfig configures stateful forward NAT (jump-host scenario).
+type NATForwardConfig struct {
+	// Enabled activates the forward path. Requires NATConfig.Enabled.
+	Enabled bool `yaml:"enabled" json:"enabled"`
+	// Rules list permitted flows. Empty when enabled means deny-all:
+	// the ACL model is fail closed by construction.
+	Rules []NATForwardRule `yaml:"rules" json:"rules"`
+}
+
+// NATForwardRule is one permitted forward flow class. First match wins;
+// if no rule matches, the flow is denied.
+type NATForwardRule struct {
+	// Comment is an optional human-readable label (logging only).
+	Comment string `yaml:"comment" json:"comment"`
+	// SrcCIDR is the tunnel-side source network (e.g. the client TUN
+	// subnet). Required, must parse as CIDR.
+	SrcCIDR string `yaml:"src_cidr" json:"src_cidr"`
+	// DstCIDR is the egress-side destination network reachable after
+	// translation. Required, must parse as CIDR.
+	DstCIDR string `yaml:"dst_cidr" json:"dst_cidr"`
+	// Ports is the permitted service (destination port) list. Empty
+	// means the rule matches no ports and therefore denies everything
+	// it would otherwise cover — fail closed.
+	Ports []int `yaml:"ports" json:"ports"`
+}
+
+// NATReverseConfig configures reverse PAT (publishing services through
+// the tunnel to the internet-facing host).
+type NATReverseConfig struct {
+	// Enabled activates the reverse path. Requires NATConfig.Enabled.
+	Enabled bool `yaml:"enabled" json:"enabled"`
+	// Listeners are the public port mappings. Empty when enabled means
+	// no public exposure at all (deny-all by absence).
+	Listeners []NATListenerRule `yaml:"listeners" json:"listeners"`
+}
+
+// NATListenerRule maps one public listening port to a service behind the
+// peer's TUN. Access is gated by AllowedCIDRs (default deny).
+type NATListenerRule struct {
+	// Comment is an optional human-readable label (logging only).
+	Comment string `yaml:"comment" json:"comment"`
+	// ListenPort is the public port this host listens on.
+	ListenPort int `yaml:"listen_port" json:"listen_port"`
+	// Dst is the tunnel-side service address in host:port form (e.g.
+	// the peer TUN IP and the service port, "10.77.0.2:80").
+	Dst string `yaml:"dst" json:"dst"`
+	// AllowedCIDRs restricts which internet-side source networks may
+	// use this listener. Empty denies every source (fail closed).
+	AllowedCIDRs []string `yaml:"allowed_cidrs" json:"allowed_cidrs"`
 }
 
 // ThrottleConfig represents rate limiting configuration

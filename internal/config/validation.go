@@ -4,6 +4,7 @@ package config
 import (
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -85,6 +86,10 @@ func (v *Validator) Validate(config *AppConfig) error {
 
 	if err := v.validateFacade(config.Config.Facade, config.Config.Mode); err != nil {
 		return fmt.Errorf("invalid facade config: %v", err)
+	}
+
+	if err := v.validateNAT(config.Config.NAT, config.Config.Network.Address); err != nil {
+		return fmt.Errorf("invalid nat config: %v", err)
 	}
 
 	return nil
@@ -529,4 +534,168 @@ func (v *Validator) validateCertificateFilesExist(config *AppConfig) error {
 	}
 
 	return nil
+}
+
+// validateNAT enforces the NAT/PAT subsystem's fail-closed contract:
+// nothing is valid unless explicitly configured, and any malformed rule
+// disables the whole subsystem rather than partially applying.
+func (v *Validator) validateNAT(config NATConfig, tunnelAddress string) error {
+	if !config.Enabled {
+		// NAT disabled: sub-sections must not claim to be enabled,
+		// which would silently suggest behavior that cannot occur.
+		if config.Forward.Enabled {
+			return fmt.Errorf("nat.forward.enabled requires nat.enabled")
+		}
+		if config.Reverse.Enabled {
+			return fmt.Errorf("nat.reverse.enabled requires nat.enabled")
+		}
+		if len(config.Forward.Rules) > 0 {
+			return fmt.Errorf("nat.forward.rules defined but nat.forward.enabled is false")
+		}
+		if len(config.Reverse.Listeners) > 0 {
+			return fmt.Errorf("nat.reverse.listeners defined but nat.reverse.enabled is false")
+		}
+		return nil
+	}
+
+	if err := v.validateNATForward(config.Forward, tunnelAddress); err != nil {
+		return err
+	}
+	if err := v.validateNATReverse(config.Reverse); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (v *Validator) validateNATForward(cfg NATForwardConfig, tunnelAddress string) error {
+	if !cfg.Enabled {
+		if len(cfg.Rules) > 0 {
+			return fmt.Errorf("nat.forward.rules defined but nat.forward.enabled is false")
+		}
+		return nil
+	}
+
+	tunnelSubnet, err := parseOptionalCIDR(tunnelAddress)
+	if err != nil {
+		return fmt.Errorf("cannot validate forward rules: %v", err)
+	}
+
+	seen := make(map[string]bool, len(cfg.Rules))
+	for i, r := range cfg.Rules {
+		if r.SrcCIDR == "" {
+			return fmt.Errorf("nat.forward.rules[%d]: src_cidr is required", i)
+		}
+		if _, err := parseRuleCIDR(r.SrcCIDR); err != nil {
+			return fmt.Errorf("nat.forward.rules[%d]: invalid src_cidr: %v", i, err)
+		}
+
+		if r.DstCIDR == "" {
+			return fmt.Errorf("nat.forward.rules[%d]: dst_cidr is required", i)
+		}
+		dstNet, err := parseRuleCIDR(r.DstCIDR)
+		if err != nil {
+			return fmt.Errorf("nat.forward.rules[%d]: invalid dst_cidr: %v", i, err)
+		}
+
+		// Loop hazard: a rule whose destination overlaps the tunnel's
+		// own subnet would route translated packets back into the TUN.
+		// Overlap is checked in both directions (rule subnet containing
+		// the tunnel subnet, e.g. 10.0.0.0/8 vs 10.77.0.0/24).
+		if tunnelSubnet != nil &&
+			(tunnelSubnet.Contains(dstNet.IP) || dstNet.Contains(tunnelSubnet.IP)) {
+			return fmt.Errorf(
+				"nat.forward.rules[%d]: dst_cidr %s overlaps the tunnel subnet %s (loop hazard)",
+				i, r.DstCIDR, tunnelAddress)
+		}
+
+		// Ports: fail closed. A rule with no ports permits nothing.
+		for _, p := range r.Ports {
+			if p < 1 || p > 65535 {
+				return fmt.Errorf("nat.forward.rules[%d]: invalid port %d", i, p)
+			}
+		}
+
+		// Duplicate rules are almost certainly a config error and would
+		// make reload semantics ambiguous.
+		key := r.SrcCIDR + "->" + r.DstCIDR
+		if seen[key] {
+			return fmt.Errorf("nat.forward.rules[%d]: duplicate rule %s", i, key)
+		}
+		seen[key] = true
+	}
+
+	return nil
+}
+
+func (v *Validator) validateNATReverse(cfg NATReverseConfig) error {
+	if !cfg.Enabled {
+		if len(cfg.Listeners) > 0 {
+			return fmt.Errorf("nat.reverse.listeners defined but nat.reverse.enabled is false")
+		}
+		return nil
+	}
+
+	listenPorts := make(map[int]bool, len(cfg.Listeners))
+	for i, l := range cfg.Listeners {
+		if l.ListenPort < 1 || l.ListenPort > 65535 {
+			return fmt.Errorf("nat.reverse.listeners[%d]: invalid listen_port %d", i, l.ListenPort)
+		}
+
+		if l.Dst == "" {
+			return fmt.Errorf("nat.reverse.listeners[%d]: dst is required", i)
+		}
+		dstHost, dstPort, err := net.SplitHostPort(l.Dst)
+		if err != nil {
+			return fmt.Errorf("nat.reverse.listeners[%d]: invalid dst (want host:port): %v", i, err)
+		}
+		if ip := net.ParseIP(dstHost); ip == nil {
+			return fmt.Errorf("nat.reverse.listeners[%d]: dst host %q is not an IP", i, dstHost)
+		}
+		dp, err := strconv.Atoi(dstPort)
+		if err != nil || dp < 1 || dp > 65535 {
+			return fmt.Errorf("nat.reverse.listeners[%d]: invalid dst port %q", i, dstPort)
+		}
+
+		// Fail closed: an empty allowlist would be ambiguous (allow
+		// everyone? no one?) — require explicit CIDRs, and require at
+		// least one so intent is documented in the config itself.
+		if len(l.AllowedCIDRs) == 0 {
+			return fmt.Errorf("nat.reverse.listeners[%d]: allowed_cidrs is required (explicitly list permitted source networks)", i)
+		}
+		for _, c := range l.AllowedCIDRs {
+			if err := v.ValidateCIDR(c); err != nil {
+				return fmt.Errorf("nat.reverse.listeners[%d]: %v", i, err)
+			}
+		}
+
+		if listenPorts[l.ListenPort] {
+			return fmt.Errorf("nat.reverse.listeners[%d]: duplicate listen_port %d", i, l.ListenPort)
+		}
+		listenPorts[l.ListenPort] = true
+	}
+
+	return nil
+}
+
+// parseOptionalCIDR parses a config CIDR that may legitimately be empty
+// (the tunnel address is optional until the adapter is configured).
+func parseOptionalCIDR(s string) (*net.IPNet, error) {
+	if s == "" {
+		return nil, nil
+	}
+	_, n, err := net.ParseCIDR(s)
+	if err != nil {
+		return nil, err
+	}
+	return n, nil
+}
+
+// parseRuleCIDR parses a NAT rule CIDR, which is always required.
+func parseRuleCIDR(s string) (*net.IPNet, error) {
+	_, n, err := net.ParseCIDR(s)
+	if err != nil {
+		return nil, err
+	}
+	return n, nil
 }
