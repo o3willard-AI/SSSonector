@@ -27,8 +27,11 @@ type Server struct {
 	tlsManager   *TLSManager
 	facadeServer *facade.Server
 	natEngine    *nat.Engine
+	natProxy     *nat.ForwardProxy
 	natReverse   *nat.ReverseNAT
 	natGCStop    chan struct{}
+	frameSink    *tunnelFrameSink
+	probe        atomic.Pointer[probeConn]
 	wg           sync.WaitGroup
 	ctx          context.Context
 	cancel       context.CancelFunc
@@ -115,19 +118,32 @@ func (s *Server) Start() error {
 	// zero data-path change.
 	natCfg := s.activeConfig().Config.NAT
 	if natCfg.Enabled && natCfg.Forward.Enabled {
-		eng, err := nat.NewEngine(&natCfg, nat.Options{
-			EgressIP: s.egressAddress(),
-		}, s.logger)
-		if err != nil {
-			s.logger.Error("NAT engine startup failed; NAT is OFF",
-				zap.Error(err))
-			// Fail closed: NAT disabled, tunnel continues un-NATed.
-		} else if eng != nil {
-			s.natEngine = eng
-			s.natGCStop = make(chan struct{})
-			eng.StartGC(s.natGCStop, 0)
-			s.logger.Info("NAT forward engine started",
-				zap.Int("forward_rules", len(natCfg.Forward.Rules)))
+		tunIP, _, _ := net.ParseCIDR(s.activeConfig().Config.Network.Address)
+		if tunIP == nil {
+			s.logger.Error("NAT forward proxy requires a tunnel address; forward NAT is OFF")
+		} else {
+			// Netstack-proxy forward path (T4 decision): TCP flows from
+			// the tunnel are terminated in a dedicated netstack and
+			// re-originated via local sockets toward the egress — no
+			// kernel forwarding, per-flow ACL enforcement in-daemon.
+			fp, err := nat.NewForwardProxy(tunIP,
+				s.activeConfig().Config.Network.Address,
+				natCfg.Forward.Rules, s.logger)
+			if err != nil {
+				s.logger.Error("NAT forward proxy startup failed; forward NAT is OFF",
+					zap.Error(err))
+			} else {
+				s.natProxy = fp
+				fp.StartPump(s.logger)
+				if err := fp.SetTransportHandler(natCfg.Forward.Rules, s.logger); err != nil {
+					s.logger.Error("NAT forward rules failed to compile; forward NAT is OFF",
+						zap.Error(err))
+					s.natProxy = nil
+				} else {
+					s.logger.Info("NAT forward proxy started",
+						zap.Int("forward_rules", len(natCfg.Forward.Rules)))
+				}
+			}
 		}
 	}
 
@@ -140,13 +156,17 @@ func (s *Server) Start() error {
 		if tunIP == nil {
 			s.logger.Error("NAT reverse path requires a tunnel address; reverse PAT is OFF")
 		} else {
-			writer := &tunnelPacketWriter{server: s}
-			rev, err := nat.NewReverseNAT(writer, tunIP, s.activeConfig().Config.Network.Address, s.logger)
+			// Frames flow through the per-connection frame sink (set in
+			// handleConnection on the TLS-wrapped conn); the nil writer
+			// here is the fallback when no sink is installed.
+			rev, err := nat.NewReverseNAT(nullPacketWriter{}, tunIP, s.activeConfig().Config.Network.Address, s.logger)
 			if err != nil {
 				s.logger.Error("NAT reverse engine startup failed; reverse PAT is OFF",
 					zap.Error(err))
 			} else {
 				s.natReverse = rev
+				s.frameSink = &tunnelFrameSink{}
+				rev.SetFrameSink(s.frameSink)
 				for _, l := range natCfg.Reverse.Listeners {
 					if err := rev.StartListener(l); err != nil {
 						// Non-fatal: other listeners still start.
@@ -201,6 +221,13 @@ func (s *Server) Start() error {
 	return nil
 }
 
+// nullPacketWriter is the construction-time fallback when no frame sink
+// is installed: frames are dropped (netstack retransmits recover).
+type nullPacketWriter struct{}
+
+// WritePacket implements nat.PacketWriter.
+func (nullPacketWriter) WritePacket(p []byte) error { return nil }
+
 // mirrorReader wraps the tunnel connection and mirrors every read frame
 // into the reverse netstack while the normal data path consumes it too.
 type mirrorReader struct {
@@ -217,20 +244,30 @@ func (m *mirrorReader) Read(b []byte) (int, error) {
 	return n, err
 }
 
-// tunnelPacketWriter sends netstack-originated frames into the active
-// tunnel connection. WritePacket is a no-op success when no tunnel is
-// up: netstack retransmits handle the gap (frame loss until connected).
-type tunnelPacketWriter struct {
-	server *Server
+// tunnelFrameSink is the per-connection write target for netstack frames.
+// It holds the TLS-wrapped tunnel conn (never the raw TCP conn — writing
+// raw frames pre-TLS corrupts the client's TLS stream, QA bug T1) and is
+// swapped in/out under the server mutex as connections come and go.
+type tunnelFrameSink struct {
+	mu   sync.Mutex
+	conn net.Conn
 }
 
-// WritePacket implements nat.PacketWriter.
-func (w *tunnelPacketWriter) WritePacket(p []byte) error {
-	w.server.mu.Lock()
-	conn := w.server.activeConn
-	w.server.mu.Unlock()
+// Set installs (or, with nil, removes) the active tunnel connection.
+func (s *tunnelFrameSink) Set(c net.Conn) {
+	s.mu.Lock()
+	s.conn = c
+	s.mu.Unlock()
+}
+
+// WritePacket implements nat.PacketWriter. A nil conn is a no-op
+// success: netstack TCP retransmit recovers when the tunnel returns.
+func (s *tunnelFrameSink) WritePacket(p []byte) error {
+	s.mu.Lock()
+	conn := s.conn
+	s.mu.Unlock()
 	if conn == nil {
-		return nil // tunnel down: netstack TCP retransmits recover
+		return nil
 	}
 	_, err := conn.Write(p)
 	return err
@@ -335,23 +372,33 @@ func (s *Server) handleConnection(conn net.Conn) {
 	idle := time.Duration(s.activeConfig().Config.Tunnel.IdleTimeoutSeconds) * time.Second
 	tunnelConn = newCountingConn(tunnelConn, idle, &s.bytesIn, &s.bytesOut)
 
+	// Boundary instrumentation (QA evidence gathering): observe exactly
+	// what the TLS layer delivers — packet-per-record vs coalesced.
+	probe := newProbeConn(tunnelConn, "server-tunnel", s.logger)
+	s.probe.Store(probe)
+	tunnelConn = probe
+
 	adapterConn := NewAdapterWrapper(s.iface)
-	// NAT intercept on the adapter side: reads deliver packets leaving
-	// toward the egress (server LAN); fromTunnel=false means egress-side
-	// processing for return traffic. The tunnel side is processed when
-	// packets enter via the transfer source path.
-	if s.natEngine != nil {
-		adapterConn = NewNATIntercept(adapterConn, s.natEngine, false)
+	// QA diagnostic: wrap the tunnel conn so the reverse io.Copy path
+	// (TUN read -> tunnel write) is observable end to end.
+	tunnelConn = &reverseProbeConn{Conn: tunnelConn, tag: "srv-rev", logger: s.logger}
+	// Forward NAT: TCP flows from the tunnel are delivered to the proxy
+	// netstack (which terminates them and re-originates via local
+	// sockets). Non-TCP traffic (ICMP to this host) continues to the
+	// normal TUN path. The proxy feeds only on packets READ FROM the
+	// tunnel — wire the feeder here.
+	if s.natProxy != nil {
+		proxy := s.natProxy
+		tunnelConn = &mirrorReader{Conn: tunnelConn, mirror: func(p []byte) { proxy.DeliverTunnelPacket(p) }}
 	}
 
-	// Reverse PAT: mirror tunnel-originated frames into the netstack so
-	// published services receive peer-initiated connections. The frame
-	// also continues through the normal TUN path (peer may address this
-	// host's TUN IP directly).
-	var mirrorToReverse func([]byte)
-	if s.natReverse != nil {
-		mirrorToReverse = func(p []byte) { s.natReverse.DeliverTunnelPacket(p) }
-		tunnelConn = &mirrorReader{Conn: tunnelConn, mirror: mirrorToReverse}
+	// Reverse PAT + forward-proxy frame sink: netstack frames must flow
+	// through THIS connection's TLS stream — the counting, TLS-wrapped
+	// conn, never the raw TCP conn (writing pre-TLS corrupts the
+	// client's TLS stream).
+	if s.natProxy != nil || s.natReverse != nil {
+		s.frameSink.Set(tunnelConn)
+		defer s.frameSink.Set(nil)
 	}
 
 	transfer, err := NewTransfer(tunnelConn, adapterConn, s.activeConfig(), s.logger)
@@ -465,7 +512,7 @@ func (s *Server) startMetricsSampler() {
 					&s.mu)
 				s.monitor.UpdateThrottleMetrics(inH, outH, rate, burst)
 
-				if s.natEngine != nil || s.natReverse != nil {
+				if s.natProxy != nil || s.natReverse != nil {
 					s.sampleNATMetrics()
 				}
 
@@ -483,12 +530,11 @@ func (s *Server) startMetricsSampler() {
 // the monitor. Called from the metrics sampler goroutine only.
 func (s *Server) sampleNATMetrics() {
 	var forwarded, returned, dropped, activeFlows, accepts, denies int64
-	if s.natEngine != nil {
-		st := s.natEngine.Stats()
-		forwarded = int64(st.ForwardedPackets)
-		returned = int64(st.ReturnPackets)
-		dropped = int64(st.DroppedPackets)
-		activeFlows = int64(st.ActiveFlows)
+	if s.natProxy != nil {
+		sessions, pdrops, perrs, _ := s.natProxy.Stats()
+		forwarded = int64(sessions)
+		dropped += int64(pdrops + perrs)
+		activeFlows = int64(sessions)
 	}
 	if s.natReverse != nil {
 		acc, den, _ := s.natReverse.Stats()
@@ -496,7 +542,48 @@ func (s *Server) sampleNATMetrics() {
 		denies = int64(den)
 	}
 	s.monitor.UpdateNATMetrics(forwarded, returned, dropped, activeFlows, accepts, denies)
+
+	// Boundary probe snapshot every 10th sample to bound log volume.
+	if p := s.probe.Load(); p != nil {
+		if probeLogTick.Add(1)%10 == 1 {
+			s.logger.Info("PROBE summary", zap.String("stats", p.Snapshot()))
+		}
+	}
+
+	// Drop-reason breakdown (QA Phase A2) — every NAT drop site labeled.
+	if s.natProxy != nil {
+		sessions, pdrops, perrs, denies := s.natProxy.Stats()
+		bc, nn, np, bt, nt := s.natProxy.DropReasons()
+		s.logger.Info("PROBE forward proxy",
+			zap.Uint64("sessions", sessions),
+			zap.Uint64("acl_denies", denies),
+			zap.Uint64("relay_errors", perrs),
+			zap.Uint64("dropped", pdrops),
+			zap.Uint64("drop_bad_checksum", bc),
+			zap.Uint64("drop_no_net_hdr", nn),
+			zap.Uint64("drop_no_pull_up", np),
+			zap.Uint64("drop_bad_tcp_hdrlen", bt),
+			zap.Uint64("drop_no_transport_hdr", nt),
+		)
+	}
+	if s.natEngine != nil {
+		st := s.natEngine.Stats()
+		s.logger.Info("PROBE nat drops",
+			zap.Uint64("icmp_no_subnet", st.DropTunnelICMPNoSubnet),
+			zap.Uint64("tunnel_parse", st.DropTunnelParse),
+			zap.Uint64("tunnel_acl", st.DropTunnelACL),
+			zap.Uint64("tunnel_key", st.DropTunnelKey),
+			zap.Uint64("tunnel_pool", st.DropTunnelPool),
+			zap.Uint64("egress_parse", st.DropEgressParse),
+			zap.Uint64("egress_no_flow", st.DropEgressNoFlow),
+			zap.Uint64("egress_not_ours", st.DropEgressNotOurs),
+			zap.Uint64("forwarded", st.ForwardedPackets),
+			zap.Uint64("returned", st.ReturnPackets),
+		)
+	}
 }
+
+var probeLogTick atomic.Uint64
 
 // currentTransferSnapshotLocked returns the active transfer for sampling.
 func (s *Server) currentTransferSnapshotLocked() *Transfer {
@@ -508,6 +595,12 @@ func (s *Server) currentTransferSnapshotLocked() *Transfer {
 // Stop stops the tunnel server
 func (s *Server) Stop() error {
 	s.logger.Info("Stopping tunnel server")
+
+	// Stop the forward proxy netstack first
+	if s.natProxy != nil {
+		s.natProxy.Stop()
+		s.natProxy = nil
+	}
 
 	// Stop the NAT GC loop first
 	if s.natGCStop != nil {
