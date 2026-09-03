@@ -36,6 +36,16 @@ type Engine struct {
 	droppedPackets   atomic.Uint64 // ACL denies + malformed + no-translation
 	poolExhausted    atomic.Uint64
 
+	// Drop-reason breakdown (QA Phase A2): every drop site has a label.
+	dropTunnelICMPNoSubnet atomic.Uint64 // non-TCP from src outside tunnel subnet
+	dropTunnelParse        atomic.Uint64 // tunnel-side malformed/non-IPv4
+	dropTunnelACL          atomic.Uint64 // tunnel-side ACL deny
+	dropTunnelKey          atomic.Uint64 // tunnel-side key build failure (IPv6 etc.)
+	dropTunnelPool         atomic.Uint64 // SNAT pool exhaustion
+	dropEgressParse        atomic.Uint64 // egress-side malformed/non-IPv4
+	dropEgressNoFlow       atomic.Uint64 // SNAT return with no conntrack entry
+	dropEgressNotOurs      atomic.Uint64 // egress packet not to us, not tunnel-bound
+
 	aclDropToken atomic.Uint32 // rate-limiter: last unix second a deny was logged
 }
 
@@ -50,6 +60,11 @@ type Options struct {
 	// FlowIdleTimeout is how long an idle conntrack entry survives.
 	// Zero defaults to 5m.
 	FlowIdleTimeout time.Duration
+	// TunnelSubnet is the tunnel-side network (e.g. 10.77.0.0/24).
+	// Egress-side packets addressed into this subnet are normal tunnel
+	// traffic and pass through untranslated; without it the NAT would
+	// eat the host kernel's replies to peers.
+	TunnelSubnet *net.IPNet
 }
 
 // NewEngine builds an engine from validated NAT config. Returns nil when
@@ -96,6 +111,13 @@ func NewEngine(cfg *config.NATConfig, opts Options, logger *zap.Logger) (*Engine
 			return nil, fmt.Errorf("forward ACL: %w", err)
 		}
 		eng.acl = acl
+
+		// Tunnel subnet: egress-side packets addressed here are normal
+		// tunnel traffic (kernel replies to peers) and must pass through
+		// untranslated. Callers supply it via Options.
+		if opts.TunnelSubnet != nil {
+			eng.tunnelSubnet = opts.TunnelSubnet
+		}
 	}
 
 	return eng, nil
@@ -113,14 +135,33 @@ func (e *Engine) ProcessTunnelPacket(pkt []byte) ([]byte, error) {
 		return nil, ErrNoTranslation
 	}
 
+	// Non-TCP tunnel traffic destined to egress (e.g. ICMP to a LAN
+	// host) is ACL-checkable only by address: evaluate src against the
+	// tunnel subnet allowlist; no port constraint applies.
+	if len(pkt) >= 20 && pkt[0]>>4 == 4 {
+		proto := pkt[9]
+		dstRaw := net.IP(pkt[16:20])
+		if proto != ipv4ProtoTCP {
+			if e.tunnelSubnet == nil || !e.tunnelSubnet.Contains(net.IP(pkt[12:16])) {
+				e.dropTunnelICMPNoSubnet.Add(1)
+				e.droppedPackets.Add(1)
+				return nil, ErrNoTranslation
+			}
+			_ = dstRaw
+			return pkt, nil
+		}
+	}
+
 	srcIP, dstIP, srcPort, dstPort, tcpOff, err := parseIPv4TCP(pkt)
 	if err != nil {
+		e.dropTunnelParse.Add(1)
 		e.droppedPackets.Add(1)
 		return nil, err
 	}
 
 	decision, ruleIdx, comment := e.acl.Evaluate(srcIP, dstIP, dstPort)
 	if decision != ACLAllow {
+		e.dropTunnelACL.Add(1)
 		e.droppedPackets.Add(1)
 		e.logDenyRateLimited(srcIP, dstIP, dstPort, ruleIdx, comment)
 		return nil, ErrNoTranslation
@@ -128,6 +169,7 @@ func (e *Engine) ProcessTunnelPacket(pkt []byte) ([]byte, error) {
 
 	key, err := IPKey(srcIP, srcPort, dstIP, dstPort)
 	if err != nil {
+		e.dropTunnelKey.Add(1)
 		e.droppedPackets.Add(1)
 		return nil, err
 	}
@@ -135,6 +177,7 @@ func (e *Engine) ProcessTunnelPacket(pkt []byte) ([]byte, error) {
 	now := time.Now()
 	entry, ok := e.table.lookupOrAllocate(key, now)
 	if !ok {
+		e.dropTunnelPool.Add(1)
 		e.poolExhausted.Add(1)
 		e.droppedPackets.Add(1)
 		return nil, ErrPoolExhausted
@@ -160,26 +203,42 @@ func (e *Engine) ProcessTunnelPacket(pkt []byte) ([]byte, error) {
 	return pkt, nil
 }
 
-// ProcessEgressPacket handles a packet read from the egress TUN (return
-// traffic of a translated flow). If it matches a conntrack entry the
-// destination is reverse-translated back to the tunnel-side address;
-// otherwise the packet is dropped (fail closed — an unrelated egress
-// packet is not tunnel traffic and must not leak into the tunnel).
+// ProcessEgressPacket handles a packet read from the egress TUN. Three
+// cases:
+//  1. Return traffic of a translated flow (dst = SNAT identity) →
+//     reverse-translate the destination back to the tunnel side.
+//  2. Traffic addressed to the tunnel subnet (e.g. this host's kernel
+//     replying to a peer) → pass through untranslated; this is normal
+//     tunnel traffic the NAT must not eat.
+//  3. Anything else → drop (fail closed; not tunnel traffic).
 func (e *Engine) ProcessEgressPacket(pkt []byte) ([]byte, error) {
 	if !e.cfg.Forward.Enabled || e.table == nil {
 		return nil, ErrNoTranslation
 	}
 
+	// Case 2: destined to the tunnel subnet — normal tunnel traffic
+	// (e.g. this host's kernel replying to a peer's ICMP echo). Checked
+	// on the IP header alone, before the TCP parse, so non-TCP tunnel
+	// traffic (ICMP) passes through.
+	if len(pkt) >= 20 && pkt[0]>>4 == 4 {
+		dstRaw := net.IP(pkt[16:20])
+		if e.tunnelSubnet != nil && e.tunnelSubnet.Contains(dstRaw) {
+			return pkt, nil
+		}
+	}
+
 	_, dstIP, _, dstPort, tcpOff, err := parseIPv4TCP(pkt)
 	if err != nil {
+		e.dropEgressParse.Add(1)
 		e.droppedPackets.Add(1)
 		return nil, err
 	}
 
-	// Return traffic: dst was rewritten to egressIP:snatPort.
+	// Case 1: return traffic (dst was rewritten to egressIP:snatPort).
 	if dstIP.Equal(e.egressIP) {
 		snatted, ok := e.table.Reverse(uint16(dstPort), time.Now())
 		if !ok {
+			e.dropEgressNoFlow.Add(1)
 			e.droppedPackets.Add(1)
 			return nil, ErrNoTranslation
 		}
@@ -197,7 +256,8 @@ func (e *Engine) ProcessEgressPacket(pkt []byte) ([]byte, error) {
 		return pkt, nil
 	}
 
-	// Not addressed to us: not return traffic of any flow. Drop.
+	// Case 3: not addressed to us and not tunnel-bound. Drop.
+	e.dropEgressNotOurs.Add(1)
 	e.droppedPackets.Add(1)
 	return nil, ErrNoTranslation
 }
@@ -211,6 +271,16 @@ type Stats struct {
 	ActiveFlows      int
 	ACLAllowed       uint64
 	ACLDenied        uint64
+
+	// Drop-reason breakdown (QA Phase A2)
+	DropTunnelICMPNoSubnet uint64
+	DropTunnelParse        uint64
+	DropTunnelACL          uint64
+	DropTunnelKey          uint64
+	DropTunnelPool         uint64
+	DropEgressParse        uint64
+	DropEgressNoFlow       uint64
+	DropEgressNotOurs      uint64
 }
 
 // Stats returns current counters.
@@ -229,6 +299,14 @@ func (e *Engine) Stats() Stats {
 		s.ACLAllowed = st.Allowed
 		s.ACLDenied = st.Denied
 	}
+	s.DropTunnelICMPNoSubnet = e.dropTunnelICMPNoSubnet.Load()
+	s.DropTunnelParse = e.dropTunnelParse.Load()
+	s.DropTunnelACL = e.dropTunnelACL.Load()
+	s.DropTunnelKey = e.dropTunnelKey.Load()
+	s.DropTunnelPool = e.dropTunnelPool.Load()
+	s.DropEgressParse = e.dropEgressParse.Load()
+	s.DropEgressNoFlow = e.dropEgressNoFlow.Load()
+	s.DropEgressNotOurs = e.dropEgressNotOurs.Load()
 	return s
 }
 

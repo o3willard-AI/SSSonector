@@ -122,6 +122,54 @@ func TestEngineForwardRequiresEgressIP(t *testing.T) {
 	}
 }
 
+// TestEngineEgressPassesTunnelSubnetTraffic is a QA-found regression:
+// the host kernel's replies to tunnel peers (dst inside the tunnel
+// subnet) must pass through untranslated — the NAT must not eat
+// normal tunnel traffic. Covers both TCP replies and ICMP (non-TCP)
+// tunnel traffic.
+func TestEngineEgressPassesTunnelSubnetTraffic(t *testing.T) {
+	cfg := testNATConfig()
+	_, tunNet, err := net.ParseCIDR("10.77.0.0/24")
+	if err != nil {
+		t.Fatalf("cidr: %v", err)
+	}
+	eng, err := NewEngine(&cfg, Options{
+		EgressIP:     net.ParseIP("192.168.101.172"),
+		TunnelSubnet: tunNet,
+	}, testLogger())
+	if err != nil {
+		t.Fatalf("engine: %v", err)
+	}
+
+	// Kernel reply from an egress source to the client's tunnel IP.
+	reply := buildSynPacket(
+		net.ParseIP("192.168.10.5"), // egress-side host
+		net.ParseIP("10.77.0.2"),    // tunnel-side peer (dst in tunnel subnet)
+		22, 51234,
+	)
+	out, err := eng.ProcessEgressPacket(reply)
+	if err != nil {
+		t.Fatalf("tunnel-subnet packet must pass: %v", err)
+	}
+	if string(out) != string(reply) {
+		t.Fatal("tunnel-subnet packet must pass through untranslated")
+	}
+
+	// ICMP echo request to the peer (non-TCP) must also pass.
+	icmp := make([]byte, 32)
+	icmp[0] = 0x45
+	icmp[9] = 1 // ICMP
+	copy(icmp[16:20], net.ParseIP("10.77.0.2").To4())
+	if _, err := eng.ProcessEgressPacket(icmp); err != nil {
+		t.Fatalf("ICMP to tunnel subnet must pass: %v", err)
+	}
+
+	st := eng.Stats()
+	if st.DroppedPackets != 0 {
+		t.Fatalf("tunnel-subnet pass-through must not count as drop: %+v", st)
+	}
+}
+
 func TestEngineRejectsMalformed(t *testing.T) {
 	eng := mkEngine(t, testNATConfig(), "192.168.101.172")
 	if _, err := eng.ProcessTunnelPacket([]byte{0x45, 0x00}); err == nil {

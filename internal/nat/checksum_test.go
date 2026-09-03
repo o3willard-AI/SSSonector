@@ -17,6 +17,7 @@ func buildSynPacket(srcIP, dstIP net.IP, srcPort, dstPort int) []byte {
 	tcpOff := 20
 	binary.BigEndian.PutUint16(pkt[tcpOff:tcpOff+2], uint16(srcPort))
 	binary.BigEndian.PutUint16(pkt[tcpOff+2:tcpOff+4], uint16(dstPort))
+	pkt[tcpOff+12] = 0x50 // data-offset 5 (20 bytes), reserved 0 — required by gVisor
 	pkt[tcpOff+13] = 0x02 // SYN
 	recomputeTCPChecksum(pkt, tcpOff)
 	recomputeIPv4Checksum(pkt)

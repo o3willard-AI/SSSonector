@@ -41,6 +41,13 @@ type ReverseNAT struct {
 	ch  *channel.Endpoint
 	nic tcpip.NICID
 
+	// outMu guards writer/sink selection: the pump writes to the live
+	// frame sink when set (TLS-wrapped per-connection), else to the
+	// static writer captured at construction.
+	outMu   sync.Mutex
+	writer  PacketWriter
+	frameSink interface{ WritePacket(p []byte) error }
+
 	mu        sync.Mutex
 	listeners map[int]*publicListener
 
@@ -64,9 +71,11 @@ type publicListener struct {
 }
 
 // NewReverseNAT builds a netstack whose link writes frames into
-// tunnelWriter and whose inbound frames arrive via DeliverTunnelPacket.
-// tunnelIP is this host's tunnel-side address (the stack answers as it);
-// tunnelCIDR scopes the route through the virtual link.
+// NewReverseNAT builds a netstack whose frames are written into the
+// tunnel via the supplied PacketWriter, and whose inbound frames arrive
+// via DeliverTunnelPacket. tunnelIP is this host's tunnel-side address
+// (the stack answers as it); tunnelCIDR scopes the route through the
+// virtual link.
 func NewReverseNAT(tunnelWriter PacketWriter, tunnelIP net.IP, tunnelCIDR string, logger *zap.Logger) (*ReverseNAT, error) {
 	if tunnelWriter == nil {
 		return nil, fmt.Errorf("tunnel writer is required")
@@ -116,6 +125,7 @@ func NewReverseNAT(tunnelWriter PacketWriter, tunnelIP net.IP, tunnelCIDR string
 		s:         s,
 		ch:        ch,
 		nic:       1,
+		writer:    tunnelWriter,
 		listeners: make(map[int]*publicListener),
 		stopCh:    make(chan struct{}),
 	}
@@ -126,7 +136,9 @@ func NewReverseNAT(tunnelWriter PacketWriter, tunnelIP net.IP, tunnelCIDR string
 	return r, nil
 }
 
-// pumpOutbound drains stack-emitted frames and writes them into the tunnel.
+// pumpOutbound drains stack-emitted frames and writes them into the
+// tunnel — via the live frame sink when set (TLS-wrapped conn), else
+// the static writer from construction.
 func (r *ReverseNAT) pumpOutbound(w PacketWriter, logger *zap.Logger) {
 	for {
 		pkt := r.ch.Read()
@@ -139,11 +151,31 @@ func (r *ReverseNAT) pumpOutbound(w PacketWriter, logger *zap.Logger) {
 			continue
 		}
 		frame := pkt.ToView().AsSlice()
-		if err := w.WritePacket(frame); err != nil {
+
+		r.outMu.Lock()
+		sink := r.frameSink
+		base := r.writer
+		r.outMu.Unlock()
+
+		var err error
+		if sink != nil {
+			err = sink.WritePacket(frame)
+		} else if base != nil {
+			err = base.WritePacket(frame)
+		}
+		if err != nil {
 			logger.Warn("netstack frame write failed", zap.Error(err))
 		}
 		pkt.DecRef()
 	}
+}
+
+// SetFrameSink installs the live per-connection frame sink (the
+// TLS-wrapped tunnel conn). Pass nil to fall back to the static writer.
+func (r *ReverseNAT) SetFrameSink(sink interface{ WritePacket(p []byte) error }) {
+	r.outMu.Lock()
+	r.frameSink = sink
+	r.outMu.Unlock()
 }
 
 // DeliverTunnelPacket injects one raw IPv4 frame (read from the tunnel)
