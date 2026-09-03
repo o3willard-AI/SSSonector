@@ -272,11 +272,34 @@ func (m *Manager) checkCertificate() {
 	}
 }
 
-// rotateCertificates generates new certificates and updates the manager
+// rotateCertificates generates new certificates and updates the manager.
+//
+// Fail-closed rule (Issues.md #9): the daemon must never silently replace
+// an operator-provisioned PKI. Rotation is only legitimate when the cert
+// directory still holds the CA private key that signed the current leaf
+// (i.e., the deployment owns its CA). Otherwise a rotation would mint a
+// brand-new self-signed CA, breaking every peer's trust anchor — observed
+// in QA when 30-day certs sat just inside the 30-day rotation threshold:
+// the daemon silently regenerated the whole PKI on startup. Instead: log
+// the blocked rotation and keep serving the current certificate; the
+// operator re-provisions explicitly.
 func (m *Manager) rotateCertificates() {
 	m.logger.Info("Starting certificate rotation",
 		zap.Bool("use_temporary_certs", m.getUseTemporaryCerts()),
 	)
+
+	caKeyPath := filepath.Join(m.certDir, "ca.key")
+	if _, err := os.Stat(caKeyPath); os.IsNotExist(err) {
+		m.logger.Error("Certificate rotation blocked: no CA key in cert dir; "+
+			"refusing to regenerate the PKI (fail-closed, Issues.md #9). "+
+			"Re-provision explicitly: sssonector provision ...",
+			zap.String("cert_dir", m.certDir),
+			zap.Time("current_cert_not_before", m.currentCert.Leaf.NotBefore),
+			zap.Time("current_cert_not_after", m.currentCert.Leaf.NotAfter),
+		)
+		m.rotationDone <- struct{}{} // Signal completion; keep current cert
+		return
+	}
 
 	// Generate new certificates
 	var err error
