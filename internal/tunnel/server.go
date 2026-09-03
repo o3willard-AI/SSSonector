@@ -114,9 +114,15 @@ func (s *Server) Start() error {
 	}
 	s.iface = iface
 
+	// Shared frame sink: netstack-emitted frames (forward proxy + reverse
+	// PAT) are written into the active TLS tunnel connection through it.
+	natCfg := s.activeConfig().Config.NAT
+	if natCfg.Enabled && (natCfg.Forward.Enabled || natCfg.Reverse.Enabled) {
+		s.frameSink = &tunnelFrameSink{}
+	}
+
 	// NAT engine (phase 2: forward path). Disabled config → nil engine,
 	// zero data-path change.
-	natCfg := s.activeConfig().Config.NAT
 	if natCfg.Enabled && natCfg.Forward.Enabled {
 		tunIP, _, _ := net.ParseCIDR(s.activeConfig().Config.Network.Address)
 		if tunIP == nil {
@@ -142,6 +148,11 @@ func (s *Server) Start() error {
 				} else {
 					s.logger.Info("NAT forward proxy started",
 						zap.Int("forward_rules", len(natCfg.Forward.Rules)))
+					// The forward proxy's netstack emits SYN-ACKs and
+					// relay frames through the shared tunnel frame
+					// sink; without it the pump silently discards
+					// every frame (QA: handshake never completed).
+					fp.SetFrameSink(s.frameSink)
 				}
 			}
 		}
@@ -165,7 +176,6 @@ func (s *Server) Start() error {
 					zap.Error(err))
 			} else {
 				s.natReverse = rev
-				s.frameSink = &tunnelFrameSink{}
 				rev.SetFrameSink(s.frameSink)
 				for _, l := range natCfg.Reverse.Listeners {
 					if err := rev.StartListener(l); err != nil {
@@ -257,6 +267,17 @@ type tunnelFrameSink struct {
 func (s *tunnelFrameSink) Set(c net.Conn) {
 	s.mu.Lock()
 	s.conn = c
+	s.mu.Unlock()
+}
+
+// ClearIf removes the active connection only if it is still prev: the
+// deferred clear of a dying connection must not clobber the fresh
+// connection installed by a newer handleConnection (QA stale-sink race).
+func (s *tunnelFrameSink) ClearIf(prev net.Conn) {
+	s.mu.Lock()
+	if s.conn == prev {
+		s.conn = nil
+	}
 	s.mu.Unlock()
 }
 
@@ -382,14 +403,22 @@ func (s *Server) handleConnection(conn net.Conn) {
 	// QA diagnostic: wrap the tunnel conn so the reverse io.Copy path
 	// (TUN read -> tunnel write) is observable end to end.
 	tunnelConn = &reverseProbeConn{Conn: tunnelConn, tag: "srv-rev", logger: s.logger}
-	// Forward NAT: TCP flows from the tunnel are delivered to the proxy
-	// netstack (which terminates them and re-originates via local
-	// sockets). Non-TCP traffic (ICMP to this host) continues to the
-	// normal TUN path. The proxy feeds only on packets READ FROM the
-	// tunnel — wire the feeder here.
-	if s.natProxy != nil {
+	// Forward NAT + reverse PAT: tunnel reads feed BOTH netstacks. The
+	// forward proxy reassembles frames (TLS chunks aren't IP-aligned) and
+	// terminates matching TCP; the reverse netstack needs the inbound
+	// segments for its own listener-relayed flows. Non-matching traffic
+	// continues to the normal TUN path (ICMP to this host, etc.).
+	rev := s.natReverse
+	if s.natProxy != nil || rev != nil {
 		proxy := s.natProxy
-		tunnelConn = &mirrorReader{Conn: tunnelConn, mirror: func(p []byte) { proxy.DeliverTunnelPacket(p) }}
+		tunnelConn = &mirrorReader{Conn: tunnelConn, mirror: func(p []byte) {
+			if proxy != nil {
+				proxy.DeliverTunnelPacket(p)
+			}
+			if rev != nil {
+				rev.DeliverTunnelPacket(p)
+			}
+		}}
 	}
 
 	// Reverse PAT + forward-proxy frame sink: netstack frames must flow
@@ -398,7 +427,10 @@ func (s *Server) handleConnection(conn net.Conn) {
 	// client's TLS stream).
 	if s.natProxy != nil || s.natReverse != nil {
 		s.frameSink.Set(tunnelConn)
-		defer s.frameSink.Set(nil)
+		// Clear only if the sink still holds THIS connection: a dying
+		// connection's deferred clear must not clobber a newer one (QA:
+		// stale-sink race blackholed server→client frames).
+		defer func(prev net.Conn) { s.frameSink.ClearIf(prev) }(tunnelConn)
 	}
 
 	transfer, err := NewTransfer(tunnelConn, adapterConn, s.activeConfig(), s.logger)
@@ -564,7 +596,16 @@ func (s *Server) sampleNATMetrics() {
 			zap.Uint64("drop_no_pull_up", np),
 			zap.Uint64("drop_bad_tcp_hdrlen", bt),
 			zap.Uint64("drop_no_transport_hdr", nt),
+			zap.String("last_relay_err", s.natProxy.LastRelayErr()),
 		)
+		if s.natProxy != nil {
+			ipRecv, ipMal, ipInvDst, ipDisRx, tcpValid, tcpInvalid := s.natProxy.NetstackStats()
+			s.logger.Info("PROBE netstack stats",
+				zap.Uint64("ip_recv", ipRecv), zap.Uint64("ip_malformed", ipMal),
+				zap.Uint64("ip_invalid_dst", ipInvDst), zap.Uint64("ip_disabled_rx", ipDisRx),
+				zap.Uint64("tcp_valid", tcpValid), zap.Uint64("tcp_invalid", tcpInvalid))
+			s.logger.Info("PROBE counters dump", zap.Any("counters", s.natProxy.DumpCounters()))
+		}
 	}
 	if s.natEngine != nil {
 		st := s.natEngine.Stats()

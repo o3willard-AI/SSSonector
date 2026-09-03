@@ -13,8 +13,8 @@ config:
     mtu: 1400
     address: "10.77.0.2/24"
   tunnel:
-    server_address: "192.168.101.172"
-    server_port: 8443
+    server_address: "192.168.101.7"
+    server_port: 9443
   auth:
     cert_file: /etc/sssonector/certs/client.crt
     key_file: /etc/sssonector/certs/client.key

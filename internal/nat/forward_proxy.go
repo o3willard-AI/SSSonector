@@ -52,6 +52,8 @@ type ForwardProxy struct {
 	rules []compiledProxyRule
 
 	outMu     sync.Mutex
+	bufMu     sync.Mutex
+	reBuf     []byte
 	frameSink interface{ WritePacket(p []byte) error }
 
 	stopCh chan struct{}
@@ -69,6 +71,8 @@ type ForwardProxy struct {
 	lastBadData12 int
 	lastBadLen    int
 	lastBadHex    string
+	// Last relay failure reason (QA diagnostics).
+	lastRelayErr string
 
 	// Decomposition drop labels (QA): which early return fired.
 	dropNoNetHdr       atomic.Uint64
@@ -76,6 +80,9 @@ type ForwardProxy struct {
 	dropBadTCPHdrLen   atomic.Uint64
 	dropNoTransportHdr atomic.Uint64
 	dropBadChecksum    atomic.Uint64
+	dropShort          atomic.Uint64
+	dropNonIP          atomic.Uint64
+	dropNonTCP         atomic.Uint64
 }
 
 // compiledProxyRule mirrors config.NATForwardRule with parsed CIDRs
@@ -136,6 +143,10 @@ func NewForwardProxy(localIP net.IP, tunnelCIDR string, rules []config.NATForwar
 	if err := s.EnableNIC(1); err != nil {
 		return nil, fmt.Errorf("netstack EnableNIC: %v", err)
 	}
+	// Accept packets addressed to ANY destination (client flows target the
+	// egress LAN hosts, not the netstack's own address); the forwarder
+	// demuxes by port and re-originates.
+	s.SetPromiscuousMode(1, true)
 
 	// Tunnel-side allowlist: union of rule src_cidrs. Flows from other
 	// sources are denied (fail closed).
@@ -158,6 +169,21 @@ func NewForwardProxy(localIP net.IP, tunnelCIDR string, rules []config.NATForwar
 			src: srcNet, dst: dstNet, ports: ports, ruleID: i,
 		})
 		allow[r.SrcCIDR] = srcNet
+		// Give the netstack an on-link address for each forward destination
+		// subnet: CreateEndpoint resolves the SYN's local (destination)
+		// address through the address table, and without this it fails
+		// with "network is unreachable" for egress hosts (QA finding).
+		egOnes, _ := dstNet.Mask.Size()
+		egAddr := tcpip.AddrFrom4([4]byte(dstNet.IP.To4()))
+		if err := s.AddProtocolAddress(1, tcpip.ProtocolAddress{
+			Protocol: ipv4.ProtocolNumber,
+			AddressWithPrefix: tcpip.AddressWithPrefix{
+				Address:   egAddr,
+				PrefixLen: egOnes,
+			},
+		}, stack.AddressProperties{}); err != nil {
+			return nil, fmt.Errorf("netstack egress address %s: %v", r.DstCIDR, err)
+		}
 	}
 	allowlist := make([]*net.IPNet, 0, len(allow))
 	for _, n := range allow {
@@ -182,29 +208,76 @@ func (f *ForwardProxy) SetFrameSink(sink interface{ WritePacket(p []byte) error 
 	f.outMu.Unlock()
 }
 
-// DeliverTunnelPacket injects one raw IPv4 frame from the tunnel into
-// the proxy netstack. TCP flows matching a forward rule are terminated
-// here and proxied; everything else is dropped (fail closed).
+// DeliverTunnelPacket buffers the raw TLS-read chunk and delivers every
+// COMPLETE IPv4 frame it contains. TLS record boundaries do not align
+// with IP packet boundaries (QA: a coalesced or split chunk made the
+// proto byte land mid-header, so per-Read delivery misparsed frames).
 func (f *ForwardProxy) DeliverTunnelPacket(pkt []byte) {
-	if len(pkt) < header.IPv4MinimumSize {
-		f.dropped.Add(1)
-		return
+	f.bufMu.Lock()
+	f.reBuf = append(f.reBuf, pkt...)
+	for {
+		frame, ok := f.nextFrame()
+		if !ok {
+			break
+		}
+		f.deliverFrame(frame)
 	}
-	if pkt[0]>>4 != 4 {
-		f.dropped.Add(1)
-		return
+	// Cap the reassembly buffer (a stream that never yields valid frames
+	// must not grow without bound); drop the oldest half if oversized.
+	const maxBuf = 256 * 1024
+	if len(f.reBuf) > maxBuf {
+		f.reBuf = append(f.reBuf[:0], f.reBuf[len(f.reBuf)-maxBuf:]...)
 	}
-	proto := pkt[9]
+	f.bufMu.Unlock()
+}
+
+// nextFrame pops one complete IPv4 frame from the reassembly buffer, or
+// returns ok=false if more bytes are needed. Unparsable prefixes are
+// skipped byte-by-byte until a plausible IPv4 header is found.
+func (f *ForwardProxy) nextFrame() ([]byte, bool) {
+	for {
+		if len(f.reBuf) < header.IPv4MinimumSize {
+			return nil, false
+		}
+		if f.reBuf[0]>>4 != 4 {
+			// Resync: drop one byte and scan on.
+			f.reBuf = f.reBuf[1:]
+			continue
+		}
+		ihl := int(f.reBuf[0]&0x0F) * 4
+		if ihl < header.IPv4MinimumSize {
+			f.reBuf = f.reBuf[1:]
+			continue
+		}
+		total := int(f.reBuf[2])<<8 | int(f.reBuf[3])
+		if total < ihl || total > len(f.reBuf) {
+			if total > len(f.reBuf) {
+				return nil, false // need more bytes
+			}
+			f.reBuf = f.reBuf[1:] // bogus length: resync
+			continue
+		}
+		frame := make([]byte, total)
+		copy(frame, f.reBuf[:total])
+		f.reBuf = f.reBuf[total:]
+		return frame, true
+	}
+}
+
+// deliverFrame processes one fully-assembled IPv4 frame.
+func (f *ForwardProxy) deliverFrame(frame []byte) {
+	proto := frame[9]
 	if proto != 6 { // TCP
 		// ICMP and other non-TCP to the host's tunnel IP pass to the
 		// kernel via the normal TUN path (handled upstream); the proxy
 		// only carries TCP flows.
+		f.dropNonTCP.Add(1)
 		f.dropped.Add(1)
 		return
 	}
 
 	// ACL pre-check by address: source must be in the tunnel allowlist.
-	src := net.IP(pkt[12:16])
+	src := net.IP(frame[12:16])
 	if !f.srcAllowed(src) {
 		f.aclDenies.Add(1)
 		f.dropped.Add(1)
@@ -213,7 +286,7 @@ func (f *ForwardProxy) DeliverTunnelPacket(pkt []byte) {
 
 	// Diagnostics (QA): verify the checksum before injection so a
 	// netstack silent drop is distinguishable from a bad packet.
-	if !tcpChecksumValidBytes(pkt) {
+	if !tcpChecksumValidBytes(frame) {
 		f.dropBadChecksum.Add(1)
 		f.dropped.Add(1)
 		return
@@ -224,7 +297,7 @@ func (f *ForwardProxy) DeliverTunnelPacket(pkt []byte) {
 	// earlier failures were the missing EnableNIC and a malformed
 	// synthetic SYN missing the data-offset field, not framing).
 	pb := stack.NewPacketBuffer(stack.PacketBufferOptions{
-		Payload: buffer.MakeWithData(pkt),
+		Payload: buffer.MakeWithData(frame),
 	})
 	defer pb.DecRef()
 	f.ch.InjectInbound(header.IPv4ProtocolNumber, pb)
@@ -325,6 +398,9 @@ func (f *ForwardProxy) SetTransportHandler(rules []config.NATForwardRule, logger
 		src4 := id.RemoteAddress.As4()
 		srcIP := net.IP(src4[:])
 		dstPort := int(id.LocalPort)
+		f.logger.Info("PROBE forwarder SYN",
+			zap.String("src", srcIP.String()), zap.Int("sport", int(id.RemotePort)),
+			zap.String("dst", dstIP.String()), zap.Int("dport", dstPort))
 		matched := -1
 		for _, r := range f.rules {
 			if r.src.Contains(srcIP) && r.dst.Contains(dstIP) && r.ports[dstPort] {
@@ -339,20 +415,41 @@ func (f *ForwardProxy) SetTransportHandler(rules []config.NATForwardRule, logger
 			return
 		}
 
+		// The netstack must OWN the destination address for the endpoint's
+		// handshake route to resolve (local address check in FindRoute).
+		// Assign the SYN's destination as a /32 on NIC 1 for the lifetime
+		// of the relayed flow. "duplicate address" is fine: a previous
+		// flow to the same host already owns it.
+		if err := f.s.AddProtocolAddress(1, tcpip.ProtocolAddress{
+			Protocol: ipv4.ProtocolNumber,
+			AddressWithPrefix: tcpip.AddressWithPrefix{
+				Address:   tcpip.AddrFrom4([4]byte(dstIP.To4())),
+				PrefixLen: 32,
+			},
+		}, stack.AddressProperties{}); err != nil {
+			if _, dup := err.(*tcpip.ErrDuplicateAddress); !dup {
+				f.relayErrors.Add(1)
+				f.lastRelayErr = "addr add " + dstIP.String() + ": " + err.String()
+				req.Complete(true)
+				return
+			}
+		}
+
 		// Complete the netstack handshake, then re-originate toward the
 		// ORIGINAL destination via a local socket (the kernel routes it
 		// to the LAN normally).
 		w, werr := waitConn(req, &waiter.Queue{})
 		if werr != nil {
 			f.relayErrors.Add(1)
+			f.lastRelayErr = "endpoint " + dstIP.String() + ": " + werr.Error()
 			return
 		}
-
 		egressConn, derr := net.DialTimeout("tcp4",
 			net.JoinHostPort(dstIP.String(), fmt.Sprint(dstPort)),
 			10*time.Second)
 		if derr != nil {
 			f.relayErrors.Add(1)
+			f.lastRelayErr = "dial " + dstIP.String() + ":" + fmt.Sprint(dstPort) + ": " + derr.Error()
 			w.Close()
 			return
 		}
@@ -419,4 +516,33 @@ func (f *ForwardProxy) Stats() (sessions, denies, relayErrors, dropped uint64) {
 func (f *ForwardProxy) DropReasons() (badChecksum, noNetHdr, noPullUp, badTCPHdrLen, noTransportHdr uint64) {
 	return f.dropBadChecksum.Load(), f.dropNoNetHdr.Load(), f.dropNoPullUp.Load(),
 		f.dropBadTCPHdrLen.Load(), f.dropNoTransportHdr.Load()
+}
+
+// LastRelayErr returns the most recent relay failure reason (QA diagnostics).
+func (f *ForwardProxy) LastRelayErr() string { return f.lastRelayErr }
+
+// DumpCounters returns every QA counter raw, for unambiguous diagnostics.
+func (f *ForwardProxy) DumpCounters() map[string]uint64 {
+	return map[string]uint64{
+		"sessions":       f.sessionsTotal.Load(),
+		"acl_denies":     f.aclDenies.Load(),
+		"relay_errors":   f.relayErrors.Load(),
+		"dropped":        f.dropped.Load(),
+		"bad_checksum":   f.dropBadChecksum.Load(),
+		"no_net_hdr":     f.dropNoNetHdr.Load(),
+		"no_pull_up":     f.dropNoPullUp.Load(),
+		"bad_tcp_hdrlen": f.dropBadTCPHdrLen.Load(),
+		"no_transport":   f.dropNoTransportHdr.Load(),
+		"short":          f.dropShort.Load(),
+		"non_ip":         f.dropNonIP.Load(),
+		"non_tcp":        f.dropNonTCP.Load(),
+	}
+}
+
+// NetstackStats returns IP/TCP receive counters for QA diagnostics.
+func (f *ForwardProxy) NetstackStats() (ipRecv, ipMalformed, ipInvalidDst, ipDisabledRx, tcpValid, tcpInvalid uint64) {
+	st := f.s.Stats()
+	return st.IP.PacketsReceived.Value(), st.IP.MalformedPacketsReceived.Value(),
+		st.IP.InvalidDestinationAddressesReceived.Value(), st.IP.DisabledPacketsReceived.Value(),
+		st.TCP.ValidSegmentsReceived.Value(), st.TCP.InvalidSegmentsReceived.Value()
 }

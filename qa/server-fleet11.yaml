@@ -1,0 +1,53 @@
+metadata:
+  schema_version: "2.0.0"
+  environment: qa
+type: server
+config:
+  mode: server
+  logging:
+    level: info
+    format: json
+  network:
+    name: tun0
+    interface: tun0
+    mtu: 1400
+    address: "10.77.0.1/24"
+  tunnel:
+    listen_address: "0.0.0.0"
+    listen_port: 9443
+  auth:
+    cert_file: /etc/sssonector/certs/server.crt
+    key_file: /etc/sssonector/certs/server.key
+    ca_file: /etc/sssonector/certs/ca.crt
+  security:
+    allow_plaintext: false
+    tls:
+      min_version: "1.3"
+      max_version: "1.3"
+  metrics:
+    enabled: true
+    interval: 5s
+  monitor:
+    enabled: true
+    type: prometheus
+    interval: 5s
+    prometheus:
+      enabled: true
+      port: 9090
+      path: /metrics
+  nat:
+    enabled: true
+    forward:
+      enabled: true
+      rules:
+        - comment: "QA: client may reach fleet LAN via pa-fleet-11"
+          src_cidr: "10.77.0.0/24"
+          dst_cidr: "192.168.100.0/24"
+          ports: [22, 80, 443, 8080]
+    reverse:
+      enabled: true
+      listeners:
+        - comment: "QA: publish client echo service"
+          listen_port: 18080
+          dst: "10.77.0.2:8080"
+          allowed_cidrs: ["192.168.101.0/24", "127.0.0.0/8", "192.168.100.0/24"]
