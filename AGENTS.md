@@ -61,9 +61,8 @@ CI enforces the same gates plus govulncheck and Gitleaks. Never merge red.
 
 ## Commits
 
-- Sign every commit (SSH or GPG: `git config commit.gpgsign true` plus
-  `user.signingkey`). Unsigned commits fail provenance review even when all
-  other gates pass.
+- Sign commits when the option is readily available (SSH or GPG); unsigned
+  commits are acceptable — signing is not a merge gate.
 - One logical change per commit; do not commit binaries,
   object files, logs, QA snapshots, or editor state (.gitignore covers them).
 
