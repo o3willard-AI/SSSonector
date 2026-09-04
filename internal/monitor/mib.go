@@ -309,11 +309,11 @@ func (t *MIBTree) String() string {
 	var sb strings.Builder
 	sb.WriteString("MIB Tree:\n")
 	for _, entry := range t.entries {
-		sb.WriteString(fmt.Sprintf("OID: %s\n", entry.OID))
-		sb.WriteString(fmt.Sprintf("  Name: %s\n", entry.Name))
-		sb.WriteString(fmt.Sprintf("  Description: %s\n", entry.Description))
-		sb.WriteString(fmt.Sprintf("  Type: %s\n", entry.Type))
-		sb.WriteString(fmt.Sprintf("  Value: %v\n", entry.Value))
+		fmt.Fprintf(&sb, "OID: %s\n", entry.OID)
+		fmt.Fprintf(&sb, "  Name: %s\n", entry.Name)
+		fmt.Fprintf(&sb, "  Description: %s\n", entry.Description)
+		fmt.Fprintf(&sb, "  Type: %s\n", entry.Type)
+		fmt.Fprintf(&sb, "  Value: %v\n", entry.Value)
 		sb.WriteString("\n")
 	}
 	return sb.String()

@@ -294,32 +294,6 @@ func (s *tunnelFrameSink) WritePacket(p []byte) error {
 	return err
 }
 
-// egressAddress resolves the SNAT source address: the first non-tunnel
-// interface address on this host. Returns nil when discovery fails, in
-// which case forward NAT fails closed (engine construction errors out).
-func (s *Server) egressAddress() net.IP {
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		return nil
-	}
-	_, tunnelNet, _ := net.ParseCIDR(s.activeConfig().Config.Network.Address)
-	for _, a := range addrs {
-		ipNet, ok := a.(*net.IPNet)
-		if !ok {
-			continue
-		}
-		ip4 := ipNet.IP.To4()
-		if ip4 == nil || ip4.IsLoopback() || ip4.IsLinkLocalUnicast() {
-			continue
-		}
-		if tunnelNet != nil && tunnelNet.Contains(ip4) {
-			continue
-		}
-		return ip4
-	}
-	return nil
-}
-
 // acceptLoop accepts connections and handles them one at a time
 func (s *Server) acceptLoop() {
 	defer s.wg.Done()

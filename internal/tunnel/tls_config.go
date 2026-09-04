@@ -14,9 +14,8 @@ var modernCipherSuites = []uint16{
 
 // Modern TLS configuration based on Mozilla's recommendations
 var modernTLSConfig = &tls.Config{
-	MinVersion:               tls.VersionTLS12,
-	PreferServerCipherSuites: true,
-	CipherSuites:             modernCipherSuites,
+	MinVersion:   tls.VersionTLS12,
+	CipherSuites: modernCipherSuites,
 	CurvePreferences: []tls.CurveID{
 		tls.X25519,
 		tls.CurveP384,

@@ -13,8 +13,8 @@ type tcpState int
 const (
 	stateSynSent tcpState = iota
 	stateEstablished
-	stateFinWait  // one direction half-closed
-	stateClosed   // fully done, awaiting GC
+	stateFinWait // one direction half-closed
+	stateClosed  // fully done, awaiting GC
 )
 
 // flowKey identifies a tunnel-side flow by its 5-tuple components
@@ -39,10 +39,10 @@ type entry struct {
 // A single mutex guards the table; operations are O(1) map lookups and
 // never block on I/O, so lock hold times are tiny (no sleeps under lock).
 type ConnTable struct {
-	mu      sync.Mutex
-	byFlow  map[flowKey]*entry
-	bySNAT  map[uint16]*entry // snatPort -> entry (reverse translation)
-	used    map[uint16]bool   // allocated SNAT ports
+	mu       sync.Mutex
+	byFlow   map[flowKey]*entry
+	bySNAT   map[uint16]*entry // snatPort -> entry (reverse translation)
+	used     map[uint16]bool   // allocated SNAT ports
 	nextSNAT uint16
 	poolBase uint16
 	poolMax  uint16
@@ -95,7 +95,7 @@ func (t *ConnTable) lookupOrAllocate(key flowKey, now time.Time) (*entry, bool) 
 // allocatePortLocked scans from the cursor for a free port, wrapping at
 // poolMax back to poolBase, visiting each port at most once.
 func (t *ConnTable) allocatePortLocked() (uint16, bool) {
-	total := int(t.poolMax - t.poolBase) + 1
+	total := int(t.poolMax-t.poolBase) + 1
 	for i := 0; i < total; i++ {
 		if !t.used[t.nextSNAT] {
 			p := t.nextSNAT
@@ -140,9 +140,10 @@ func (t *ConnTable) Observe(e *entry, syn, ack, fin, rst bool, now time.Time) {
 	case syn && ack:
 		e.state = stateEstablished
 	case fin:
-		if e.state == stateEstablished {
+		switch e.state {
+		case stateEstablished:
 			e.state = stateFinWait
-		} else if e.state == stateFinWait {
+		case stateFinWait:
 			e.state = stateClosed
 		}
 	}

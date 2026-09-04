@@ -40,9 +40,8 @@ type ACLStats struct {
 // First match wins; no match denies (fail closed). The zero value
 // denies everything.
 type ForwardACL struct {
-	rules    []compiledForwardRule
-	stats    ACLStats
-	dropDuma uint32 // rate-limiter token for deny logs
+	rules []compiledForwardRule
+	stats ACLStats
 }
 
 type compiledForwardRule struct {

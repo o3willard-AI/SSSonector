@@ -10,12 +10,12 @@ import (
 
 	"gvisor.dev/gvisor/pkg/buffer"
 	"gvisor.dev/gvisor/pkg/tcpip"
+	"gvisor.dev/gvisor/pkg/tcpip/adapters/gonet"
 	"gvisor.dev/gvisor/pkg/tcpip/header"
 	"gvisor.dev/gvisor/pkg/tcpip/link/channel"
 	"gvisor.dev/gvisor/pkg/tcpip/network/ipv4"
 	"gvisor.dev/gvisor/pkg/tcpip/stack"
 	"gvisor.dev/gvisor/pkg/tcpip/transport/tcp"
-	"gvisor.dev/gvisor/pkg/tcpip/adapters/gonet"
 
 	"github.com/o3willard-AI/SSSonector/internal/config"
 	"go.uber.org/zap"
@@ -44,14 +44,14 @@ type ReverseNAT struct {
 	// outMu guards writer/sink selection: the pump writes to the live
 	// frame sink when set (TLS-wrapped per-connection), else to the
 	// static writer captured at construction.
-	outMu   sync.Mutex
-	writer  PacketWriter
+	outMu     sync.Mutex
+	writer    PacketWriter
 	frameSink interface{ WritePacket(p []byte) error }
 
 	mu        sync.Mutex
 	listeners map[int]*publicListener
 
-	stopCh  chan struct{}
+	stopCh    chan struct{}
 	closeOnce sync.Once
 
 	acceptsTotal atomic.Uint64

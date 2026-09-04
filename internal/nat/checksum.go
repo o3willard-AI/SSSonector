@@ -1,7 +1,5 @@
 package nat
 
-import "encoding/binary"
-
 // checksumUpdate performs RFC 1624 incremental checksum update:
 // HC' = ~(~HC + ~m + m') with one's-complement arithmetic.
 // oldW/newW are the 16-bit big-endian words being replaced.
@@ -42,13 +40,4 @@ func tcpChecksum(src, dst [4]byte, tcpSegment []byte, checksumOffset int) uint16
 		sum = (sum >> 16) + (sum & 0xFFFF)
 	}
 	return ^uint16(sum)
-}
-
-// rewriteUint16 updates a 16-bit big-endian field at buf[at] from oldW to
-// newW, applying the incremental checksum at checksumOffset. Returns an
-// error only if offsets are out of range (callers validate first).
-func rewriteUint16(buf []byte, at int, oldW, newW uint16, checksumOffset int) {
-	binary.BigEndian.PutUint16(buf[at:], newW)
-	binary.BigEndian.PutUint16(buf[checksumOffset:],
-		checksumUpdate(binary.BigEndian.Uint16(buf[checksumOffset:]), oldW, newW))
 }

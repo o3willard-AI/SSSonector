@@ -19,9 +19,8 @@ type probeConn struct {
 	tag    string
 	logger *zap.Logger
 
-	seq    atomic.Uint64
-	bytes  atomic.Uint64
-	ipv4OK atomic.Uint64
+	seq   atomic.Uint64
+	bytes atomic.Uint64
 	// fullPkt counts reads where a complete IPv4 packet (IHL*4+payload
 	// per the total-length field) fits exactly in the read boundary.
 	fullPkt atomic.Uint64
