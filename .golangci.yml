@@ -59,6 +59,13 @@ linters:
         text: "G101"
         linters:
           - gosec
+      # SA5011 in tests: `if x == nil { t.Fatal(...) }` followed by a deref is
+      # the idiomatic guard; staticcheck cannot model t.Fatal as terminating,
+      # so it false-positives on every such check.
+      - path: _test\.go
+        text: "SA5011"
+        linters:
+          - staticcheck
 
 issues:
   max-issues-per-linter: 0

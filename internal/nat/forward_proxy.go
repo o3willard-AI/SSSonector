@@ -52,8 +52,8 @@ type ForwardProxy struct {
 	rules []compiledProxyRule
 
 	outMu     sync.Mutex
-	bufMu     sync.Mutex
-	reBuf     []byte
+	assembler FrameAssembler
+	localIP   net.IP // tunnel IP: frames addressed here are NOT forward flows
 	frameSink interface{ WritePacket(p []byte) error }
 
 	stopCh chan struct{}
@@ -196,6 +196,7 @@ func NewForwardProxy(localIP net.IP, tunnelCIDR string, rules []config.NATForwar
 		nic:         1,
 		allowedSrcs: allowlist,
 		rules:       compiled,
+		localIP:     localIP,
 		logger:      logger,
 		stopCh:      make(chan struct{}),
 	}, nil
@@ -213,60 +214,22 @@ func (f *ForwardProxy) SetFrameSink(sink interface{ WritePacket(p []byte) error 
 // with IP packet boundaries (QA: a coalesced or split chunk made the
 // proto byte land mid-header, so per-Read delivery misparsed frames).
 func (f *ForwardProxy) DeliverTunnelPacket(pkt []byte) {
-	f.bufMu.Lock()
-	f.reBuf = append(f.reBuf, pkt...)
-	for {
-		frame, ok := f.nextFrame()
-		if !ok {
-			break
-		}
-		f.deliverFrame(frame)
-	}
-	// Cap the reassembly buffer (a stream that never yields valid frames
-	// must not grow without bound); drop the oldest half if oversized.
-	const maxBuf = 256 * 1024
-	if len(f.reBuf) > maxBuf {
-		f.reBuf = append(f.reBuf[:0], f.reBuf[len(f.reBuf)-maxBuf:]...)
-	}
-	f.bufMu.Unlock()
-}
-
-// nextFrame pops one complete IPv4 frame from the reassembly buffer, or
-// returns ok=false if more bytes are needed. Unparsable prefixes are
-// skipped byte-by-byte until a plausible IPv4 header is found.
-func (f *ForwardProxy) nextFrame() ([]byte, bool) {
-	for {
-		if len(f.reBuf) < header.IPv4MinimumSize {
-			return nil, false
-		}
-		if f.reBuf[0]>>4 != 4 {
-			// Resync: drop one byte and scan on.
-			f.reBuf = f.reBuf[1:]
-			continue
-		}
-		ihl := int(f.reBuf[0]&0x0F) * 4
-		if ihl < header.IPv4MinimumSize {
-			f.reBuf = f.reBuf[1:]
-			continue
-		}
-		total := int(f.reBuf[2])<<8 | int(f.reBuf[3])
-		if total < ihl || total > len(f.reBuf) {
-			if total > len(f.reBuf) {
-				return nil, false // need more bytes
-			}
-			f.reBuf = f.reBuf[1:] // bogus length: resync
-			continue
-		}
-		frame := make([]byte, total)
-		copy(frame, f.reBuf[:total])
-		f.reBuf = f.reBuf[total:]
-		return frame, true
-	}
+	f.assembler.Deliver(pkt, f.deliverFrame)
 }
 
 // deliverFrame processes one fully-assembled IPv4 frame.
 func (f *ForwardProxy) deliverFrame(frame []byte) {
 	proto := frame[9]
+
+	// Frames addressed TO the tunnel IP belong to reverse-PAT flows and
+	// server-terminated traffic, not the forward proxy: injecting them
+	// here makes the forward netstack RST unknown flows and poison the
+	// reverse path (QA: reverse PAT SYN-ACK answered with RST). Skip.
+	dst := net.IP(frame[16:20])
+	if dst.Equal(f.localIP) {
+		return
+	}
+
 	if proto != 6 { // TCP
 		// ICMP and other non-TCP to the host's tunnel IP pass to the
 		// kernel via the normal TUN path (handled upstream); the proxy
@@ -398,9 +361,6 @@ func (f *ForwardProxy) SetTransportHandler(rules []config.NATForwardRule, logger
 		src4 := id.RemoteAddress.As4()
 		srcIP := net.IP(src4[:])
 		dstPort := int(id.LocalPort)
-		f.logger.Info("PROBE forwarder SYN",
-			zap.String("src", srcIP.String()), zap.Int("sport", int(id.RemotePort)),
-			zap.String("dst", dstIP.String()), zap.Int("dport", dstPort))
 		matched := -1
 		for _, r := range f.rules {
 			if r.src.Contains(srcIP) && r.dst.Contains(dstIP) && r.ports[dstPort] {
@@ -518,6 +478,10 @@ func (f *ForwardProxy) DropReasons() (badChecksum, noNetHdr, noPullUp, badTCPHdr
 		f.dropBadTCPHdrLen.Load(), f.dropNoTransportHdr.Load()
 }
 
+// Reset discards buffered partial frames: call when the tunnel
+// connection restarts (stale bytes would corrupt the new stream).
+func (f *ForwardProxy) Reset() { f.assembler.Reset() }
+
 // LastRelayErr returns the most recent relay failure reason (QA diagnostics).
 func (f *ForwardProxy) LastRelayErr() string { return f.lastRelayErr }
 
@@ -546,3 +510,12 @@ func (f *ForwardProxy) NetstackStats() (ipRecv, ipMalformed, ipInvalidDst, ipDis
 		st.IP.InvalidDestinationAddressesReceived.Value(), st.IP.DisabledPacketsReceived.Value(),
 		st.TCP.ValidSegmentsReceived.Value(), st.TCP.InvalidSegmentsReceived.Value()
 }
+
+// AssemblerDebug exposes reassembly counters (QA diagnostics).
+func (f *ForwardProxy) AssemblerDebug() (chunks, chunkByt, framesOut uint64) {
+	return f.assembler.DebugStats()
+}
+
+// DeliverOwned injects one netstack-owned frame directly (bypasses the
+// reassembler: used by the tunnel router which assembles once, upstream).
+func (f *ForwardProxy) DeliverOwned(frame []byte) { f.deliverFrame(frame) }

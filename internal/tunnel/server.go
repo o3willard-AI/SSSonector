@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/o3willard-AI/SSSonector/internal/config"
+	"io"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -238,20 +239,48 @@ type nullPacketWriter struct{}
 // WritePacket implements nat.PacketWriter.
 func (nullPacketWriter) WritePacket(p []byte) error { return nil }
 
-// mirrorReader wraps the tunnel connection and mirrors every read frame
-// into the reverse netstack while the normal data path consumes it too.
-type mirrorReader struct {
-	net.Conn
-	mirror func([]byte)
+// tunnelRouter is the ACTIVE read path when NAT is enabled: it reads raw
+// TLS chunks from the tunnel, reassembles complete IPv4 frames, routes
+// netstack-owned frames to the NAT netstacks (consuming them), and serves
+// everything else to the caller (the TUN data path) via an internal pipe.
+//
+// Why consuming is required: the server kernel RSTs any flow it doesn't
+// own — netstack-relayed flows (reverse PAT replies, forward sessions)
+// would otherwise be poisoned by pass-through frames (QA-verified).
+type tunnelRouter struct {
+	net.Conn  // underlying tunnel conn (TLS)
+	assembler *nat.FrameAssembler
+	route     func(frame []byte) bool // returns true if consumed
+	out       *io.PipeReader
+	writer    *io.PipeWriter
+	closeOut  func()
 }
 
-// Read implements net.Conn: reads pass through and are mirrored.
-func (m *mirrorReader) Read(b []byte) (int, error) {
-	n, err := m.Conn.Read(b)
-	if n > 0 {
-		m.mirror(b[:n])
-	}
-	return n, err
+// Read pulls from the router's output pipe; a background goroutine feeds
+// it after routing (started once via start).
+func (r *tunnelRouter) Read(b []byte) (int, error) {
+	return r.out.Read(b)
+}
+
+// start begins draining the underlying tunnel connection.
+func (r *tunnelRouter) start() {
+	go func() {
+		buf := make([]byte, 65535)
+		for {
+			n, err := r.Conn.Read(buf)
+			if n > 0 {
+				r.assembler.Deliver(buf[:n], func(frame []byte) {
+					if !r.route(frame) {
+						_, _ = r.writer.Write(frame)
+					}
+				})
+			}
+			if err != nil {
+				r.closeOut()
+				return
+			}
+		}
+	}()
 }
 
 // tunnelFrameSink is the per-connection write target for netstack frames.
@@ -374,9 +403,6 @@ func (s *Server) handleConnection(conn net.Conn) {
 	tunnelConn = probe
 
 	adapterConn := NewAdapterWrapper(s.iface)
-	// QA diagnostic: wrap the tunnel conn so the reverse io.Copy path
-	// (TUN read -> tunnel write) is observable end to end.
-	tunnelConn = &reverseProbeConn{Conn: tunnelConn, tag: "srv-rev", logger: s.logger}
 	// Forward NAT + reverse PAT: tunnel reads feed BOTH netstacks. The
 	// forward proxy reassembles frames (TLS chunks aren't IP-aligned) and
 	// terminates matching TCP; the reverse netstack needs the inbound
@@ -385,14 +411,47 @@ func (s *Server) handleConnection(conn net.Conn) {
 	rev := s.natReverse
 	if s.natProxy != nil || rev != nil {
 		proxy := s.natProxy
-		tunnelConn = &mirrorReader{Conn: tunnelConn, mirror: func(p []byte) {
-			if proxy != nil {
-				proxy.DeliverTunnelPacket(p)
+		// Fresh stream: stale partial frames from the previous
+		// connection would corrupt the new one's framing.
+		if proxy != nil {
+			proxy.Reset()
+		}
+		if rev != nil {
+			rev.Reset()
+		}
+		tunCIDR := s.activeConfig().Config.Network.Address
+		tunIP, _, _ := net.ParseCIDR(tunCIDR)
+		pr, pw := io.Pipe()
+		router := &tunnelRouter{
+			Conn:      tunnelConn,
+			assembler: &nat.FrameAssembler{},
+			out:       pr,
+			writer:    pw,
+			closeOut:  func() { pw.CloseWithError(nil) },
+		}
+		router.route = func(frame []byte) bool {
+			if len(frame) < 20 {
+				return false
 			}
-			if rev != nil {
-				rev.DeliverTunnelPacket(p)
+			dst := net.IP(frame[16:20])
+			if dst.Equal(tunIP) {
+				// Reverse-PAT flows: the reverse netstack owns
+				// TCP replies to its listener-dialed flows.
+				if rev != nil && frame[9] == 6 {
+					rev.DeliverOwned(frame)
+					return true
+				}
+				return false // ICMP etc. pass to TUN/kernel
 			}
-		}}
+			// Forward proxy owns peer TCP flows to egress hosts.
+			if proxy != nil && frame[9] == 6 {
+				proxy.DeliverOwned(frame)
+				return true
+			}
+			return false
+		}
+		tunnelConn = router
+		router.start()
 	}
 
 	// Reverse PAT + forward-proxy frame sink: netstack frames must flow
@@ -549,56 +608,18 @@ func (s *Server) sampleNATMetrics() {
 	}
 	s.monitor.UpdateNATMetrics(forwarded, returned, dropped, activeFlows, accepts, denies)
 
-	// Boundary probe snapshot every 10th sample to bound log volume.
-	if p := s.probe.Load(); p != nil {
-		if probeLogTick.Add(1)%10 == 1 {
-			s.logger.Info("PROBE summary", zap.String("stats", p.Snapshot()))
-		}
-	}
-
-	// Drop-reason breakdown (QA Phase A2) — every NAT drop site labeled.
+	// NAT counters (observable via monitor; the per-drop-site detail lives
+	// in DropReasons() if a future QA cycle needs it again).
 	if s.natProxy != nil {
 		sessions, pdrops, perrs, denies := s.natProxy.Stats()
-		bc, nn, np, bt, nt := s.natProxy.DropReasons()
-		s.logger.Info("PROBE forward proxy",
+		s.logger.Info("NAT forward proxy stats",
 			zap.Uint64("sessions", sessions),
 			zap.Uint64("acl_denies", denies),
 			zap.Uint64("relay_errors", perrs),
 			zap.Uint64("dropped", pdrops),
-			zap.Uint64("drop_bad_checksum", bc),
-			zap.Uint64("drop_no_net_hdr", nn),
-			zap.Uint64("drop_no_pull_up", np),
-			zap.Uint64("drop_bad_tcp_hdrlen", bt),
-			zap.Uint64("drop_no_transport_hdr", nt),
-			zap.String("last_relay_err", s.natProxy.LastRelayErr()),
-		)
-		if s.natProxy != nil {
-			ipRecv, ipMal, ipInvDst, ipDisRx, tcpValid, tcpInvalid := s.natProxy.NetstackStats()
-			s.logger.Info("PROBE netstack stats",
-				zap.Uint64("ip_recv", ipRecv), zap.Uint64("ip_malformed", ipMal),
-				zap.Uint64("ip_invalid_dst", ipInvDst), zap.Uint64("ip_disabled_rx", ipDisRx),
-				zap.Uint64("tcp_valid", tcpValid), zap.Uint64("tcp_invalid", tcpInvalid))
-			s.logger.Info("PROBE counters dump", zap.Any("counters", s.natProxy.DumpCounters()))
-		}
-	}
-	if s.natEngine != nil {
-		st := s.natEngine.Stats()
-		s.logger.Info("PROBE nat drops",
-			zap.Uint64("icmp_no_subnet", st.DropTunnelICMPNoSubnet),
-			zap.Uint64("tunnel_parse", st.DropTunnelParse),
-			zap.Uint64("tunnel_acl", st.DropTunnelACL),
-			zap.Uint64("tunnel_key", st.DropTunnelKey),
-			zap.Uint64("tunnel_pool", st.DropTunnelPool),
-			zap.Uint64("egress_parse", st.DropEgressParse),
-			zap.Uint64("egress_no_flow", st.DropEgressNoFlow),
-			zap.Uint64("egress_not_ours", st.DropEgressNotOurs),
-			zap.Uint64("forwarded", st.ForwardedPackets),
-			zap.Uint64("returned", st.ReturnPackets),
 		)
 	}
 }
-
-var probeLogTick atomic.Uint64
 
 // currentTransferSnapshotLocked returns the active transfer for sampling.
 func (s *Server) currentTransferSnapshotLocked() *Transfer {

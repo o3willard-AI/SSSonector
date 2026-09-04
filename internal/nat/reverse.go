@@ -36,10 +36,16 @@ type PacketWriter interface {
 // handshake, windowing, retransmit and half-close are handled by
 // netstack, which is why TCP is not hand-rolled). Half-close is
 // preserved in both relay directions.
+// relayLogger holds the QA diagnostics logger for relay copies. Atomic
+// because multiple ReverseNAT instances (and their relay goroutines)
+// can race during tests/reload.
+var relayLogger atomic.Value // *zap.Logger
+
 type ReverseNAT struct {
-	s   *stack.Stack
-	ch  *channel.Endpoint
-	nic tcpip.NICID
+	s      *stack.Stack
+	ch     *channel.Endpoint
+	nic    tcpip.NICID
+	logger *zap.Logger
 
 	// outMu guards writer/sink selection: the pump writes to the live
 	// frame sink when set (TLS-wrapped per-connection), else to the
@@ -57,6 +63,7 @@ type ReverseNAT struct {
 	acceptsTotal atomic.Uint64
 	aclDenies    atomic.Uint64
 	relayErrors  atomic.Uint64
+	assembler    FrameAssembler
 }
 
 // publicListener is one published port mapping.
@@ -105,6 +112,13 @@ func NewReverseNAT(tunnelWriter PacketWriter, tunnelIP net.IP, tunnelCIDR string
 	if err := s.CreateNIC(1, ch); err != nil {
 		return nil, fmt.Errorf("netstack CreateNIC: %v", err)
 	}
+	// This gVisor version requires explicit NIC enablement before
+	// injected frames are processed (QA: without it, InjectInbound
+	// frames hit disabledRx and vanish — the reverse dial handshake
+	// never completes and the stack RSTs late peer replies).
+	if err := s.EnableNIC(1); err != nil {
+		return nil, fmt.Errorf("netstack EnableNIC: %v", err)
+	}
 	if err := s.AddProtocolAddress(1, tcpip.ProtocolAddress{
 		Protocol: ipv4.ProtocolNumber,
 		AddressWithPrefix: tcpip.AddressWithPrefix{
@@ -121,11 +135,13 @@ func NewReverseNAT(tunnelWriter PacketWriter, tunnelIP net.IP, tunnelCIDR string
 		},
 	})
 
+	relayLogger.Store(logger)
 	r := &ReverseNAT{
 		s:         s,
 		ch:        ch,
 		nic:       1,
 		writer:    tunnelWriter,
+		logger:    logger,
 		listeners: make(map[int]*publicListener),
 		stopCh:    make(chan struct{}),
 	}
@@ -170,6 +186,10 @@ func (r *ReverseNAT) pumpOutbound(w PacketWriter, logger *zap.Logger) {
 	}
 }
 
+// Reset discards buffered partial frames: call when the tunnel
+// connection restarts (stale bytes would corrupt the new stream).
+func (r *ReverseNAT) Reset() { r.assembler.Reset() }
+
 // SetFrameSink installs the live per-connection frame sink (the
 // TLS-wrapped tunnel conn). Pass nil to fall back to the static writer.
 func (r *ReverseNAT) SetFrameSink(sink interface{ WritePacket(p []byte) error }) {
@@ -181,11 +201,14 @@ func (r *ReverseNAT) SetFrameSink(sink interface{ WritePacket(p []byte) error })
 // DeliverTunnelPacket injects one raw IPv4 frame (read from the tunnel)
 // into the netstack, toward published services.
 func (r *ReverseNAT) DeliverTunnelPacket(pkt []byte) {
-	if len(pkt) < header.IPv4MinimumSize {
-		return
-	}
+	r.assembler.Deliver(pkt, r.injectFrame)
+}
+
+// injectFrame delivers one fully-assembled IPv4 frame into the reverse
+// netstack (frame extraction needed: TLS chunks aren't IP-aligned).
+func (r *ReverseNAT) injectFrame(frame []byte) {
 	pb := stack.NewPacketBuffer(stack.PacketBufferOptions{
-		Payload: buffer.MakeWithData(pkt),
+		Payload: buffer.MakeWithData(frame),
 	})
 	defer pb.DecRef()
 	r.ch.InjectInbound(header.IPv4ProtocolNumber, pb)
@@ -281,10 +304,16 @@ func (r *ReverseNAT) relay(publicConn net.Conn, dstIP net.IP, dstPort int) {
 	)
 	if err != nil {
 		r.relayErrors.Add(1)
+		r.logger.Warn("REVERSE relay dial failed",
+			zap.String("dst", dstIP.String()), zap.Int("port", dstPort), zap.Error(err))
 		publicConn.Close()
 		return
 	}
+	r.logger.Info("REVERSE relay established",
+		zap.String("dst", dstIP.String()), zap.Int("port", dstPort))
 	relayBidirectional(publicConn, gconn)
+	r.logger.Info("REVERSE relay finished",
+		zap.String("dst", dstIP.String()), zap.Int("port", dstPort))
 }
 
 // relayBidirectional copies both directions with half-close on finish
@@ -294,19 +323,30 @@ func relayBidirectional(a, b net.Conn) {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		_, _ = io.Copy(a, b)
+		n, err := io.Copy(a, b)
+		qaRelayLog("a<-b", n, err)
 		if cw, ok := a.(interface{ CloseWrite() error }); ok {
 			_ = cw.CloseWrite()
 		}
 	}()
 	go func() {
 		defer wg.Done()
-		_, _ = io.Copy(b, a)
+		n, err := io.Copy(b, a)
+		qaRelayLog("b<-a", n, err)
 		if cw, ok := b.(interface{ CloseWrite() error }); ok {
 			_ = cw.CloseWrite()
 		}
 	}()
 	wg.Wait()
+}
+
+// qaRelayLog records a relay copy outcome for QA diagnostics.
+func qaRelayLog(dir string, n int64, err error) {
+	lg, _ := relayLogger.Load().(*zap.Logger)
+	if lg == nil {
+		return
+	}
+	lg.Info("REVERSE copy", zap.String("dir", dir), zap.Int64("n", n), zap.Error(err))
 }
 
 // StopListener removes a published port (hot reload).
@@ -361,3 +401,7 @@ func (r *ReverseNAT) ListenerPorts() []int {
 	}
 	return ports
 }
+
+// DeliverOwned injects one netstack-owned frame directly (bypasses the
+// reassembler: used by the tunnel router which assembles once, upstream).
+func (r *ReverseNAT) DeliverOwned(frame []byte) { r.injectFrame(frame) }

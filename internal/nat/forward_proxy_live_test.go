@@ -19,7 +19,7 @@ func TestForwardProxyLiveChannel(t *testing.T) {
 		[]config.NATForwardRule{
 			{
 				SrcCIDR: "10.77.0.0/24",
-				DstCIDR: "10.77.0.0/24",
+				DstCIDR: "192.0.2.0/24",
 				Ports:   []int{8080},
 			},
 		}, logger)
@@ -37,8 +37,10 @@ func TestForwardProxyLiveChannel(t *testing.T) {
 		t.Fatalf("handler: %v", err)
 	}
 
-	// Build a real SYN: 10.77.0.2:12345 -> 10.77.0.1:8080
-	syn := buildSynPacket(net.ParseIP("10.77.0.2"), net.ParseIP("10.77.0.1"), 12345, 8080)
+	// Build a real SYN: 10.77.0.2:12345 -> 192.0.2.10:8080 (an egress
+	// host, NOT the tunnel IP: frames addressed to the tunnel IP belong
+	// to reverse-PAT flows and are skipped by the forward proxy).
+	syn := buildSynPacket(net.ParseIP("10.77.0.2"), net.ParseIP("192.0.2.10"), 12345, 8080)
 
 	proxy.DeliverTunnelPacket(syn)
 
@@ -82,7 +84,7 @@ func proxyRulesForTest() []config.NATForwardRule {
 	return []config.NATForwardRule{
 		{
 			SrcCIDR: "10.77.0.0/24",
-			DstCIDR: "10.77.0.0/24",
+			DstCIDR: "192.0.2.0/24",
 			Ports:   []int{8080},
 		},
 	}
