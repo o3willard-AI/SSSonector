@@ -1,8 +1,6 @@
 module github.com/o3willard-AI/SSSonector
 
-go 1.26.3
-
-toolchain go1.26.7
+go 1.26
 
 require (
 	github.com/gosnmp/gosnmp v1.37.0
