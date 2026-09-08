@@ -289,6 +289,7 @@ func (m *Manager) rotateCertificates() {
 	)
 
 	caKeyPath := filepath.Join(m.certDir, "ca.key")
+	caCertPath := filepath.Join(m.certDir, "ca.crt")
 	if _, err := os.Stat(caKeyPath); os.IsNotExist(err) {
 		m.logger.Error("Certificate rotation blocked: no CA key in cert dir; "+
 			"refusing to regenerate the PKI (fail-closed, Issues.md #9). "+
@@ -301,17 +302,26 @@ func (m *Manager) rotateCertificates() {
 		return
 	}
 
-	// Generate new certificates
-	var err error
-	if m.getUseTemporaryCerts() {
-		err = generator.GenerateTemporaryCertificates(m.certDir)
+	// Rotation re-signs the leaf certificates from the EXISTING CA. It must
+	// never mint a new CA: that silently replaces the trust anchor and
+	// breaks every peer (QA: 30-day certs sat inside the 30-day rotation
+	// threshold and the daemon regenerated the whole PKI on startup).
+	// UseTemporaryCerts (tests only) still generates a throwaway PKI.
+	if !m.getUseTemporaryCerts() {
+		if err := generator.RenewCertificatesFromCA(m.certDir, caCertPath, caKeyPath); err != nil {
+			m.logger.Error("Failed to renew certificates from existing CA",
+				zap.Error(err))
+			m.rotationDone <- struct{}{} // Signal completion even on error
+			return
+		}
+		m.logger.Info("Certificates renewed from existing CA",
+			zap.String("cert_dir", m.certDir))
 	} else {
-		err = generator.GenerateCertificates(m.certDir)
-	}
-	if err != nil {
-		m.logger.Error("Failed to generate new certificates", zap.Error(err))
-		m.rotationDone <- struct{}{} // Signal completion even on error
-		return
+		if err := generator.GenerateTemporaryCertificates(m.certDir); err != nil {
+			m.logger.Error("Failed to generate temporary certificates", zap.Error(err))
+			m.rotationDone <- struct{}{} // Signal completion even on error
+			return
+		}
 	}
 
 	// Load new certificate

@@ -250,3 +250,52 @@ func IssueClientCert(certDir string) error {
 	}
 	return generateEndEntityCert(certDir, "client", ca, caKey, defaultCertDuration)
 }
+
+// RenewCertificatesFromCA re-issues the server and client leaf
+// certificates from an EXISTING CA (ca.crt + ca.key already in certDir).
+// Unlike GenerateCertificates it never touches the CA: the trust anchor
+// stays stable so peers keep verifying (fail-closed rotation,
+// Issues.md #9). Rotation with an operator-managed CA is the only
+// sanctioned self-service renewal path.
+func RenewCertificatesFromCA(certDir, caCertPath, caKeyPath string) error {
+	caPEM, err := os.ReadFile(caCertPath)
+	if err != nil {
+		return fmt.Errorf("read CA cert: %w", err)
+	}
+	block, _ := pem.Decode(caPEM)
+	if block == nil {
+		return fmt.Errorf("no PEM block in CA cert %s", caCertPath)
+	}
+	ca, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return fmt.Errorf("parse CA cert: %w", err)
+	}
+	caKeyPEM, err := os.ReadFile(caKeyPath)
+	if err != nil {
+		return fmt.Errorf("read CA key: %w", err)
+	}
+	keyBlock, _ := pem.Decode(caKeyPEM)
+	if keyBlock == nil {
+		return fmt.Errorf("no PEM block in CA key %s", caKeyPath)
+	}
+	caKey, err := x509.ParsePKCS1PrivateKey(keyBlock.Bytes)
+	if err != nil {
+		// Try PKCS8 as a fallback for operator-supplied keys.
+		if k8, k8err := x509.ParsePKCS8PrivateKey(keyBlock.Bytes); k8err == nil {
+			rsaKey, ok := k8.(*rsa.PrivateKey)
+			if !ok {
+				return fmt.Errorf("CA key is not RSA")
+			}
+			caKey = rsaKey
+		} else {
+			return fmt.Errorf("parse CA key: %w", err)
+		}
+	}
+	if err := generateEndEntityCert(certDir, "server", ca, caKey, defaultCertDuration); err != nil {
+		return fmt.Errorf("renew server cert: %w", err)
+	}
+	if err := generateEndEntityCert(certDir, "client", ca, caKey, defaultCertDuration); err != nil {
+		return fmt.Errorf("renew client cert: %w", err)
+	}
+	return nil
+}
