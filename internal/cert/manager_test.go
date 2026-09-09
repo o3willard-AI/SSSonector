@@ -95,8 +95,10 @@ func TestCertificateRotation(t *testing.T) {
 	// Poll for certificate rotation instead of a blind sleep: the rotation
 	// threshold is 10s, but scheduler/race-detector load can delay the
 	// background check, so allow a generous deadline and finish as soon as
-	// rotation is observed.
-	newCert, err := waitForRotation(manager, 30*time.Second)
+	// rotation is observed. 90s: under a parallel full-suite -race run,
+	// RSA keygen in the rotation path competes with every other package's
+	// tests; 30s was observed to time out under that load.
+	newCert, err := waitForRotation(manager, 90*time.Second)
 	if err != nil {
 		t.Fatalf("Certificate was not rotated in time: %v", err)
 	}
