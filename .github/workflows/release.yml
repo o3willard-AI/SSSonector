@@ -133,7 +133,7 @@ jobs:
           cd "$GITHUB_WORKSPACE"
           cyclonedx-gomod mod -licenses -json -output dist/release/sbom.cyclonedx.json
 
-          cd release
+          cd dist/release
           sha256sum sssonector-* sbom.cyclonedx.json > SHA256SUMS
           ls -la
 
