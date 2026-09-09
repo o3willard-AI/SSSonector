@@ -40,10 +40,18 @@ This file tracks currently-true issues only.
    forward path and netstack UDP endpoints on the reverse path; IPv6
    needs dual-stack ACLs and translation. Not planned unless a
    deployment demands it.
-10. **NAT end-to-end QA on TUN-capable hosts pending** — unit and
-    in-memory wire tests cover the engines; full jump-host and
-    service-publishing flows against real kernels are exercised via the
-    QA VMs (192.168.101.171/.172) before release tagging.
+## Resolved (2026-09 NAT/PAT release)
+
+- ~~NAT end-to-end QA on TUN-capable hosts~~ — closed by the verified QA
+  pass on the pa-fleet-11 topology (192.168.100.51 server, client via
+  192.168.101.7:9443 bridge): forward NAT (SSH banners through the
+  tunnel to two fleet hosts), reverse PAT (HTTP 200 round-trip to a
+  client-side service), ICMP ping 0% loss, ACL negative correctly RST.
+- ~~Certificate rotation mints a new CA~~ — rotation unconditionally
+  called `GenerateCertificates`, silently replacing the trust anchor and
+  breaking every peer. Fixed in fc56254: rotation re-news leaves from
+  the existing CA (renew fails closed if ca.key is absent); regression
+  coverage in a099601 (no-new-CA invariant, fail-closed on missing key).
 
 ## Resolved (2026-08 backlog execution)
 

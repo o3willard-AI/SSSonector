@@ -274,7 +274,7 @@ func (m *Manager) checkCertificate() {
 
 // rotateCertificates generates new certificates and updates the manager.
 //
-// Fail-closed rule (Issues.md #9): the daemon must never silently replace
+// Fail-closed rule (Issues.md (Resolved 2026-09: cert rotation minted a new CA)): the daemon must never silently replace
 // an operator-provisioned PKI. Rotation is only legitimate when the cert
 // directory still holds the CA private key that signed the current leaf
 // (i.e., the deployment owns its CA). Otherwise a rotation would mint a
@@ -292,7 +292,7 @@ func (m *Manager) rotateCertificates() {
 	caCertPath := filepath.Join(m.certDir, "ca.crt")
 	if _, err := os.Stat(caKeyPath); os.IsNotExist(err) {
 		m.logger.Error("Certificate rotation blocked: no CA key in cert dir; "+
-			"refusing to regenerate the PKI (fail-closed, Issues.md #9). "+
+			"refusing to regenerate the PKI (fail-closed, Issues.md (Resolved 2026-09: cert rotation minted a new CA)). "+
 			"Re-provision explicitly: sssonector provision ...",
 			zap.String("cert_dir", m.certDir),
 			zap.Time("current_cert_not_before", m.currentCert.Leaf.NotBefore),

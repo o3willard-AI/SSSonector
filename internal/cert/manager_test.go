@@ -346,7 +346,6 @@ func TestManagerEmitsStructuredCertLogs(t *testing.T) {
 	}
 }
 
-
 // qaReadBytes reads a file (test helper for the no-new-CA regression test).
 func qaReadBytes(t *testing.T, path string) []byte {
 	t.Helper()
@@ -376,7 +375,7 @@ func qaLoadCert(t *testing.T, path string) *x509.Certificate {
 }
 
 // TestManagedRotation_DoesNotMintNewCA is the direct regression test for
-// the fail-closed rotation fix (Issues.md #9): the old implementation
+// the fail-closed rotation fix (Issues.md (Resolved 2026-09: cert rotation minted a new CA)): the old implementation
 // called GenerateCertificates from rotateCertificates, which minted a
 // brand-new CA on every rotation and broke every peer's trust anchor.
 // The managed path must re-sign the leaf from the EXISTING CA instead.
@@ -434,7 +433,7 @@ func TestManagedRotation_DoesNotMintNewCA(t *testing.T) {
 	caAfter := qaReadBytes(t, filepath.Join(dir, "ca.crt"))
 	if string(caAfter) != string(caBefore) {
 		t.Error("ca.crt changed during managed rotation: a new CA was " +
-			"minted (violates the no-new-CA invariant, Issues.md #9)")
+			"minted (violates the no-new-CA invariant, Issues.md (Resolved 2026-09: cert rotation minted a new CA))")
 	}
 
 	// The manager presents a leaf signed by that same unchanged CA.

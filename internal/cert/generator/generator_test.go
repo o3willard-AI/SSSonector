@@ -110,7 +110,7 @@ func TestRenewCertificatesFromCA_FailClosedOnMissingCAKey(t *testing.T) {
 	if err := RenewCertificatesFromCA(dir,
 		filepath.Join(dir, "ca.crt"), filepath.Join(dir, "ca.key")); err == nil {
 		t.Error("RenewCertificatesFromCA succeeded without ca.key: " +
-			"rotation must fail closed, not mint a fresh CA (Issues.md #9)")
+			"rotation must fail closed, not mint a fresh CA (Issues.md (Resolved 2026-09: cert rotation minted a new CA))")
 	}
 
 	// Fail-closed means NO partial PKI rewrite: every file must be

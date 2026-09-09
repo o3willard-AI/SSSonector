@@ -255,7 +255,7 @@ func IssueClientCert(certDir string) error {
 // certificates from an EXISTING CA (ca.crt + ca.key already in certDir).
 // Unlike GenerateCertificates it never touches the CA: the trust anchor
 // stays stable so peers keep verifying (fail-closed rotation,
-// Issues.md #9). Rotation with an operator-managed CA is the only
+// Issues.md (Resolved 2026-09: cert rotation minted a new CA)). Rotation with an operator-managed CA is the only
 // sanctioned self-service renewal path.
 func RenewCertificatesFromCA(certDir, caCertPath, caKeyPath string) error {
 	caPEM, err := os.ReadFile(caCertPath)
