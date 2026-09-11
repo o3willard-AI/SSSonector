@@ -12,14 +12,14 @@ item (WI) is one or more commits, each independently reviewable and testable.
 ## 0. Orchestration rules
 
 - **Phase order is a dependency chain.** A phase starts only when every WI in
-  the prior phase is merged to `main` and its verification gate passed.
+  prior phase is merged to `main` and its verification gate passed.
 - **Reviewer gate per WI.** Every WI lands as its own PR (or stacked PRs) with
   the tests named in the WI. The reviewer verifies: tests fail if the
   implementation is reverted (mutation check for critical paths), no
   convention drift (AGENTS.md), no new deps beyond the declared allow-list
-  (§9), `go build ./...`, `go vet ./...`, `go test -race -count=1 ./...` green.
+  (§5), `go build ./...`, `go vet ./...`, `go test -race -count=1 ./...` green.
 - **Release engineer gate per phase.** After each phase merge, the release
-  engineer runs the phase's release-gate command block (§9) on the QA rig and
+  engineer runs the phase's release-gate command block (§4) on the QA rig and
   records the result (build SHA, test log, rig host) in the phase's PR.
 - **Definition of done for the whole plan**: backlog item 1's [DONE] gate
   (`docs/backlog/tui-and-installers.md`) is satisfied and the backlog file is
@@ -63,7 +63,7 @@ unreachable errors and exits 1. Recorded in the phase PR.
 
 | WI | Deliverable | Tests | Gate |
 |---|---|---|---|
-| 2.1 | Terminal lib decision recorded (bubbletea candidate) in this file via PR; dep pinned, govulncheck clean, justified in PR body | dependency review | dep allow-list updated (§9) |
+| 2.1 | Terminal lib decision recorded (bubbletea candidate) in this file via PR; dep pinned, govulncheck clean, justified in PR body | dependency review | dep allow-list updated (§5) |
 | 2.2 | Panel renderers (pure functions over `Snapshot`): rail, tunnel, cert, NAT, rate, log tail; fixed-width golden-output tests incl. 80-col narrow and 200-col wide | Golden tests per panel per state: ok / errored / absent / empty | rendering deterministic across states |
 | 2.3 | Server-mode screen assembly (rail + panels + footer) wired to Poller; client mode = degenerate 1-instance view | Integration test: fake daemon fixture → assembled screen matches golden | full-screen golden test |
 | 2.4 | Navigation + read-only keys: rail ↑↓/Enter focus, Tab, `c`, `q` (no destructive actions yet — footer hides them) | Key-event unit tests via the terminal lib's test harness | focus transitions correct |
@@ -167,5 +167,5 @@ No other new modules. Anything else requires an ADR-level justification.
 |---|---|
 | Exposition parser drift vs future `handleMetrics` changes | parser fixtures generated from live endpoint in CI integration test; `internal/monitor` tests assert field names the parser depends on (contract test, Phase 0 WI 0.2) |
 | systemd-less environments (macOS/Windows builds) | collectors behind interfaces; platform build tags; non-Linux builds exclude systemd collector (compile-time), wizard reports explicit unsupported error — fail closed |
-| TUI freezes the daemon via shared imports | TUI is a separate process; only shares `internal/config` (pure loading) — verified by import audit in review checklist |
+| TUI freezes the daemon via shared imports | TUI is a separate process; only shares `internal/config` and `internal/cert` (both pure loading) — verified by import audit in review checklist |
 | Wizard loosening NAT security | NAT checkbox writes default-deny config only; ACL edits post-setup only (spec §3.3); reviewer verifies no ACL-widening code path exists in wizard |
