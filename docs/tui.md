@@ -34,7 +34,11 @@ Invocations:
 sssonector tui                      # discover instances, open dashboard
 sssonector tui --instance <name>    # open with <name> pre-focused
 sssonector tui --refresh 2s         # poll interval (default 1s, min 500ms)
+sssonector tui --from-bundle <tgz>  # first-run client setup from a server-generated bundle
 ```
+
+First-run detection: no `sssonector@*` units AND no valid config under
+`/etc/sssonector/` → setup wizard (§3.3) instead of the dashboard.
 
 ## 3. Layout
 
@@ -92,6 +96,122 @@ sssonector tui --refresh 2s         # poll interval (default 1s, min 500ms)
 - **No instances found**: rail shows `no sssonector@* units on this host`;
   footer actions disabled.
 
+### 3.3 First-run setup mode (wizard)
+
+On launch, if no `sssonector@*` units exist AND no valid config is found
+under `/etc/sssonector/`, the TUI enters the setup wizard instead of the
+dashboard. The wizard writes through the SAME pipeline as the dashboard
+config apply (§5): validate with `internal/config` → atomic write → enable
+and start the unit. There is one config pipeline in the TUI, not two.
+
+#### Server wizard (fresh host)
+
+```
+┌─ SSSonector v2.2.0 — first-run setup ────────────────────────────────────────┐
+│                                                                              │
+│  No configured instances found on this host.                                 │
+│  This wizard creates a server instance: a TLS listener that one client       │
+│  connects to. Run the wizard once per client (ports must differ).            │
+│                                                                              │
+│  MODE        [ Server ▸ ]  Client                                            │
+│                                                                              │
+│  INSTANCE    ▸ client-a                                                      │
+│  LISTEN PORT 9443                                                            │
+│  TUN ADDRESS 10.77.0.1/24                                                    │
+│  FORWARD NAT [x] enabled   (egress 192.168.100.0/24 — default-deny,          │
+│                              edit ACL after setup)                           │
+│  CERTS       [ ] reuse host CA & certs (/etc/sssonector/certs)               │
+│              [x] generate new instance CA + leaf now                         │
+│                                                                              │
+│  validation: ✓ schema v2.0.0 · port free · TUN subnet free                   │
+│                                                                              │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ Tab next field · ↑↓ edit · [Enter] create & start · [Esc] abort              │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+- **Mode is asked, never guessed** (AGENTS.md: no ambiguous default into
+  server mode or any listening state).
+- Live per-keystroke validation through the real loader: schema v2.0.0,
+  port collision (`ss -tlnp`), TUN subnet overlap.
+- NAT checkbox follows the default-deny rule: enabling NAT writes the
+  default-deny forward-NAT config with an explicit egress CIDR; the ACL is
+  edited post-setup via the config view, never loosened by the wizard.
+- Certs fail closed: with neither cert choice made, the wizard refuses to
+  finish.
+- `create & start` writes the instance config, enables
+  `sssonector@<instance>`, starts it, and lands on the dashboard.
+
+#### Server dashboard immediately after create (listening, no peer)
+
+```
+│ INSTANCES                                     │ TUNNEL                        │
+│  ▸ client-a  :9443  tun 10.77.0.1  peers 0/1  │  state   ● listening          │
+│ ────────────── focused: client-a ──────────── │  peers   0/1                  │
+│ CERTIFICATE                                   │  tun     10.77.0.1/24         │
+│  issuer   sssonector-instance-ca (self)       │  last peer never              │
+│  expires  2027-09-11 (365d)                                                 │
+│ NAT                                           │ RATE LIMITER                  │
+│  fwd 0  ret 0  drops 0  flows 0  accepts 0    │  hits 0/0  rate 50 MB/s       │
+│ LOG ─────────────────────────────────────────────────────────────────────    │
+│ 14:20:04 INFO  listener :9443 open, awaiting TLS handshake                   │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ ⓘ peer info for client:  host <ip> :9443 · cert pinned                       │
+│ [c]onfig [g]enerate client bundle [q]uit                                     │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+State is `● listening`, not `up` — an honest label for "no peer yet". The
+`[g]` action packs a client bundle: the instance's CA cert + a pre-filled
+client config skeleton (server host/port, TUN address, instance name) as a
+tarball with a printed SHA256, replacing the manual cert-scp step in
+`docs/multi_instance_deployment.md`.
+
+#### Client wizard
+
+Auto-detected bundle pre-fill: `sssonector tui --from-bundle <bundle.tgz>`
+loads the CA + client certs and prefills server/port/TUN/instance from the
+skeleton. Without a bundle the same wizard runs with fields blank.
+
+```
+│  MODE        [ ] Server   [ Client ▸ ]                                       │
+│                                                                              │
+│  INSTANCE    ▸ client-a                                                      │
+│  SERVER      192.168.101.7                                                   │
+│  SERVER PORT 9443                                                            │
+│  TUN ADDRESS 10.77.0.2/24                                                    │
+│  CLIENT CERT ▸ /tmp/client-a.tgz loaded (ca.crt, client.crt, client.key) ✓   │
+│                                                                              │
+│  validation: ✓ schema v2.0.0 · CA verifies server cert chain ·               │
+│              TUN subnet matches server's 10.77.0.0/24                        │
+│                                                                              │
+│  [Enter] create & connect                                                    │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+The "CA verifies server cert chain" line is a real pre-flight check against
+the loaded CA — a mismatch blocks the wizard rather than failing later in
+the daemon log.
+
+#### Establishment walkthrough (both sides)
+
+1. **Server**: wizard → 4 fields → Enter → `sssonector@client-a` enabled +
+   running, dashboard shows `● listening`, `peers 0/1`.
+2. **Hand-off**: server presses `g`, transfers the bundle (any channel).
+3. **Client**: `sssonector tui --from-bundle` → prefilled + validated →
+   Enter. Logs show: dial → `TLS handshake ok` → `TUN device up` →
+   `tunnel established — keepalive 30s`.
+4. **Convergence**: within one refresh tick the client rail shows
+   `◌ connecting → ● up`; the server rail dot flips `●`, `accepts 1`, and
+   NAT counters start moving on the first forwarded packet.
+5. Adding a second client = run the server wizard again (new name, new
+   port); the rail grows a row.
+
+Every "established" claim on screen is backed by a real source:
+`/healthz` `tunnel_state` for `● up`, `sssonector_connections_active` for
+peer counts, NAT counters for traffic. Nothing is inferred from "Enter
+succeeded".
+
 ## 4. Keybindings
 
 | Key | Context | Action |
@@ -103,6 +223,7 @@ sssonector tui --refresh 2s         # poll interval (default 1s, min 500ms)
 | `r` | panels | restart focused instance |
 | `R` | panels | reload focused instance (SIGHUP; see §6) |
 | `c` | anywhere | open config view (§5) |
+| `g` | panels | generate client bundle for focused server instance (§3.3) |
 | `Enter` | config view | begin editing selected line |
 | `v` | config view | validate draft against the config loader |
 | `a` | config view | apply draft (validate → write → SIGHUP) |
