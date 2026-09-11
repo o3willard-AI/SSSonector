@@ -59,7 +59,7 @@ First-run detection: no `sssonector@*` units AND no valid config under
 │ NAT                                          RATE LIMITER                   │
 │  fwd pkts   1,204,551                        hits in    812                 │
 │  ret pkts   1,190,003                        hits out   634                 │
-│  dropped    12 (ACL 8, malformed 4)          rate       50.0 MB/s           │
+│  dropped    12 (ACL denies 8)                rate       50.0 MB/s           │
 │  flows      47 active                        burst      100 MB              │
 │  accepts    63 total, 8 ACL-denied                                          │
 │                                                                             │
@@ -78,7 +78,8 @@ First-run detection: no `sssonector@*` units AND no valid config under
 | INSTANCES rail | shared (one row per instance) | name, listen port, TUN address, peer count, state age, health dot |
 | TUNNEL | per-instance | state, peers, TUN address/prefix, state age |
 | CERTIFICATE | shared (daemon host's cert store) | issuer, expiry + days remaining, rotation policy |
-| NAT | per-instance | forwarded/return/dropped (with ACL + malformed split), active flows, listener accepts |
+| NAT | per-instance | forwarded/return/dropped (with ACL-denies split; malformed is not a separate
+series on the wire), active flows, listener accepts |
 | RATE LIMITER | per-instance | throttle hits in/out, effective rate, burst |
 | LOG | shared, tagged | last N lines (default 12) across instances, `[inst]`-tagged |
 
