@@ -62,9 +62,9 @@ func (s SourceOf[T]) Err() error { return s.err }
 // errored sources return the zero value — callers must check Status.
 func (s SourceOf[T]) Get() (T, bool) { return s.value, s.status == StatusOK }
 
-// CertSource is the seam for WI 1.4: per-instance certificate status will
-// be attached here. Not populated by this WI.
-type CertSource = SourceOf[struct{}]
+// CertSource carries per-instance certificate status (issuer, expiry,
+// rotation flag) read from local files — WI 1.4.
+type CertSource = SourceOf[CertInfo]
 
 // InstanceSnapshot is everything the dashboard shows for one instance,
 // as of a single tick. Each source is independently ok/error/absent.
@@ -154,10 +154,13 @@ func (p *Poller) pollInstance(ctx context.Context, snap *InstanceSnapshot) {
 		return
 	}
 
+	// Cert is read from local files (no HTTP) and is independent of the
+	// Prometheus endpoint.
+	snap.Cert = fetchCert(ic)
+
 	if !ic.Prometheus.Enabled {
 		// Prometheus disabled in config: metrics ABSENT by design, not an
-		// error. The port is still the daemon's HTTP port for /healthz?
-		// No — with prometheus disabled there is no metrics listener at
+		// error. With prometheus disabled there is no metrics listener at
 		// all, so healthz is also unreachable by this transport; it is
 		// marked error (the daemon may be running but has no HTTP surface).
 		snap.Metrics = absentSource[Snapshot]()
@@ -172,6 +175,15 @@ func (p *Poller) pollInstance(ctx context.Context, snap *InstanceSnapshot) {
 	// the other.
 	snap.Healthz = fetchHealthz(ctx, p.Client, addr)
 	snap.Metrics = fetchMetrics(ctx, p.Client, addr, ic.Prometheus.Path)
+}
+
+// fetchCert reads the instance's certificate status from local files.
+func fetchCert(ic InstanceConfig) SourceOf[CertInfo] {
+	info, err := ReadCertInfo(ic.CertPaths, ic.CertRotationInterval, time.Time{})
+	if err != nil {
+		return errSource[CertInfo](err)
+	}
+	return okSource(info)
 }
 
 // fetchHealthz GETs <addr>/healthz with per-tick status.
