@@ -71,6 +71,15 @@ func main() {
 
 	var explicitMode string
 	if args := flag.Args(); len(args) > 0 {
+		if args[0] == "tui" {
+			// TUI subcommands bypass the service lifecycle entirely (like
+			// provision): they never start the daemon.
+			if err := runTUI(args[1:]); err != nil {
+				fmt.Fprintf(os.Stderr, "tui: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
 		if args[0] == "provision" {
 			// Provisioning subcommands bypass the service lifecycle entirely.
 			if err := runProvision(args[1:]); err != nil {
