@@ -1,0 +1,2 @@
+CERTIFICATE
+  cert unreadable: open /etc/sssonector/instances/client-a/certs/server.crt: no such file or directory

@@ -1,0 +1,4 @@
+LOG
+  14:02:11 [client-a] tunnel rekeyed peer 192.168.100.51
+  14:01:58 [client-b] listener :9445 conn refused x3
+  [client-a] garbage line carried verbatim
