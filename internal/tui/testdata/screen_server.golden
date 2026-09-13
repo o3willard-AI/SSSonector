@@ -1,0 +1,35 @@
+SSSonector tui (bubbletea v1.3.6)
+daemon: RUNNING (pid 8100)
+
+--- focused: client-a ---
+INSTANCES
+▸ client-a     sssonector@client-a  tun http://127.0.0.1:9443 peers 3    up —        ●
+  client-b     sssonector@client-b  tun http://127.0.0.1:9444 peers —    up —        ○
+
+TUNNEL
+  state    ● up
+  peers    3
+  tun      http://127.0.0.1:9443
+  since    2h14m
+
+NAT
+  fwd      1204551
+  ret      1190003
+  dropped  12 (ACL denies 8)
+  flows    47
+  accepts  63
+
+RATE LIMITER
+  hits in   812
+  hits out  634
+  rate      50.0 MB/s
+  burst     100.0 MB/s
+
+CERTIFICATE
+  issuer    CN=sssonector-instance-ca,O=pa-fleet-11
+  expires   2026-11-14 (64d)
+
+LOG
+  (none this read)
+
+footer: [c]onfig [q]uit (read-only)
