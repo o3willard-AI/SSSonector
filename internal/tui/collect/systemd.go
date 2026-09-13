@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -48,6 +49,21 @@ func (s InstanceState) Running() bool {
 type CommandRunner interface {
 	// Run returns combined-trimmed stdout for the given argv.
 	Run(args ...string) (string, error)
+}
+
+// OSCommandRunner is the production CommandRunner: real os/exec.
+type OSCommandRunner struct{}
+
+// Run executes argv via os/exec and returns trimmed stdout.
+func (OSCommandRunner) Run(args ...string) (string, error) {
+	if len(args) == 0 {
+		return "", fmt.Errorf("exec: empty argv")
+	}
+	out, err := exec.Command(args[0], args[1:]...).Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimRight(string(out), "\n"), nil
 }
 
 // SystemdCollector discovers sssonector instances via systemctl.
