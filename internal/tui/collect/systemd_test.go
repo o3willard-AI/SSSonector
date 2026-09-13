@@ -14,6 +14,8 @@ type fakeRunner struct {
 	outputs map[string]string
 	errs    map[string]error
 	calls   [][]string
+	// bootID lets logtail tests inject the boot id (empty = not set).
+	bootID string
 }
 
 func (f *fakeRunner) Run(args ...string) (string, error) {
