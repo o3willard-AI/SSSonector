@@ -266,7 +266,7 @@ changed.
 | Bytes/packets/errors/connections | `sssonector_bytes_*`, `sssonector_packets_*`, `sssonector_errors_total`, `sssonector_connections_*` | refresh interval |
 | Throttle | `sssonector_throttle_hits_total{direction}`, `sssonector_throttle_effective_rate_bytes_per_second`, `sssonector_throttle_burst_bytes` | refresh interval |
 | NAT | `sssonector_nat_forwarded_packets_total`, `..._return_packets_total`, `..._dropped_packets_total`, `..._flows_active`, `..._listener_accepts_total`, `..._acl_denied_total` | refresh interval |
-| Cert | cert files from the instance's effective config (`tls.cert_file`, `ca_file`) parsed via the `internal/cert` package loaders — local read, no daemon endpoint. Shared panel shows the host CA + the focused instance's leaf. | 60s |
+| Cert | cert files from the instance's effective config (`auth.cert_file`, `auth.key_file`, `auth.ca_file` — note: not `security.tls.*`, which holds only version/cipher settings) parsed via the `internal/cert` package loaders — local read, no daemon endpoint. Shared panel shows the host CA + the focused instance's leaf. | 60s |
 | Logs | `journalctl -u sssonector@<name> -n <N> --no-pager -o short-iso`, tailed incrementally | 1s |
 
 Notes:
