@@ -52,6 +52,18 @@ func errSource[T any](err error) SourceOf[T] { return SourceOf[T]{status: Status
 // absentSource marks a source with no data by design.
 func absentSource[T any]() SourceOf[T] { return SourceOf[T]{status: StatusAbsent} }
 
+// SourceOK wraps v as a fresh (ok) source. Exported for view-layer
+// fixtures and future assembly code.
+func SourceOK[T any](v T) SourceOf[T] { return okSource(v) }
+
+// SourceErr marks a failed source with err. Exported for view-layer
+// fixtures and future assembly code.
+func SourceErr[T any](err error) SourceOf[T] { return errSource[T](err) }
+
+// SourceAbsent marks a source with no data by design. Exported for
+// view-layer fixtures and future assembly code.
+func SourceAbsent[T any]() SourceOf[T] { return absentSource[T]() }
+
 // Status returns the per-tick status.
 func (s SourceOf[T]) Status() SourceStatus { return s.status }
 

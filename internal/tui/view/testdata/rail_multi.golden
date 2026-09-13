@@ -1,0 +1,4 @@
+INSTANCES
+▸ client-a     sssonector@client-a  tun 10.77.0.1/24     peers 2    up 2h14m    ●
+  client-b     sssonector@client-b  tun 10.77.0.9/24     peers —    up 41m      ○
+  client-c     sssonector@client-c  tun 10.77.1.1/24     peers —    up 5m       ✖

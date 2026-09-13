@@ -1,0 +1,3 @@
+LOG
+  14:01:58 [client-b] listener :9445 conn refused x3
+  [client-a] garbage line carried verbatim

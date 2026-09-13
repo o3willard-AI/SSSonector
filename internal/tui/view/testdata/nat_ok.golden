@@ -1,0 +1,6 @@
+NAT
+  fwd      1204551
+  ret      1190003
+  dropped  12 (ACL denies 8)
+  flows    47
+  accepts  63
