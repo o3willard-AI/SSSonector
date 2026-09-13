@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	cfg "github.com/o3willard-AI/SSSonector/internal/config"
 )
@@ -34,6 +35,9 @@ type InstanceConfig struct {
 	Prometheus PrometheusEndpoint
 	// CertPaths are the TLS material paths from config.auth.*.
 	CertPaths CertPaths
+	// CertRotationInterval is config.auth.cert_rotation.interval; 0 means
+	// the reader applies its default (30 days, matching internal/cert).
+	CertRotationInterval time.Duration
 }
 
 // PrometheusEndpoint locates the instance's /metrics endpoint.
@@ -94,6 +98,7 @@ func ResolveInstanceConfig(paths ConfigPaths, name string) (InstanceConfig, erro
 			KeyFile:  app.Config.Auth.KeyFile,
 			CAFile:   app.Config.Auth.CAFile,
 		},
+		CertRotationInterval: app.Config.Auth.CertRotation.Interval,
 	}
 	return ic, nil
 }
