@@ -63,7 +63,7 @@ unreachable errors and exits 1. Recorded in the phase PR.
 
 | WI | Deliverable | Tests | Gate |
 |---|---|---|---|
-| 2.1 | Terminal lib decision recorded (bubbletea candidate) in this file via PR; dep pinned, govulncheck clean, justified in PR body | dependency review | dep allow-list updated (§5) |
+| 2.1 | **DECIDED: charmbracelet/bubbletea v1.3.6** (pinned in go.mod; lipgloss v1.1.0 + golang.org/x/{term,sync,text} arrive as transitive deps). Minimal import stub `internal/tui/app.go` (package tui, stubModel implementing tea.Model) keeps `go mod tidy` from dropping it until WI 2.2. govulncheck ./... clean ("0 vulnerabilities"; one unreachable module-level openpgp advisory GO-2026-5932 is pre-existing upstream, not called). | dependency review | dep allow-list updated (§5) |
 | 2.2 | Panel renderers (pure functions over `Snapshot`): rail, tunnel, cert, NAT, rate, log tail; fixed-width golden-output tests incl. 80-col narrow and 200-col wide | Golden tests per panel per state: ok / errored / absent / empty | rendering deterministic across states |
 | 2.3 | Server-mode screen assembly (rail + panels + footer) wired to Poller; client mode = degenerate 1-instance view | Integration test: fake daemon fixture → assembled screen matches golden | full-screen golden test |
 | 2.4 | Navigation + read-only keys: rail ↑↓/Enter focus, Tab, `c`, `q` (no destructive actions yet — footer hides them) | Key-event unit tests via the terminal lib's test harness | focus transitions correct |
@@ -156,8 +156,8 @@ the graph shows no edge (e.g. 3.1 can start once 2.2 merges, before 2.5).
 | Package | Purpose | Added in |
 |---|---|---|
 | stdlib | everything else | — |
-| one TUI lib (bubbletea or equivalent, decided in 2.1) | rendering + key input | Phase 2 |
-| `golang.org/x/term` (if the TUI lib does not already provide size/raw-mode) | terminal setup | Phase 2, only if needed |
+| `github.com/charmbracelet/bubbletea` **v1.3.6** (chosen in WI 2.1, pinned) | Elm-architecture rendering + key input; pulls lipgloss v1.1.0, x/term, uniseg etc. as transitive deps | Phase 2 |
+| `golang.org/x/crypto` upgraded to v0.56.0 (was v0.55.0) | govulncheck: fixes GO-2026-6355/GO-2026-6354 module-level findings | Phase 2 |
 
 No other new modules. Anything else requires an ADR-level justification.
 
