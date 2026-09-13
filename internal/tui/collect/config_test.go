@@ -136,7 +136,7 @@ func TestResolveInstanceConfig_RealConfigFixtures(t *testing.T) {
 	// pointing ConfigRoot at a temp dir that contains copies.
 	root := t.TempDir()
 	for _, src := range []string{"configs/server.yaml", "configs/client.yaml"} {
-		data, err := os.ReadFile(filepath.Join("..","..","..",src))
+		data, err := os.ReadFile(filepath.Join("..", "..", "..", src))
 		if err != nil {
 			t.Fatalf("read %s: %v", src, err)
 		}
