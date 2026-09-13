@@ -151,6 +151,7 @@ func (p *Poller) pollInstance(ctx context.Context, snap *InstanceSnapshot) {
 		snap.ConfigErr = err
 		snap.Healthz = errSource[Healthz](fmt.Errorf("config: %w", err))
 		snap.Metrics = errSource[Snapshot](fmt.Errorf("config: %w", err))
+		snap.Cert = errSource[CertInfo](fmt.Errorf("config: %w", err))
 		return
 	}
 

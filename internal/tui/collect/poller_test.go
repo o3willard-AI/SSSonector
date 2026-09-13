@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fixtureDaemon is a controllable fake daemon: it serves the exact wire
@@ -316,5 +317,79 @@ func TestSourceStatus_String(t *testing.T) {
 		if got := st.String(); got != want {
 			t.Errorf("status %d: got %q want %q", st, got, want)
 		}
+	}
+}
+
+func TestPoller_ConfigFailure_CertIsErrorNotOkEmpty(t *testing.T) {
+	// Regression (Phase 1 rig gate): the config-error early-return used to
+	// leave snap.Cert as the zero SourceOf — status ok with empty issuer
+	// and 0 days. It must be StatusError with no value.
+	d := newFixtureDaemon(t)
+	root := t.TempDir() // no config written => resolution fails
+	r := newFakeRunner()
+	r.outputs["systemctl list-units sssonector@* --all --plain --no-legend"] =
+		"sssonector@ghost.service loaded active running x\n"
+	r.outputs["systemctl show sssonector@ghost.service -p ActiveState -p SubState -p MainPID"] =
+		"ActiveState=active\nSubState=running\nMainPID=1\n"
+	r.outputs["systemctl show sssonector.service -p ActiveState -p SubState -p MainPID"] =
+		"ActiveState=not-found\nSubState=dead\nMainPID=0\n"
+	p := NewPoller(SystemdCollector{Runner: r, Paths: DefaultSystemdPaths()},
+		ConfigPaths{ConfigRoot: root}, d.srv.Client())
+
+	res := p.PollOnce(context.Background())
+	s := res.Instances["ghost"]
+	if s == nil {
+		t.Fatalf("ghost missing: %+v", res.Instances)
+	}
+	if s.Cert.Status() != StatusError {
+		t.Errorf("cert on config failure: want StatusError, got %v — fabricated ok violates anti-mock", s.Cert.Status())
+	}
+	if _, ok := s.Cert.Get(); ok {
+		t.Error("NEVER STALE violated: errored cert source returned a value (empty issuer / 0 days)")
+	}
+	if s.Cert.Err() == nil || !strings.Contains(s.Cert.Err().Error(), "config:") {
+		t.Errorf("cert error must wrap the config error: %v", s.Cert.Err())
+	}
+}
+
+func TestPoller_PrometheusDisabled_CertStillPopulated(t *testing.T) {
+	// The prometheus-disabled early-return (line ~168) assigns Cert BEFORE
+	// returning; verify it is not left zero there either.
+	d := newFixtureDaemon(t)
+	root := t.TempDir()
+	configPath := filepath.Join(root, "config.yaml")
+	// legacy config with prometheus disabled and a cert path set
+	pemBytes, _ := makeCertPEM(t, time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC), 90*24*time.Hour)
+	certPath := writeCertFile(t, root, "server.crt", pemBytes)
+	yaml := "metadata:\n  schema_version: \"2.0.0\"\ntype: server\nconfig:\n  mode: server\n" +
+		"  monitor:\n    enabled: true\n    prometheus:\n      enabled: false\n      port: 1\n      path: /metrics\n" +
+		"  auth:\n    cert_file: " + certPath + "\n    key_file: \"\"\n    ca_file: \"\"\n"
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := newFakeRunner()
+	r.outputs["systemctl list-units sssonector@* --all --plain --no-legend"] =
+		"sssonector@client-a.service loaded active running x\n"
+	r.outputs["systemctl show sssonector@client-a.service -p ActiveState -p SubState -p MainPID"] =
+		"ActiveState=active\nSubState=running\nMainPID=1\n"
+	r.outputs["systemctl show sssonector.service -p ActiveState -p SubState -p MainPID"] =
+		"ActiveState=not-found\nSubState=dead\nMainPID=0\n"
+	poller := NewPoller(SystemdCollector{Runner: r, Paths: DefaultSystemdPaths()},
+		ConfigPaths{ConfigRoot: root}, d.srv.Client())
+
+	res := poller.PollOnce(context.Background())
+	s := res.Instances["client-a"]
+	if s == nil {
+		t.Fatalf("default missing: %+v", res.Instances)
+	}
+	if s.Cert.Status() != StatusOK {
+		t.Fatalf("cert with prometheus disabled: want ok, got %v err=%v", s.Cert.Status(), s.Cert.Err())
+	}
+	info, ok := s.Cert.Get()
+	if !ok || info.Issuer == "" {
+		t.Errorf("cert must carry real values: %+v ok=%v", info, ok)
 	}
 }
