@@ -92,7 +92,15 @@ func runTUIDashboard() error {
 		Read:     collect.LogReloadReader(collect.OSCommandRunner{}, unitForPid, 5*time.Second),
 	}
 
-	model := tui.NewDashboardWithConfig(poll, time.Now, 0, deps)
+	// Production lifecycle deps (WI 4.1): the real systemctl runner for
+	// stop/restart, the real SIGHUP, and the same reload reader for R.
+	lc := tui.LifecycleDeps{
+		Runner: collect.OSCommandRunner{},
+		Signal: collect.SignalHUP,
+		Read:   collect.LogReloadReader(collect.OSCommandRunner{}, unitForPid, 5*time.Second),
+	}
+
+	model := tui.NewDashboardWithLifecycle(poll, time.Now, 0, deps, lc)
 	prog := tea.NewProgram(model, tea.WithAltScreen())
 	_, err := prog.Run()
 	if err != nil {

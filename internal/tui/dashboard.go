@@ -55,6 +55,14 @@ type dashboardModel struct {
 	mode     viewMode
 	config   configModel
 	deps     ConfigDeps
+	lc       lifecycleState
+}
+
+// lifecycleState holds WI 4.1 lifecycle deps + confirm dialog + banner.
+type lifecycleState struct {
+	deps    LifecycleDeps
+	confirm confirmModel
+	banner  lifecycleBanner
 }
 
 // NewDashboard builds the dashboard model with the given poll seam and the
@@ -82,6 +90,15 @@ func NewDashboardWithRefresh(poll PollFunc, now func() time.Time, refresh time.D
 func NewDashboardWithConfig(poll PollFunc, now func() time.Time, refresh time.Duration, deps ConfigDeps) dashboardModel {
 	m := NewDashboardWithRefresh(poll, now, refresh)
 	m.deps = deps
+	return m
+}
+
+// NewDashboardWithLifecycle builds the dashboard with BOTH the config-view
+// and lifecycle deps wired (WI 4.1). Production passes the real
+// OSCommandRunner + SignalHUP + LogReloadReader; tests inject fakes.
+func NewDashboardWithLifecycle(poll PollFunc, now func() time.Time, refresh time.Duration, deps ConfigDeps, lc LifecycleDeps) dashboardModel {
+	m := NewDashboardWithConfig(poll, now, refresh, deps)
+	m.lc.deps = lc
 	return m
 }
 
@@ -117,6 +134,14 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.mode == modeConfig {
 			next, cmd, _ := m.handleConfigKey(msg)
 			return next, cmd
+		}
+		if m.mode == modeConfirm {
+			next, cmd, _ := m.handleConfirmKey(msg)
+			return next, cmd
+		}
+		// WI 4.1 lifecycle keys first (s/r/R on the focused instance).
+		if next, handled := m.handleLifecycleKey(msg); handled {
+			return next, nil
 		}
 		return m.handleKey(msg)
 	default:
@@ -187,10 +212,13 @@ func (m dashboardModel) focusedSnapshot() *collect.InstanceSnapshot {
 }
 
 // View composes the full screen from the WI 2.2 renderers (or the config
-// overlay when modeConfig).
+// overlay / confirm dialog when in those modes).
 func (m dashboardModel) View() string {
 	if m.mode == modeConfig && m.polled {
 		return m.config.render(m.focus)
+	}
+	if m.mode == modeConfirm && m.polled {
+		return m.lc.confirm.render()
 	}
 	var b strings.Builder
 
@@ -258,8 +286,13 @@ func (m dashboardModel) View() string {
 	b.WriteString("\n")
 	b.WriteString(view.RenderLog(allLogs(m.result), 12))
 
-	// Read-only footer (no destructive actions yet — WI 2.4+/3).
-	b.WriteString("\nfooter: [c]onfig [q]uit (read-only)\n")
+	// Lifecycle outcome banner (WI 4.1), above the footer.
+	if line := m.renderLifecycleBanner(); line != "" {
+		b.WriteString("\n" + line + "\n")
+	}
+
+	// Footer (WI 4.1): lifecycle actions on the FOCUSED instance.
+	b.WriteString("\nfooter: [s]top [r]estart [R]eload act on FOCUSED instance  [c]onfig  [q]uit\n")
 	return b.String()
 }
 
