@@ -79,36 +79,10 @@ func runTUI(args []string) error {
 	}
 	switch mode {
 	case ModeClientWizard, ModeServerWizard:
-		return runWizardPlaceholderModel(mode)
+		return runWizard(mode)
 	default:
 		return runTUIDashboard()
 	}
-}
-
-// runWizardPlaceholderModel runs the minimal WI 5.1 placeholder wizard in
-// a real tea program (q quits). WI 5.2/5.5 replace the model.
-func runWizardPlaceholderModel(mode TUIMode) error {
-	var m wizardPlaceholderModel
-	switch mode {
-	case ModeServerWizard:
-		m = wizardPlaceholderModel{
-			title: "SSSonector — first-run setup (server)",
-			help:  "No configured instances found on this host. The setup wizard (WI 5.2) will create a server instance.",
-		}
-	case ModeClientWizard:
-		m = wizardPlaceholderModel{
-			title: "SSSonector — client setup from bundle",
-			help:  "Bundle: " + ModeBundlePath + " (loading arrives in WI 5.5).",
-		}
-	default:
-		return fmt.Errorf("tui: not a wizard mode: %v", mode)
-	}
-	prog := tea.NewProgram(m)
-	_, err := prog.Run()
-	if err != nil {
-		return fmt.Errorf("tui: %w", err)
-	}
-	return nil
 }
 
 // runTUIDashboard launches the interactive dashboard (WI 2.5): real
