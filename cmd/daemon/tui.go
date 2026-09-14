@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -71,20 +72,57 @@ func runTUI(args []string) error {
 // collectors, real Poller seam, tea.NewProgram with alt-screen. Runs
 // views+collect only — never the daemon service lifecycle.
 func runTUIDashboard() error {
+	paths := collect.DefaultConfigPaths()
 	poller := collect.NewPoller(
 		collect.SystemdCollector{Runner: collect.OSCommandRunner{}, Paths: collect.DefaultSystemdPaths()},
-		collect.DefaultConfigPaths(),
+		paths,
 		&http.Client{Timeout: 3 * time.Second},
 	)
 	poll := func(context.Context) collect.TickResult { return poller.PollOnce(context.Background()) }
 
-	model := tui.NewDashboard(poll, time.Now)
+	// Production config-view deps (WI 3.4): the real dump/validate/apply,
+	// the real SIGHUP, and a reload reader that tails the daemon log for
+	// the reload outcome.
+	deps := tui.ConfigDeps{
+		Dump:     collect.EffectiveConfigDump,
+		Validate: validateDraftErr,
+		Apply:    collect.ApplyConfig,
+		Paths:    paths,
+		Signal:   collect.SignalHUP,
+		Read:     collect.LogReloadReader(collect.OSCommandRunner{}, unitForPid, 5*time.Second),
+	}
+
+	model := tui.NewDashboardWithConfig(poll, time.Now, 0, deps)
 	prog := tea.NewProgram(model, tea.WithAltScreen())
 	_, err := prog.Run()
 	if err != nil {
 		return fmt.Errorf("tui: %w", err)
 	}
 	return nil
+}
+
+// validateDraftErr adapts collect.ValidateDraft to the deps signature.
+func validateDraftErr(draft string) error {
+	_, err := collect.ValidateDraft(draft)
+	return err
+}
+
+// unitForPid resolves the systemd unit owning a pid via systemctl status
+// (best effort; falls back to the legacy unit name).
+func unitForPid(pid int) string {
+	out, err := (collect.OSCommandRunner{}).Run("systemctl", "status", fmt.Sprintf("%d", pid), "--no-pager")
+	if err != nil {
+		return "sssonector.service"
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if i := strings.Index(line, "sssonector@"); i >= 0 {
+			rest := line[i:]
+			if j := strings.IndexAny(rest, " \t"); j > 0 {
+				return rest[:j]
+			}
+		}
+	}
+	return "sssonector.service"
 }
 
 // runTUIProbe builds the real collectors (systemd defaults, /etc/sssonector
