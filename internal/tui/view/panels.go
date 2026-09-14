@@ -116,13 +116,16 @@ func healthStatusFor(in RailInput, name string) collect.SourceStatus {
 }
 
 // healthDot picks the rail health dot from the HEALTHZ source
-// (platform-neutral liveness — NOT systemd ActiveState).
+// (platform-neutral liveness — NOT systemd ActiveState). A healthz ERROR
+// (daemon unreachable) renders ✖ per §7 (fail-closed — an unreachable
+// daemon is NOT the same as a degraded-but-seen ⚠); only genuinely
+// reachable-but-degraded states would warrant ⚠ (none on the wire today).
 func healthDot(status collect.SourceStatus) string {
 	switch status {
 	case collect.StatusOK:
 		return "●"
 	case collect.StatusError:
-		return "⚠"
+		return "✖"
 	default:
 		return "✖"
 	}

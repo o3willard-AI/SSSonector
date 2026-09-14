@@ -150,6 +150,12 @@ func (c SystemdCollector) fillStates(states []InstanceState) ([]InstanceState, e
 	return states, nil
 }
 
+// ImplicitInstanceForTest exposes the exactly-one-config degradation rule
+// for WI 4.4's degradation-matrix tests (same logic Discover uses).
+func ImplicitInstanceForTest(configRoot string) (*InstanceState, error) {
+	return implicitInstance(configRoot)
+}
+
 // implicitInstance implements the exactly-one-config degradation rule.
 // Exactly one of: /etc/sssonector/config.yaml ("default"), or exactly one
 // /etc/sssonector/instances/<n>/config.yaml (<n>). Zero or 2+ => error.

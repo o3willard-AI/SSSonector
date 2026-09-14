@@ -4,7 +4,7 @@ daemon: RUNNING (pid 8100)
 --- focused: client-a ---
 INSTANCES
 ▸ client-a     sssonector@client-a      port :9443  tun 10.77.0.1/24     peers 3    up     —        ●
-  client-b     sssonector@client-b      port :9444  tun 10.77.0.2/24     peers —    down   —        ⚠
+  client-b     sssonector@client-b      port :9444  tun 10.77.0.2/24     peers —    down   —        ✖
 
 TUNNEL
   state    ● up
@@ -30,7 +30,7 @@ CERTIFICATE
   expires   2026-11-14 (64d)
 
 LOG
-  [client-a] -- No entries --
-  [client-b] -- No entries --
+  13:59:49 [client-a] tunnel rekeyed peer 192.168.100.51
+  13:59:55 [client-b] listener :9444 conn refused x1
 
 footer: [s]top [r]estart [R]eload act on FOCUSED instance  [c]onfig  [q]uit

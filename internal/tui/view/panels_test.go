@@ -281,11 +281,12 @@ func TestRender_LivenessFromHealthz(t *testing.T) {
 	if !strings.Contains(deadLine, "never") {
 		t.Errorf("healthz-absent state word must be never:\n%s", deadLine)
 	}
-	// And the errored case: ⚠ + down.
+	// And the errored case: ✖ + down (§7: unreachable ⇒ ✖ — an errored
+	// healthz means the daemon is unreachable, not merely degraded).
 	in.HealthStatus["manual"] = collect.StatusError
 	railErr := RenderRail(in, fixedNow)
-	if !strings.Contains(railLineFor(t, railErr, "manual"), "⚠") || !strings.Contains(railLineFor(t, railErr, "manual"), "down") {
-		t.Errorf("healthz-error must show ⚠ down:\n%s", railLineFor(t, railErr, "manual"))
+	if !strings.Contains(railLineFor(t, railErr, "manual"), "✖") || !strings.Contains(railLineFor(t, railErr, "manual"), "down") {
+		t.Errorf("healthz-error must show ✖ down (§7.1):\n%s", railLineFor(t, railErr, "manual"))
 	}
 }
 

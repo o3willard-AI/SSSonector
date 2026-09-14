@@ -127,7 +127,15 @@ func TestDashboard_ServerMode_Golden(t *testing.T) {
 	m := NewDashboard(func(context.Context) collect.TickResult {
 		calls++
 		return fixtureTickResult([]string{"client-a", "client-b"})
-	}, func() time.Time { return screenNow })
+	}, func() time.Time { return screenNow }).
+		WithLogTail(func(collect.TickResult, int) []collect.LogEntry {
+			// Hermetic fixture stream (WI 4.4): the golden must never
+			// depend on host journalctl output.
+			return []collect.LogEntry{
+				{Instance: "client-a", Timestamp: screenNow.Add(-11 * time.Second), Unit: "sssonector@client-a", Pid: 8100, Message: "tunnel rekeyed peer 192.168.100.51"},
+				{Instance: "client-b", Timestamp: screenNow.Add(-5 * time.Second), Unit: "sssonector@client-b", Pid: 8101, Message: "listener :9444 conn refused x1"},
+			}
+		})
 
 	// Message-driven: Init issues the tick command; drive it explicitly.
 	if m.Init() == nil {
@@ -169,7 +177,13 @@ func TestDashboard_ServerMode_Golden(t *testing.T) {
 func TestDashboard_ClientMode_Golden(t *testing.T) {
 	m := NewDashboard(func(context.Context) collect.TickResult {
 		return fixtureTickResult([]string{"default"})
-	}, func() time.Time { return screenNow })
+	}, func() time.Time { return screenNow }).
+		WithLogTail(func(collect.TickResult, int) []collect.LogEntry {
+			// Hermetic fixture stream (WI 4.4): never shells out.
+			return []collect.LogEntry{
+				{Instance: "default", Timestamp: screenNow.Add(-3 * time.Second), Unit: "sssonector.service", Pid: 8100, Message: "listener :9443 ready"},
+			}
+		})
 	m.Init()
 	m = driveTick(m)
 

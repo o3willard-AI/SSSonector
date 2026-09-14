@@ -64,17 +64,18 @@ func TestRail42_CountGoldens(t *testing.T) {
 	assertGolden(t, "rail42_four", RenderRail(rail42Input([]string{"client-a", "client-b", "client-c", "client-d"}), fixedNow))
 }
 
-// TestRail42_MixedStates_Golden: one up (●), one down (⚠ errored healthz),
-// one never-seen (✖ absent) — each row shows its correct dot and word.
+// TestRail42_MixedStates_Golden: one up (●), one down (✖ errored healthz
+// — unreachable per §7.1), one never-seen (✖ absent) — each row shows its
+// correct dot and word.
 func TestRail42_MixedStates_Golden(t *testing.T) {
 	in := rail42Input([]string{"aaa-up", "bbb-err", "ccc-never"})
-	// aaa-up is ● up; bbb-err ⚠ down; ccc-never ✖ never (defaults).
+	// aaa-up is ● up; bbb-err ✖ down; ccc-never ✖ never (defaults).
 	out := RenderRail(in, fixedNow)
 	assertGolden(t, "rail42_mixed", out)
 	if got := railLineFor2(t, out, "aaa-up"); !strings.Contains(got, "●") || !strings.Contains(got, "up") {
 		t.Errorf("up row wrong: %q", got)
 	}
-	if got := railLineFor2(t, out, "bbb-err"); !strings.Contains(got, "⚠") || !strings.Contains(got, "down") {
+	if got := railLineFor2(t, out, "bbb-err"); !strings.Contains(got, "✖") || !strings.Contains(got, "down") {
 		t.Errorf("down row wrong: %q", got)
 	}
 	if got := railLineFor2(t, out, "ccc-never"); !strings.Contains(got, "✖") || !strings.Contains(got, "never") {
