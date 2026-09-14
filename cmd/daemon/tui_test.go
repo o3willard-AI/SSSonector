@@ -55,8 +55,8 @@ func TestRunTUI_AcceptedFlags(t *testing.T) {
 	if fs.refresh.String() != "2s" {
 		t.Error("refresh flag")
 	}
-	if fs.fromBundle != "/tmp/x.tgz" {
-		t.Errorf("from-bundle: %q", fs.fromBundle)
+	if fs.FromBundle != "/tmp/x.tgz" {
+		t.Errorf("from-bundle: %q", fs.FromBundle)
 	}
 }
 
