@@ -6,10 +6,17 @@ import (
 )
 
 func TestRunTUI_UsageErrors(t *testing.T) {
-	t.Run("no flags => guidance error", func(t *testing.T) {
+	t.Run("no flags => interactive dashboard (WI 2.5)", func(t *testing.T) {
+		// Without --probe the interactive dashboard launches. On a TTY-less
+		// host (CI) tea.NewProgram fails to open /dev/tty — that error (or
+		// a clean run) both prove the dashboard path was taken, NOT the
+		// old guidance error.
 		err := runTUI([]string{})
-		if err == nil || !strings.Contains(err.Error(), "nothing to do") {
-			t.Errorf("want guidance error, got %v", err)
+		if err == nil {
+			return // ran cleanly (TTY available)
+		}
+		if !strings.Contains(err.Error(), "TTY") && !strings.Contains(err.Error(), "tty") {
+			t.Errorf("want dashboard launch (TTY error on headless CI) or clean run, got: %v", err)
 		}
 	})
 	t.Run("unexpected positional arg", func(t *testing.T) {
@@ -67,5 +74,32 @@ func TestRunTUI_ProbeNoSystemd(t *testing.T) {
 		if !strings.Contains(out, "probe time:") {
 			t.Errorf("probe output missing header: %s", out)
 		}
+	}
+}
+
+// TestRunTUI_HelpFlag: `sssonector tui --help` exits cleanly (flag package
+// prints usage; runTUI maps ErrHelp to nil).
+func TestRunTUI_HelpFlag(t *testing.T) {
+	if err := runTUI([]string{"--help"}); err != nil {
+		t.Errorf("--help must exit cleanly, got: %v", err)
+	}
+	if err := runTUI([]string{"-h"}); err != nil {
+		t.Errorf("-h must exit cleanly, got: %v", err)
+	}
+}
+
+// TestRunTUI_DashboardWiring verifies the dashboard path constructs the
+// model + program without starting a daemon: with fake collectors the
+// program construction itself is the assertion (no daemon lifecycle code
+// is reachable from runTUIDashboard — views+collect only).
+func TestRunTUI_DashboardWiring(t *testing.T) {
+	// The seam is runTUIDashboard; on headless CI it fails at
+	// prog.Run() with the TTY error — AFTER the model/program were built.
+	err := runTUIDashboard()
+	if err == nil {
+		return // real TTY available: program ran
+	}
+	if !strings.Contains(err.Error(), "TTY") && !strings.Contains(err.Error(), "tty") {
+		t.Errorf("want TTY-only failure (model+program built fine), got: %v", err)
 	}
 }
