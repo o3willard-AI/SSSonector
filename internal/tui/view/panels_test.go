@@ -122,6 +122,11 @@ func railFixture() RailInput {
 			"client-b": 9444,
 			"client-c": 9445,
 		},
+		HealthStatus: map[string]collect.SourceStatus{
+			"client-a": collect.StatusOK,
+			"client-b": collect.StatusAbsent,
+			"client-c": collect.StatusError,
+		},
 		PeerCounts: map[string]int{"client-a": 2},
 		LastPeerChange: map[string]time.Time{
 			"client-a": fixedNow.Add(-2*time.Hour - 14*time.Minute),
@@ -137,10 +142,10 @@ func TestRenderRail_Golden(t *testing.T) {
 }
 
 func TestRenderDaemonHeader_Golden(t *testing.T) {
-	assertGolden(t, "header_running", RenderDaemonHeader(collect.InstanceState{ActiveState: "active", SubState: "running", MainPID: 8123}))
-	assertGolden(t, "header_stopped", RenderDaemonHeader(collect.InstanceState{ActiveState: "inactive", SubState: "dead"}))
-	assertGolden(t, "header_failed", RenderDaemonHeader(collect.InstanceState{ActiveState: "failed", SubState: "failed"}))
-	assertGolden(t, "header_unknown", RenderDaemonHeader(collect.InstanceState{}))
+	assertGolden(t, "header_running", RenderDaemonHeader(fixtureHealthzOK(), 8123))
+	assertGolden(t, "header_running_nopid", RenderDaemonHeader(fixtureHealthzOK(), 0))
+	assertGolden(t, "header_unreachable", RenderDaemonHeader(errSource2[collect.Healthz]("connection refused"), 8123))
+	assertGolden(t, "header_down", RenderDaemonHeader(collect.SourceAbsent[collect.Healthz](), 0))
 }
 
 func TestRenderTunnel_Golden(t *testing.T) {
@@ -219,4 +224,79 @@ func TestRender_AntiMockContracts(t *testing.T) {
 	if !strings.Contains(cert, "cert unreadable: no such file") || strings.Contains(cert, "issuer") && strings.Contains(cert, "CN=") {
 		t.Errorf("cert error must render unreadable without issuer:\n%s", cert)
 	}
+}
+
+// TestRender_LivenessFromHealthz pins Stephen's decision: liveness derives
+// from the HEALTHZ source, NOT systemd ActiveState.
+func TestRender_LivenessFromHealthz(t *testing.T) {
+	// healthz ok + systemd inactive (manual daemon): RUNNING + ● — the
+	// systemd state must NOT flip the header to STOPPED or the dot away
+	// from green.
+	hdr := RenderDaemonHeader(fixtureHealthzOK(), 0)
+	if !strings.Contains(hdr, "RUNNING") {
+		t.Errorf("healthz-ok must render RUNNING regardless of systemd state: %q", hdr)
+	}
+	if strings.Contains(hdr, "STOPPED") {
+		t.Errorf("healthz-ok must never render STOPPED: %q", hdr)
+	}
+	hdrPID := RenderDaemonHeader(fixtureHealthzOK(), 8123)
+	if !strings.Contains(hdrPID, "RUNNING (pid 8123)") {
+		t.Errorf("healthz-ok + pid>0 must render RUNNING (pid N): %q", hdrPID)
+	}
+	// healthz error: unreachable (even if systemd says active).
+	hdrErr := RenderDaemonHeader(errSource2[collect.Healthz]("connection refused"), 8123)
+	if !strings.Contains(hdrErr, "daemon: unreachable") || strings.Contains(hdrErr, "RUNNING") {
+		t.Errorf("healthz-error must render unreachable, not RUNNING: %q", hdrErr)
+	}
+	// healthz absent: down.
+	hdrAbsent := RenderDaemonHeader(collect.SourceAbsent[collect.Healthz](), 0)
+	if !strings.Contains(hdrAbsent, "daemon: down") {
+		t.Errorf("healthz-absent must render down: %q", hdrAbsent)
+	}
+
+	// Rail: dot + state word follow healthz, not ActiveState. Two
+	// instances with IDENTICAL systemd state but different healthz:
+	in := RailInput{
+		Instances: []collect.InstanceState{
+			{Name: "manual", Unit: "sssonector@manual.service", ActiveState: "inactive", SubState: "dead"},
+			{Name: "dead", Unit: "sssonector@dead.service", ActiveState: "inactive", SubState: "dead"},
+		},
+		HealthStatus: map[string]collect.SourceStatus{
+			"manual": collect.StatusOK,     // manual daemon: healthz proves it listens
+			"dead":   collect.StatusAbsent, // genuinely down
+		},
+	}
+	rail := RenderRail(in, fixedNow)
+	manualLine := railLineFor(t, rail, "manual")
+	deadLine := railLineFor(t, rail, "dead")
+	if !strings.Contains(manualLine, "●") {
+		t.Errorf("healthz-ok instance must show ● even with systemd inactive:\n%s", manualLine)
+	}
+	if !strings.Contains(manualLine, "up") {
+		t.Errorf("healthz-ok state word must be up:\n%s", manualLine)
+	}
+	if !strings.Contains(deadLine, "✖") {
+		t.Errorf("healthz-absent instance must show ✖:\n%s", deadLine)
+	}
+	if !strings.Contains(deadLine, "never") {
+		t.Errorf("healthz-absent state word must be never:\n%s", deadLine)
+	}
+	// And the errored case: ⚠ + down.
+	in.HealthStatus["manual"] = collect.StatusError
+	railErr := RenderRail(in, fixedNow)
+	if !strings.Contains(railLineFor(t, railErr, "manual"), "⚠") || !strings.Contains(railLineFor(t, railErr, "manual"), "down") {
+		t.Errorf("healthz-error must show ⚠ down:\n%s", railLineFor(t, railErr, "manual"))
+	}
+}
+
+// railLineFor returns the rail line containing the instance name.
+func railLineFor(t *testing.T, rail, name string) string {
+	t.Helper()
+	for _, line := range strings.Split(rail, "\n") {
+		if strings.Contains(line, name) {
+			return line
+		}
+	}
+	t.Fatalf("no rail line for %q in:\n%s", name, rail)
+	return ""
 }

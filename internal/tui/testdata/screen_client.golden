@@ -2,7 +2,7 @@ SSSonector tui (bubbletea v1.3.6)
 daemon: RUNNING (pid 8100)
 
 INSTANCES
-▸ default      sssonector               port :9443  tun 10.77.0.1/24     peers 3    up —        ●
+▸ default      sssonector               port :9443  tun 10.77.0.1/24     peers 3    never  —        ✖
 
 TUNNEL
   state    ● up
