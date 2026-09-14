@@ -1,0 +1,3 @@
+INSTANCES
+▸ client-a     sssonector@client-a      port :9443  tun 10.77.0.1/24     peers 2    up     41m      ●
+  client-b     sssonector@client-b      port :9444  tun 10.77.0.2/24     peers 3    down   42m      ⚠

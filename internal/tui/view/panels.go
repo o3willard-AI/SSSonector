@@ -12,6 +12,7 @@ package view
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -40,11 +41,29 @@ type RailInput struct {
 	HealthStatus map[string]collect.SourceStatus
 }
 
-// RenderRail renders the INSTANCES rail (shared panel).
+// RenderRail renders the INSTANCES rail (shared panel). Rows render in
+// stable NAME order (WI 4.2) regardless of the order the caller assembled
+// — the sort is applied here so no display path can bypass it.
 func RenderRail(in RailInput, now time.Time) string {
 	if len(in.Instances) == 0 {
 		return "INSTANCES  no sssonector@* units on this host\n"
 	}
+	// Stable name order: sort a copy (never mutate the caller's slice),
+	// and move FocusIdx with its row.
+	rows := make([]collect.InstanceState, len(in.Instances))
+	copy(rows, in.Instances)
+	sort.SliceStable(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
+	if in.FocusIdx >= 0 && in.FocusIdx < len(in.Instances) {
+		focused := in.Instances[in.FocusIdx].Name
+		in.FocusIdx = -1
+		for i, st := range rows {
+			if st.Name == focused {
+				in.FocusIdx = i
+				break
+			}
+		}
+	}
+	in.Instances = rows
 	var b strings.Builder
 	b.WriteString("INSTANCES\n")
 	for i, st := range in.Instances {

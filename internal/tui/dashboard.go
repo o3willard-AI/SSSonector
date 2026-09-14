@@ -334,17 +334,22 @@ func railInputFor(res collect.TickResult, focus string, now time.Time) view.Rail
 	return in
 }
 
-// railInputSingle assembles the collapsed single-instance rail (client mode).
+// railInputSingle assembles the collapsed single-instance rail (client
+// mode): one fixed row, no focus marker (FocusIdx -1), and the healthz
+// status carried through so the dot agrees with the daemon header (WI 4.2
+// — both derive from the same healthz source).
 func railInputSingle(snap *collect.InstanceSnapshot, now time.Time) view.RailInput {
 	in := view.RailInput{
 		Instances: []collect.InstanceState{{
 			Name: snap.Name, Unit: snap.Unit,
 			ActiveState: snap.ActiveState, SubState: snap.SubState, MainPID: snap.MainPID,
 		}},
+		FocusIdx:       -1, // collapsed mode: no focus marker
 		TUNAddresses:   map[string]string{},
 		ListenPorts:    map[string]int{},
 		PeerCounts:     map[string]int{},
 		LastPeerChange: map[string]time.Time{},
+		HealthStatus:   map[string]collect.SourceStatus{snap.Name: snap.Healthz.Status()},
 	}
 	if snap.TunAddr != "" {
 		in.TUNAddresses[snap.Name] = snap.TunAddr
