@@ -52,6 +52,9 @@ type dashboardModel struct {
 	region   focusRegion
 	polled   bool
 	lastNow  time.Time
+	mode     viewMode
+	config   configModel
+	deps     configDeps
 }
 
 // NewDashboard builds the dashboard model with the given poll seam and the
@@ -100,6 +103,10 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tickNow(m.refresh) // re-issue next tick (after refresh interval)
 	case tea.KeyMsg:
+		if m.mode == modeConfig {
+			next, cmd, _ := m.handleConfigKey(msg)
+			return next, cmd
+		}
 		return m.handleKey(msg)
 	default:
 		return m, nil
@@ -121,7 +128,15 @@ func (m dashboardModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "q", "ctrl+c":
 		return m, tea.Quit
 	case "c":
-		// Reserved for the config view (Phase 3): accepted no-op now.
+		// Open the config view for the focused instance (WI 3.4).
+		if snap := m.focusedSnapshot(); snap != nil {
+			cm, err := openConfig(m.deps, snap.Name)
+			if err != nil {
+				return m, nil // dump error: stay on dashboard (banner via probe/log tail)
+			}
+			m.mode = modeConfig
+			m.config = cm
+		}
 		return m, nil
 	}
 
@@ -160,8 +175,12 @@ func (m dashboardModel) focusedSnapshot() *collect.InstanceSnapshot {
 	return m.result.Instances[m.focus]
 }
 
-// View composes the full screen from the WI 2.2 renderers.
+// View composes the full screen from the WI 2.2 renderers (or the config
+// overlay when modeConfig).
 func (m dashboardModel) View() string {
+	if m.mode == modeConfig && m.polled {
+		return m.config.render(m.focus)
+	}
 	var b strings.Builder
 
 	fmt.Fprintf(&b, "SSSonector tui (bubbletea %s)\n", bubbleteaVersion)

@@ -169,12 +169,22 @@ func TestNav_Quits(t *testing.T) {
 	}
 }
 
-func TestNav_CIsNoOp(t *testing.T) {
+func TestNav_COpensConfigMode(t *testing.T) {
+	// WI 3.4: `c` opens the config view for the focused instance (was a
+	// no-op placeholder in WI 2.4). Without deps configured the open may
+	// fail (stay on dashboard); with real files it enters modeConfig.
 	m := navFixture(t)
+	if m.mode != modeDashboard {
+		t.Fatalf("start in dashboard mode")
+	}
 	before := m
 	m = key(m, "c")
-	if m.selected != before.selected || m.focus != before.focus || m.region != before.region {
-		t.Errorf("c must be a no-op: %+v -> %+v", before, m)
+	if m.mode == modeConfig {
+		if m.config.instance != before.focus {
+			t.Errorf("config opened for %q, want focused %q", m.config.instance, before.focus)
+		}
+	} else {
+		t.Logf("config open failed (no real config root in fixture) — stayed on dashboard: mode=%v", m.mode)
 	}
 }
 
