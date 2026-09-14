@@ -45,22 +45,32 @@ type configModel struct {
 	bannerUp string
 }
 
-// configDeps are the injectable config-view operations (WI 3.2/3.3 seams).
-type configDeps struct {
-	dump     func(paths collect.ConfigPaths, name string) ([]collect.ConfigLine, error)
-	validate func(draft string) error
-	apply    func(paths collect.ConfigPaths, name, draft string, pid int, signal collect.SignalFunc, read collect.ReloadReader) (collect.ApplyResult, error)
-	paths    collect.ConfigPaths
-	signal   collect.SignalFunc
-	read     collect.ReloadReader
+// ConfigDeps are the injectable config-view operations (WI 3.2/3.3 seams).
+// Production wires the real functions in cmd/daemon/tui.go; tests inject
+// fakes. Exported so the wiring gap found at the Phase 3 rig gate cannot
+// regress: the constructor requires them explicitly.
+type ConfigDeps struct {
+	// Dump renders the effective-config dump (collect.EffectiveConfigDump).
+	Dump func(paths collect.ConfigPaths, name string) ([]collect.ConfigLine, error)
+	// Validate runs the draft through the daemon loader+validator
+	// (collect.ValidateDraft) and returns its error.
+	Validate func(draft string) error
+	// Apply is the atomic write + SIGHUP pipeline (collect.ApplyConfig).
+	Apply func(paths collect.ConfigPaths, name, draft string, pid int, signal collect.SignalFunc, read collect.ReloadReader) (collect.ApplyResult, error)
+	// Paths is the config root (collect.DefaultConfigPaths() in production).
+	Paths collect.ConfigPaths
+	// Signal sends SIGHUP (collect.SignalHUP in production).
+	Signal collect.SignalFunc
+	// Read reads the reload outcome after the signal.
+	Read collect.ReloadReader
 }
 
 // openConfig builds the config view for the focused instance from the dump.
-func openConfig(deps configDeps, instance string) (configModel, error) {
-	if deps.dump == nil {
+func openConfig(deps ConfigDeps, instance string) (configModel, error) {
+	if deps.Dump == nil {
 		return configModel{}, fmt.Errorf("config: dump function not configured")
 	}
-	lines, err := deps.dump(deps.paths, instance)
+	lines, err := deps.Dump(deps.Paths, instance)
 	if err != nil {
 		return configModel{}, err
 	}
@@ -252,12 +262,12 @@ func (m dashboardModel) handleConfigKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, boo
 		if c.editing {
 			c.applyEdit()
 		}
-		if m.deps.validate == nil {
+		if m.deps.Validate == nil {
 			c.banner = bannerValidateFail
 			c.bannerUp = "validate function not configured"
 			break
 		}
-		if err := m.deps.validate(c.draft); err != nil {
+		if err := m.deps.Validate(c.draft); err != nil {
 			c.banner = bannerValidateFail
 			c.bannerUp = err.Error() // verbatim (carries "line N")
 		} else {
@@ -266,7 +276,7 @@ func (m dashboardModel) handleConfigKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, boo
 		}
 	case "a":
 		// Fail-closed: validate FIRST; an invalid draft never reaches apply.
-		if err := m.deps.validate(c.draft); err != nil {
+		if err := m.deps.Validate(c.draft); err != nil {
 			c.banner = bannerValidateFail
 			c.bannerUp = err.Error()
 			m.config = c
@@ -276,7 +286,7 @@ func (m dashboardModel) handleConfigKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, boo
 		if snap := m.focusedSnapshot(); snap != nil {
 			pid = snap.MainPID
 		}
-		res, err := m.deps.apply(m.deps.paths, c.instance, c.draft, pid, m.deps.signal, m.deps.read)
+		res, err := m.deps.Apply(m.deps.Paths, c.instance, c.draft, pid, m.deps.Signal, m.deps.Read)
 		switch {
 		case err != nil:
 			c.banner = bannerApplyError

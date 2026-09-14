@@ -44,16 +44,16 @@ func configFixture(t *testing.T, draftYAML string) (dashboardModel, *fakeSignal,
 	m := NewDashboard(func(context.Context) collect.TickResult {
 		return fixtureTickResult([]string{"client-a"})
 	}, func() time.Time { return screenNow })
-	m.deps = configDeps{
-		dump:     collect.EffectiveConfigDump,
-		validate: func(d string) error { _, err := collect.ValidateDraft(d); return err },
-		paths:    collect.ConfigPaths{ConfigRoot: root},
-		apply:    collect.ApplyConfig,
+	m.deps = ConfigDeps{
+		Dump:     collect.EffectiveConfigDump,
+		Validate: validateDraftWrapper,
+		Paths:    collect.ConfigPaths{ConfigRoot: root},
+		Apply:    collect.ApplyConfig,
 	}
 	// Real dump (collect.EffectiveConfigDump), real ValidateDraft, fake
 	// signal captured for assertions.
 	sig := &fakeSignal{}
-	m.deps.signal = sig.signal
+	m.deps.Signal = sig.signal
 	m.Init()
 	m = driveTick(m)
 	return m, sig, root
@@ -285,7 +285,7 @@ func TestConfigApply_InvalidDraft_NeverApplies(t *testing.T) {
 func TestConfigApply_RejectedOutcome(t *testing.T) {
 	m, sig, _ := configFixture(t, cfgValidYAML)
 	// Fake reload reader reports rejection.
-	m.deps.read = func(int) (collect.ReloadOutcome, error) { return collect.ReloadRejected, nil }
+	m.deps.Read = func(int) (collect.ReloadOutcome, error) { return collect.ReloadRejected, nil }
 	m = ckey(m, "c")
 	m = ckey(m, "a")
 	if m.config.banner != bannerApplyRejected {
@@ -371,3 +371,9 @@ func normalizeTimes(s string) string {
 var errNoop = errors.New("noop")
 var _ = fmt.Sprintf
 var _ = errNoop
+
+// validateDraftWrapper adapts collect.ValidateDraft to the deps signature.
+func validateDraftWrapper(d string) error {
+	_, err := collect.ValidateDraft(d)
+	return err
+}

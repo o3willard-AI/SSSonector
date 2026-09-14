@@ -54,7 +54,7 @@ type dashboardModel struct {
 	lastNow  time.Time
 	mode     viewMode
 	config   configModel
-	deps     configDeps
+	deps     ConfigDeps
 }
 
 // NewDashboard builds the dashboard model with the given poll seam and the
@@ -72,6 +72,17 @@ func NewDashboardWithRefresh(poll PollFunc, now func() time.Time, refresh time.D
 		refresh = defaultRefresh
 	}
 	return dashboardModel{poll: poll, now: now, refresh: refresh}
+}
+
+// NewDashboardWithConfig builds the dashboard with the config-view
+// dependencies wired (WI 3.4). Production (cmd/daemon/tui.go) passes the
+// real dump/validate/apply + collect.SignalHUP; the rig-gate wiring gap
+// (zero-value deps => `c` silently did nothing) is structurally prevented
+// because callers must supply ConfigDeps explicitly.
+func NewDashboardWithConfig(poll PollFunc, now func() time.Time, refresh time.Duration, deps ConfigDeps) dashboardModel {
+	m := NewDashboardWithRefresh(poll, now, refresh)
+	m.deps = deps
+	return m
 }
 
 // Init issues the first tick (message-driven).

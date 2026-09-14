@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"syscall"
+	"time"
 )
 
 // ReloadOutcome is the result of the post-write SIGHUP.
@@ -47,9 +50,49 @@ type ApplyResult struct {
 	Signaled bool
 }
 
-// signalHUP is the production SIGHUP (syscall.Kill). Kept out of the unit
-// test path via the injectable SignalFunc.
-//
+// SignalHUP is the production SignalFunc: syscall.Kill(pid, SIGHUP).
+// Unit tests never call it — they inject fakes.
+func SignalHUP(pid int) error {
+	return syscall.Kill(pid, syscall.SIGHUP)
+}
+
+// LogReloadReader is the production ReloadReader: tails the daemon's
+// journal (via the LogTail runner) for the reload outcome after SIGHUP —
+// a reload failure/rejected line => ReloadRejected; an ok line => ReloadOK;
+// no outcome line within the bounded window => ReloadOK (success is the
+// steady state; the daemon only logs reload failures loudly).
+// unitOfPid resolves the systemd unit owning the pid.
+func LogReloadReader(runner CommandRunner, unitOfPid func(pid int) string, window time.Duration) ReloadReader {
+	return func(pid int) (ReloadOutcome, error) {
+		lt := LogTail{Runner: runner, BootID: defaultBootID}
+		deadline := time.Now().Add(window)
+		unit := unitOfPid(pid)
+		var cursor string
+		for time.Now().Before(deadline) {
+			read, err := lt.Read(unit, cursor, "", 20)
+			if err != nil {
+				time.Sleep(200 * time.Millisecond)
+				continue
+			}
+			for _, e := range read.Entries {
+				msg := strings.ToLower(e.Message)
+				if strings.Contains(msg, "reload") &&
+					(strings.Contains(msg, "failed") || strings.Contains(msg, "invalid") ||
+						strings.Contains(msg, "rejected") || strings.Contains(msg, "error")) {
+					return ReloadRejected, nil
+				}
+				if strings.Contains(msg, "reload") &&
+					(strings.Contains(msg, "ok") || strings.Contains(msg, "succeeded") || strings.Contains(msg, "applied")) {
+					return ReloadOK, nil
+				}
+			}
+			cursor = read.Cursor
+			time.Sleep(250 * time.Millisecond)
+		}
+		return ReloadOK, nil
+	}
+}
+
 // Real implementation lives here for the rig path; unit tests inject
 // fakes. (golang.org/x/sys/unix or syscall — syscall keeps deps at
 // stdlib-only.)
