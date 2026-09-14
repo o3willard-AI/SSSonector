@@ -79,8 +79,8 @@ func TestRail42_DotAgreesWithHeader(t *testing.T) {
 		t.Errorf("healthz-ok row must show ●: %q", railLine)
 	}
 
-	// Focus the errored instance: dot ⚠ (healthz error) + header
-	// unreachable — same source, agreeing verdicts.
+	// Focus the errored instance: dot ✖ (healthz error ⇒ unreachable per
+	// §7.1) + header unreachable — same source, agreeing verdicts.
 	m = key(m, "down")
 	m = key(m, "enter")
 	out = m.View()
@@ -88,8 +88,8 @@ func TestRail42_DotAgreesWithHeader(t *testing.T) {
 		t.Errorf("healthz-error focus must render unreachable header:\n%s", out)
 	}
 	railLine = railLineFor(t, railSection(t, out), "zzz-err")
-	if !strings.Contains(railLine, "⚠") {
-		t.Errorf("healthz-error row must show ⚠: %q", railLine)
+	if !strings.Contains(railLine, "✖") {
+		t.Errorf("healthz-error row must show ✖ (§7.1): %q", railLine)
 	}
 }
 
