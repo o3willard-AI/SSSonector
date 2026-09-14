@@ -35,6 +35,9 @@ type RailInput struct {
 	// LastPeerChange maps instance name -> last state-change time (for
 	// the age column; missing entries render "—").
 	LastPeerChange map[string]time.Time
+	// HealthStatus maps instance name -> its healthz SourceStatus
+	// (liveness authority; nil map = unknown → ✖ per fail-closed).
+	HealthStatus map[string]collect.SourceStatus
 }
 
 // RenderRail renders the INSTANCES rail (shared panel).
@@ -49,7 +52,8 @@ func RenderRail(in RailInput, now time.Time) string {
 		if i == in.FocusIdx {
 			marker = "▸ "
 		}
-		dot := healthDot(st)
+		dot := healthDot(healthStatusFor(in, st.Name))
+		stateWord := healthWord(healthStatusFor(in, st.Name))
 		tun := "—"
 		if in.TUNAddresses != nil {
 			if v, ok := in.TUNAddresses[st.Name]; ok {
@@ -74,23 +78,47 @@ func RenderRail(in RailInput, now time.Time) string {
 				age = humanAge(now.Sub(t))
 			}
 		}
-		fmt.Fprintf(&b, "%s%-12s %-24s port %-6s tun %-16s peers %-4s up %-8s %s\n",
-			marker, st.Name, strings.TrimSuffix(st.Unit, ".service"), port, tun, peers, age, dot)
+		fmt.Fprintf(&b, "%s%-12s %-24s port %-6s tun %-16s peers %-4s %-6s %-8s %s\n",
+			marker, st.Name, strings.TrimSuffix(st.Unit, ".service"), port, tun, peers, stateWord, age, dot)
 	}
 	return b.String()
 }
 
-// healthDot picks the rail health dot from systemd state.
-func healthDot(st collect.InstanceState) string {
-	switch {
-	case st.ActiveState == "active" && st.SubState == "running":
+// healthStatusFor looks up the instance's healthz status (unknown →
+// StatusAbsent, fail-closed).
+func healthStatusFor(in RailInput, name string) collect.SourceStatus {
+	if in.HealthStatus == nil {
+		return collect.StatusAbsent
+	}
+	if st, ok := in.HealthStatus[name]; ok {
+		return st
+	}
+	return collect.StatusAbsent
+}
+
+// healthDot picks the rail health dot from the HEALTHZ source
+// (platform-neutral liveness — NOT systemd ActiveState).
+func healthDot(status collect.SourceStatus) string {
+	switch status {
+	case collect.StatusOK:
 		return "●"
-	case st.ActiveState == "failed":
-		return "✖"
-	case st.ActiveState == "inactive":
-		return "○"
-	default:
+	case collect.StatusError:
 		return "⚠"
+	default:
+		return "✖"
+	}
+}
+
+// healthWord is the rail state word from the healthz source:
+// up / down / never for ok / error / absent.
+func healthWord(status collect.SourceStatus) string {
+	switch status {
+	case collect.StatusOK:
+		return "up"
+	case collect.StatusError:
+		return "down"
+	default:
+		return "never"
 	}
 }
 
@@ -106,21 +134,20 @@ func humanAge(d time.Duration) string {
 	}
 }
 
-// RenderDaemonHeader renders the top-right daemon line from the focused
-// instance's systemd state.
-func RenderDaemonHeader(st collect.InstanceState) string {
-	if st.ActiveState == "" {
-		return "daemon: unknown"
-	}
-	switch {
-	case st.Running():
-		return fmt.Sprintf("daemon: RUNNING (pid %d)", st.MainPID)
-	case st.ActiveState == "failed":
-		return fmt.Sprintf("daemon: FAILED (%s)", st.SubState)
-	case st.ActiveState == "inactive":
-		return "daemon: STOPPED"
+// RenderDaemonHeader renders the daemon-liveness line from the HEALTHZ
+// source (platform-neutral — systemd ActiveState does NOT drive it).
+// MainPID (still collected from systemd) is shown only when > 0.
+func RenderDaemonHeader(healthz collect.SourceOf[collect.Healthz], mainPID int) string {
+	switch healthz.Status() {
+	case collect.StatusOK:
+		if mainPID > 0 {
+			return fmt.Sprintf("daemon: RUNNING (pid %d)", mainPID)
+		}
+		return "daemon: RUNNING"
+	case collect.StatusError:
+		return "daemon: unreachable"
 	default:
-		return fmt.Sprintf("daemon: %s/%s (pid %d)", st.ActiveState, st.SubState, st.MainPID)
+		return "daemon: down"
 	}
 }
 

@@ -198,14 +198,9 @@ func (m dashboardModel) View() string {
 		snap = m.result.Instances[focus]
 	}
 
-	// Daemon header from the focused instance's systemd state.
-	b.WriteString(view.RenderDaemonHeader(collect.InstanceState{
-		Name:        snap.Name,
-		Unit:        snap.Unit,
-		ActiveState: snap.ActiveState,
-		SubState:    snap.SubState,
-		MainPID:     snap.MainPID,
-	}))
+	// Daemon header: liveness from HEALTHZ (platform-neutral); systemd
+	// MainPID is still shown when > 0 but does NOT drive liveness.
+	b.WriteString(view.RenderDaemonHeader(snap.Healthz, snap.MainPID))
 	b.WriteString("\n")
 
 	// Rail: collapsed in client mode (no focus marker), full in server mode.
@@ -262,6 +257,10 @@ func railInputFor(res collect.TickResult, focus string, now time.Time) view.Rail
 		if snap.ListenPort > 0 {
 			in.ListenPorts[name] = snap.ListenPort
 		}
+		if in.HealthStatus == nil {
+			in.HealthStatus = map[string]collect.SourceStatus{}
+		}
+		in.HealthStatus[name] = snap.Healthz.Status()
 		if m, ok := snap.Metrics.Get(); ok {
 			if v, ok2 := m.Connections.Active.Get(); ok2 {
 				in.PeerCounts[name] = int(v)

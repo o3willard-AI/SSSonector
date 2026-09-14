@@ -3,8 +3,8 @@ daemon: RUNNING (pid 8100)
 
 --- focused: client-a ---
 INSTANCES
-▸ client-a     sssonector@client-a      port :9443  tun 10.77.0.1/24     peers 3    up —        ●
-  client-b     sssonector@client-b      port :9444  tun 10.77.0.2/24     peers —    up —        ○
+▸ client-a     sssonector@client-a      port :9443  tun 10.77.0.1/24     peers 3    up     —        ●
+  client-b     sssonector@client-b      port :9444  tun 10.77.0.2/24     peers —    down   —        ⚠
 
 TUNNEL
   state    ● up
