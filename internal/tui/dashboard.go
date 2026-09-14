@@ -29,14 +29,25 @@ type PollFunc func(ctx context.Context) collect.TickResult
 // tickMsg drives one poll+render cycle (message-driven, no sleeps).
 type tickMsg struct{}
 
-// dashboardModel is the full-screen dashboard (WI 2.3: composition only).
+// focusRegion tracks which region owns the navigation keys.
+type focusRegion int
+
+const (
+	focusRail focusRegion = iota
+	focusPanels
+)
+
+// dashboardModel is the full-screen dashboard (WI 2.3 composition + WI 2.4
+// read-only navigation).
 type dashboardModel struct {
-	poll    PollFunc
-	now     func() time.Time // injectable clock (golden determinism)
-	result  collect.TickResult
-	focus   string // focused instance name (first instance in 2.3)
-	polled  bool
-	lastNow time.Time
+	poll     PollFunc
+	now      func() time.Time // injectable clock (golden determinism)
+	result   collect.TickResult
+	focus    string // focused instance name (whose panels render)
+	selected int    // highlighted rail row index
+	region   focusRegion
+	polled   bool
+	lastNow  time.Time
 }
 
 // NewDashboard builds the dashboard model with the given poll seam.
@@ -54,32 +65,73 @@ func tickNow() tea.Cmd {
 	return func() tea.Msg { return tickMsg{} }
 }
 
-// Update handles ticks (and only ticks — keymap is WI 2.4).
+// Update handles ticks and read-only keys (WI 2.4 subset of spec §4:
+// navigation + tab + q; `c` reserved no-op for Phase 3; NO destructive
+// actions s/r/R in this WI).
 func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg.(type) {
+	switch msg := msg.(type) {
 	case tickMsg:
 		m.result = m.poll(context.Background())
 		m.lastNow = m.now()
 		m.polled = true
-		m.focus = firstInstanceName(m.result)
+		// Keep selection/focus stable across ticks; initialize on first
+		// tick only.
+		names := sortedInstanceNames(m.result)
+		if m.focus == "" && len(names) > 0 {
+			m.focus = names[0]
+		}
 		return m, tickNow() // re-issue next tick
+	case tea.KeyMsg:
+		return m.handleKey(msg)
 	default:
 		return m, nil
 	}
 }
 
-// firstInstanceName picks the focused instance (sorted for determinism;
-// WI 2.4 makes it selectable).
-func firstInstanceName(res collect.TickResult) string {
-	if len(res.Instances) == 0 {
-		return ""
+// handleKey applies the read-only keymap. Selection movement CLAMPS at the
+// ends (documented choice: no wrap, so PgUp/PgDn paging is predictable).
+func (m dashboardModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	names := sortedInstanceNames(m.result)
+	switch msg.String() {
+	case "tab":
+		if m.region == focusRail {
+			m.region = focusPanels
+		} else {
+			m.region = focusRail
+		}
+		return m, nil
+	case "q", "ctrl+c":
+		return m, tea.Quit
+	case "c":
+		// Reserved for the config view (Phase 3): accepted no-op now.
+		return m, nil
 	}
-	names := make([]string, 0, len(res.Instances))
-	for n := range res.Instances {
-		names = append(names, n)
+
+	// Rail-selection keys act ONLY when the rail is focused.
+	if m.region != focusRail {
+		return m, nil
 	}
-	sort.Strings(names)
-	return names[0]
+	switch msg.String() {
+	case "up", "k":
+		if m.selected > 0 {
+			m.selected--
+		}
+	case "down", "j":
+		if m.selected < len(names)-1 {
+			m.selected++
+		}
+	case "pgup":
+		m.selected = 0
+	case "pgdown":
+		if len(names) > 0 {
+			m.selected = len(names) - 1
+		}
+	case "enter":
+		if m.selected >= 0 && m.selected < len(names) {
+			m.focus = names[m.selected]
+		}
+	}
+	return m, nil
 }
 
 // focusedSnapshot returns the focused instance's snapshot.
@@ -106,14 +158,14 @@ func (m dashboardModel) View() string {
 	// Fatal discovery failure: explicit error, no fabricated screen.
 	if m.result.DiscoverErr != nil {
 		fmt.Fprintf(&b, "discovery: ERROR: %v\n", m.result.DiscoverErr)
-		b.WriteString("footer: [c]onfig [q]uit\n")
+		b.WriteString("footer: [q]uit\n")
 		return b.String()
 	}
 
 	names := sortedInstanceNames(m.result)
 	if len(names) == 0 {
 		b.WriteString(view.RenderRail(view.RailInput{}, now))
-		b.WriteString("footer: [c]onfig [q]uit\n")
+		b.WriteString("footer: [q]uit\n")
 		return b.String()
 	}
 
@@ -141,7 +193,9 @@ func (m dashboardModel) View() string {
 	// Rail: collapsed in client mode (no focus marker), full in server mode.
 	if !clientMode {
 		fmt.Fprintf(&b, "\n--- focused: %s ---\n", focus)
-		b.WriteString(view.RenderRail(railInputFor(m.result, focus, now), now))
+		in := railInputFor(m.result, focus, now)
+		in.FocusIdx = m.selected
+		b.WriteString(view.RenderRail(in, now))
 	} else {
 		b.WriteString("\n")
 		b.WriteString(view.RenderRail(railInputSingle(snap, now), now))
