@@ -290,7 +290,8 @@ Notes:
 |---|---|
 | Daemon unreachable (connection refused / timeout) | Panels show explicit `⚠ daemon unreachable (…)`. Rail dot `✖`. Actions other than stop/start are disabled for that instance. |
 | Prometheus endpoint disabled | Source-specific `— (prometheus disabled)` placeholders; healthz panels unaffected. |
-| Config file unreadable / schema invalid | Config view shows the loader error verbatim; dashboard still runs (monitoring is read-only against /healthz + /metrics). |
+| Config file unreadable | Config view fails-closed on the dump error — pressing `c` stays on the dashboard (error not surfaced). Dashboard still runs (monitoring is read-only against /healthz + /metrics). |
+| Schema invalid | Config view shows the loader error verbatim on validate. Dashboard still runs (monitoring is read-only against /healthz + /metrics). |
 | systemctl fails (no systemd, non-root) | Instance discovery degrades to a single implicit instance only if exactly one config exists under `/etc/sssonector/`; otherwise explicit error. No fabricated instance list. |
 | SIGHUP reload rejected by daemon | Error from the daemon's log shown in the log tail + banner; config file is left as written (documented: rollback is manual, matching today's SIGHUP semantics). |
 | Cert file missing/unparseable | Cert panel shows `⚠ cert unreadable: <err>`; never guessed. |
