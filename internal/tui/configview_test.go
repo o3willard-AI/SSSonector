@@ -86,7 +86,7 @@ func (f *cfgRunner) Run(args ...string) (string, error) {
 }
 
 // osMkdirAll / osWriteFile / osReadFile are thin wrappers for readability.
-func osMkdirAll(dir string) error { return os.MkdirAll(dir, 0o755) }
+func osMkdirAll(dir string) error { return os.MkdirAll(dir, 0o750) }
 func osWriteFile(p, content string) error {
 	return os.WriteFile(p, []byte(content), 0o600)
 }

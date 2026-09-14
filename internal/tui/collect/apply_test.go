@@ -106,7 +106,7 @@ func TestApplyConfig_WriteFails_NoSignal(t *testing.T) {
 
 	// Target path is a DIRECTORY: temp file creation/rename fails.
 	bad := ConfigPaths{ConfigRoot: paths.ConfigRoot}
-	if err := os.MkdirAll(filepath.Join(bad.ConfigRoot, "instances", "broken", "config.yaml"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(bad.ConfigRoot, "instances", "broken", "config.yaml"), 0o750); err != nil {
 		t.Fatal(err)
 	}
 
@@ -207,7 +207,7 @@ func TestApplyConfig_CrashMidWrite_OldFileIntact(t *testing.T) {
 	// impossible to interleave — instead verify the equivalent invariant:
 	// a failed atomicWrite leaves the old target and cleans its temp.
 	bad := ConfigPaths{ConfigRoot: paths.ConfigRoot}
-	if err := os.MkdirAll(filepath.Join(bad.ConfigRoot, "instances", "broken", "config.yaml"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(bad.ConfigRoot, "instances", "broken", "config.yaml"), 0o750); err != nil {
 		t.Fatal(err)
 	}
 	if err := atomicWrite(filepath.Join(bad.ConfigRoot, "instances", "broken", "config.yaml"), []byte(applyDraft)); err == nil {

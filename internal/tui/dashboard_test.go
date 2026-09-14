@@ -105,10 +105,10 @@ func assertScreenGolden(t *testing.T, name, rendered string) {
 	t.Helper()
 	path := filepath.Join("testdata", name+".golden")
 	if *updateScreenGoldens {
-		if err := os.MkdirAll("testdata", 0o755); err != nil {
+		if err := os.MkdirAll("testdata", 0o750); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(path, []byte(rendered), 0o644); err != nil {
+		if err := os.WriteFile(path, []byte(rendered), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		return

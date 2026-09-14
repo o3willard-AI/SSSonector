@@ -133,7 +133,7 @@ func TestSystemd_Degradation(t *testing.T) {
 		return t.TempDir()
 	}
 	writeLegacy := func(root string) {
-		if err := os.MkdirAll(root, 0o755); err != nil {
+		if err := os.MkdirAll(root, 0o750); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(filepath.Join(root, "config.yaml"), []byte("mode: client\n"), 0o600); err != nil {
@@ -142,7 +142,7 @@ func TestSystemd_Degradation(t *testing.T) {
 	}
 	writeInstance := func(root, name string) {
 		dir := filepath.Join(root, "instances", name)
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		if err := os.MkdirAll(dir, 0o750); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("mode: server\n"), 0o600); err != nil {

@@ -227,7 +227,7 @@ func TestEffectiveConfig_UnreadableFile(t *testing.T) {
 	// Unreadable YAML file: explicit-key parse error surfaces (not swallowed).
 	root := t.TempDir()
 	p := filepath.Join(root, "instances", "client-a", "config.yaml")
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(p, []byte(":\n:\n  - ["), 0o600); err != nil {
