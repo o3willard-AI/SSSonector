@@ -60,23 +60,31 @@ type wizardForm struct {
 	// CERTS radio: certNone until chosen (fail-closed).
 	cert certChoice
 	// injectable seams
-	validate collect.ValidateDraftFunc // real loader+validator
-	portFree collect.PortProbeFunc     // ss -tlnp via injectable runner
-	existing []string                  // existing TUN subnets (from discovery)
-	editing  bool                      // text field has keyboard focus
-	buf      string                    // edit buffer for the focused text field
-	bufField wizardField               // which field the buffer belongs to
-	done     bool                      // create pressed (prints draft, WI 5.3 no-op)
-	aborted  bool                      // Esc pressed
+	validate   collect.ValidateDraftFunc // real loader+validator
+	portFree   collect.PortProbeFunc     // ss -tlnp via injectable runner
+	create     collect.CreateFunc        // write+enable+start (WI 5.3)
+	paths      collect.ConfigPaths       // config root for the write
+	runner     collect.CommandRunner     // systemctl enable/start runner
+	existing   []string                  // existing TUN subnets (from discovery)
+	editing    bool                      // text field has keyboard focus
+	buf        string                    // edit buffer for the focused text field
+	bufField   wizardField               // which field the buffer belongs to
+	done       bool                      // create pressed (lands on dashboard)
+	createErr  string                    // verbatim create/write error
+	aborted    bool                      // Esc pressed
+	createdIns string                    // instance to focus on the dashboard
 }
 
 // newWizardForm builds the form with the real loader + injectable port
-// probe. existing carries the TUN subnets of already-configured instances
-// (empty on a fresh host).
+// probe + the real create path. existing carries the TUN subnets of
+// already-configured instances (empty on a fresh host).
 func newWizardForm(validate collect.ValidateDraftFunc, portFree collect.PortProbeFunc, existing []string) wizardForm {
 	return wizardForm{
 		validate: validate,
 		portFree: portFree,
+		create:   collect.CreateAndStartInstance,
+		paths:    collect.DefaultConfigPaths(),
+		runner:   collect.OSCommandRunner{},
 		existing: existing,
 		buf:      "",
 	}

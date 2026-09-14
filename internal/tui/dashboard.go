@@ -127,6 +127,18 @@ func (m dashboardModel) WithLogTail(f LogTailFunc) dashboardModel {
 	return m
 }
 
+// WithFocus pre-focuses an instance (WI 5.3: the wizard lands on the
+// dashboard focused on the newly created instance). The focus applies on
+// the first tick; empty is a no-op (default selection). Unknown names are
+// ignored by the tick logic (it never fabricates an instance).
+func (m dashboardModel) WithFocus(name string) dashboardModel {
+	if name != "" {
+		m.focus = name
+		m.selected = -1 // set on the first tick from the sorted rail
+	}
+	return m
+}
+
 // Init issues the first tick (message-driven).
 func (m dashboardModel) Init() tea.Cmd {
 	return tickNow(m.refresh)
@@ -149,10 +161,22 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.lastNow = m.now()
 		m.polled = true
 		// Keep selection/focus stable across ticks; initialize on first
-		// tick only.
+		// tick only. A pre-focus (WithFocus, WI 5.3) also snaps the
+		// selection to the focused row on that first tick.
 		names := sortedInstanceNames(m.result)
 		if m.focus == "" && len(names) > 0 {
 			m.focus = names[0]
+		}
+		if m.selected < 0 && len(names) > 0 {
+			for i, n := range names {
+				if n == m.focus {
+					m.selected = i
+					break
+				}
+			}
+			if m.selected < 0 {
+				m.selected = 0 // pre-focused name not discovered: default
+			}
 		}
 		return m, tickNow(m.refresh) // re-issue next tick (after refresh interval)
 	case tea.KeyMsg:

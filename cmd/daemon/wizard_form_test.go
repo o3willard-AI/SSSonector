@@ -145,9 +145,14 @@ func TestWizardForm_CertsFailClosed(t *testing.T) {
 }
 
 // TestWizardForm_CreateBlockedThenUnblocked: the tea loop blocks Enter
-// until ready; once ready, Enter runs the WI 5.2 no-op (prints draft).
+// until ready; once ready, Enter runs the WI 5.3 write path. The form's
+// create/paths/runner seams are redirected to a temp root + recorder so
+// no real systemctl runs and /etc/sssonector is never touched.
 func TestWizardForm_CreateBlockedThenUnblocked(t *testing.T) {
+	rec := &wizCreateRecorder{}
 	m := serverWizardModel{form: newWizardForm(okValidate, freePortProbe, nil)}
+	m.form.create = rec.create
+	m.form.paths = collect.ConfigPaths{ConfigRoot: t.TempDir()}
 	// Drive every field through real key events.
 	m = wizKey(m, "enter")            // MODE: choose Server (focused first)
 	m = wizKey(m, "tab")              // INSTANCE
@@ -169,21 +174,17 @@ func TestWizardForm_CreateBlockedThenUnblocked(t *testing.T) {
 	if !m.form.ready() {
 		t.Fatalf("all fields driven — create must unblock, errors: %v", m.form.fieldErrs())
 	}
-	// Enter now runs create (5.2 no-op): done flips, draft renders.
+	// Enter now runs the REAL write path (WI 5.3): done flips, success
+	// line renders. The form's default paths point at /etc/sssonector —
+	// point them at a temp root so the test never touches the host.
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(serverWizardModel)
 	if !m.form.done {
-		t.Fatal("ready + Enter must run the create no-op")
+		t.Fatalf("ready + Enter must run create: createErr=%q", m.form.createErr)
 	}
 	out := m.View()
-	if !strings.Contains(out, "Validated draft:") || !strings.Contains(out, "schema_version") {
-		t.Errorf("done screen must print the validated draft:\n%s", out)
-	}
-	if !strings.Contains(out, "mode: server") || !strings.Contains(out, "listen_port: 9443") {
-		t.Errorf("draft must carry the form values:\n%s", out)
-	}
-	if !strings.Contains(out, "default_deny: true") {
-		t.Errorf("NAT-enabled draft must write default-deny forward NAT:\n%s", out)
+	if !strings.Contains(out, "created & started sssonector@client-a.service") {
+		t.Errorf("done screen must announce the created unit:\n%s", out)
 	}
 }
 
