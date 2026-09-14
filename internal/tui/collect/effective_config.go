@@ -178,7 +178,7 @@ func flattenAppConfig(prefix string, v reflect.Value) []ConfigLine {
 				continue
 			}
 			out = append(out, flattenAppConfig(path, fv)...)
-		case reflect.Ptr:
+		case reflect.Pointer:
 			if fv.IsNil() {
 				out = append(out, ConfigLine{Path: path, Value: "<nil>"})
 				continue

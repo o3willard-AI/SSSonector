@@ -87,7 +87,7 @@ config:
     ca_file: ""
 `, enabled, port)
 	p := filepath.Join(root, "instances", name, "config.yaml")
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(p, []byte(yaml), 0o600); err != nil {
@@ -364,7 +364,7 @@ func TestPoller_PrometheusDisabled_CertStillPopulated(t *testing.T) {
 	yaml := "metadata:\n  schema_version: \"2.0.0\"\ntype: server\nconfig:\n  mode: server\n" +
 		"  monitor:\n    enabled: true\n    prometheus:\n      enabled: false\n      port: 1\n      path: /metrics\n" +
 		"  auth:\n    cert_file: " + certPath + "\n    key_file: \"\"\n    ca_file: \"\"\n"
-	if err := os.MkdirAll(root, 0o755); err != nil {
+	if err := os.MkdirAll(root, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(configPath, []byte(yaml), 0o600); err != nil {
