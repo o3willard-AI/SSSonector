@@ -89,6 +89,13 @@ func runTUI(args []string) error {
 // collectors, real Poller seam, tea.NewProgram with alt-screen. Runs
 // views+collect only — never the daemon service lifecycle.
 func runTUIDashboard() error {
+	return runTUIDashboardFocused("")
+}
+
+// runTUIDashboardFocused launches the dashboard with an instance
+// pre-focused (WI 5.3: the wizard lands here after create & start, on the
+// new instance). Empty focus keeps the default (first sorted instance).
+func runTUIDashboardFocused(focus string) error {
 	paths := collect.DefaultConfigPaths()
 	poller := collect.NewPoller(
 		collect.SystemdCollector{Runner: collect.OSCommandRunner{}, Paths: collect.DefaultSystemdPaths()},
@@ -117,7 +124,7 @@ func runTUIDashboard() error {
 		Read:   collect.LogReloadReader(collect.OSCommandRunner{}, unitForPid, 5*time.Second),
 	}
 
-	model := tui.NewDashboardWithLifecycle(poll, time.Now, 0, deps, lc)
+	model := tui.NewDashboardWithLifecycle(poll, time.Now, 0, deps, lc).WithFocus(focus)
 	prog := tea.NewProgram(model, tea.WithAltScreen())
 	_, err := prog.Run()
 	if err != nil {

@@ -8,7 +8,6 @@ import (
 
 	"github.com/o3willard-AI/SSSonector/internal/tui/collect"
 )
-
 // TUIMode is where runTUI routes after flag parsing (WI 5.1, docs/tui.md
 // §2 first-run detection + §3.3).
 type TUIMode int
@@ -79,9 +78,14 @@ func runWizard(mode TUIMode) error {
 			nil, // fresh host: no existing instances
 		)
 		prog := tea.NewProgram(serverWizardModel{form: form})
-		_, err := prog.Run()
+		final, err := prog.Run()
 		if err != nil {
 			return fmt.Errorf("tui: %w", err)
+		}
+		// On success, land on the dashboard focused on the new instance
+		// (docs/tui.md §3.3: create & start … lands on the dashboard).
+		if wm, ok := final.(serverWizardModel); ok && wm.form.done {
+			return runTUIDashboardFocused(wm.form.createdIns)
 		}
 		return nil
 	case ModeClientWizard:
@@ -215,11 +219,22 @@ func (m *serverWizardModel) handleEnter() {
 		m.form.modeClient = false
 	default:
 		if m.form.ready() && !m.form.done {
-			if _, err := m.form.draft(); err != nil {
+			draft, err := m.form.draft()
+			if err != nil {
 				m.lastErr = err.Error() // verbatim loader/validator error
 				return
 			}
-			m.form.done = true // WI 5.3 performs the real write; 5.2 prints
+			// WI 5.3: the REAL write path — atomic write the config,
+			// then enable+start, via the injectable runner (order
+			// guaranteed by CreateAndStartInstance: file before unit).
+			res, cerr := m.form.create(m.form.paths, strings.TrimSpace(m.form.instance), draft, m.form.runner)
+			if cerr != nil {
+				m.form.createErr = cerr.Error() // verbatim; file stays written on enable/start failure
+				return
+			}
+			m.form.done = true
+			m.form.createdIns = strings.TrimSpace(m.form.instance)
+			_ = res
 		}
 	}
 }
@@ -301,13 +316,9 @@ func (m serverWizardModel) View() string {
 	}
 	b.WriteString("│\n")
 	if f.done {
-		b.WriteString("│ CREATE & START pressed (WI 5.3 will write + enable + start).\n")
-		b.WriteString("│ Validated draft:\n")
-		if d, err := f.draft(); err == nil {
-			for _, line := range strings.Split(strings.TrimRight(d, "\n"), "\n") {
-				b.WriteString("│   " + line + "\n")
-			}
-		}
+		b.WriteString("│ ✓ created & started sssonector@" + f.createdIns + ".service — opening the dashboard…\n")
+	} else if f.createErr != "" {
+		b.WriteString("│ ✗ CREATE FAILED: " + f.createErr + "\n")
 	} else if errs := f.fieldErrs(); len(errs) > 0 {
 		b.WriteString("│ validation: (create DISABLED)\n")
 		for _, e := range errs {

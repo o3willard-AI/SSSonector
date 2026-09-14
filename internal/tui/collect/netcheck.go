@@ -20,6 +20,10 @@ type AppConfigAlias = cfg.AppConfig
 // CommandRunner; tests inject canned output (no real ss).
 type PortProbeFunc func(port int) bool
 
+// CreateFunc is the WI 5.3 write-path seam: validate→write→enable→start.
+// Tests inject a recording fake; production wires CreateAndStartInstance.
+type CreateFunc func(paths ConfigPaths, instance, draft string, runner CommandRunner) (CreateAndStartResult, error)
+
 // NewSSPortProbe builds the production PortProbeFunc over the given
 // runner: parses `ss -tlnp` output for any LISTEN line bound to the port.
 func NewSSPortProbe(runner CommandRunner) PortProbeFunc {
