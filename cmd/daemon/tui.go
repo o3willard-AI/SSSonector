@@ -23,7 +23,7 @@ type tuiFlags struct {
 	probe      bool
 	instance   string
 	refresh    time.Duration
-	fromBundle string
+	FromBundle string // --from-bundle: routes to the client wizard (WI 5.1; loading is WI 5.5)
 }
 
 // parseTUIFlags parses tui flags (unknown flags error, never panic).
@@ -35,7 +35,7 @@ func parseTUIFlags(args []string) (*tuiFlags, error) {
 	fs.BoolVar(&f.probe, "probe", false, "assemble and print a one-shot per-instance snapshot, then exit")
 	fs.StringVar(&f.instance, "instance", "", "instance to focus (accepted; wired in a later phase)")
 	fs.DurationVar(&f.refresh, "refresh", time.Second, "refresh interval (accepted; wired in a later phase)")
-	fs.StringVar(&f.fromBundle, "from-bundle", "", "client bundle path (accepted; wired in a later phase)")
+	fs.StringVar(&f.FromBundle, "from-bundle", "", "client bundle path (routes to the client setup wizard; bundle loading is WI 5.5)")
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
@@ -45,8 +45,9 @@ func parseTUIFlags(args []string) (*tuiFlags, error) {
 	return f, nil
 }
 
-// runTUI dispatches the tui subcommand. This WI implements --probe only;
-// --instance/--refresh/--from-bundle are accepted for later phases.
+// runTUI dispatches the tui subcommand (WI 5.1 routing): --probe → probe;
+// --from-bundle → client wizard; fresh host (no units + zero configs) →
+// server wizard; otherwise the dashboard.
 func runTUI(args []string) error {
 	f, err := parseTUIFlags(args)
 	if err != nil {
@@ -56,14 +57,56 @@ func runTUI(args []string) error {
 		}
 		return err
 	}
-	if !f.probe {
-		return runTUIDashboard()
+	if f.probe {
+		out, fatal := runTUIProbe()
+		fmt.Print(out)
+		if fatal {
+			os.Exit(1)
+		}
+		return nil
 	}
 
-	out, fatal := runTUIProbe()
-	fmt.Print(out)
-	if fatal {
-		os.Exit(1)
+	// First-run mode selection (WI 5.1): reuses the SAME discovery the
+	// dashboard uses (systemd collector + config fallback) — never a
+	// second discovery path.
+	sys := collect.SystemdCollector{Runner: collect.OSCommandRunner{}, Paths: collect.DefaultSystemdPaths()}
+	detect := func() (collect.DiscoveryState, error) {
+		return collect.DiscoverForModeSelection(sys, collect.DefaultSystemdPaths().ConfigRoot)
+	}
+	mode, err := SelectTUIMode(*f, detect)
+	if err != nil {
+		return err
+	}
+	switch mode {
+	case ModeClientWizard, ModeServerWizard:
+		return runWizardPlaceholderModel(mode)
+	default:
+		return runTUIDashboard()
+	}
+}
+
+// runWizardPlaceholderModel runs the minimal WI 5.1 placeholder wizard in
+// a real tea program (q quits). WI 5.2/5.5 replace the model.
+func runWizardPlaceholderModel(mode TUIMode) error {
+	var m wizardPlaceholderModel
+	switch mode {
+	case ModeServerWizard:
+		m = wizardPlaceholderModel{
+			title: "SSSonector — first-run setup (server)",
+			help:  "No configured instances found on this host. The setup wizard (WI 5.2) will create a server instance.",
+		}
+	case ModeClientWizard:
+		m = wizardPlaceholderModel{
+			title: "SSSonector — client setup from bundle",
+			help:  "Bundle: " + ModeBundlePath + " (loading arrives in WI 5.5).",
+		}
+	default:
+		return fmt.Errorf("tui: not a wizard mode: %v", mode)
+	}
+	prog := tea.NewProgram(m)
+	_, err := prog.Run()
+	if err != nil {
+		return fmt.Errorf("tui: %w", err)
 	}
 	return nil
 }

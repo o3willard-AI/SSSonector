@@ -156,6 +156,31 @@ func ImplicitInstanceForTest(configRoot string) (*InstanceState, error) {
 	return implicitInstance(configRoot)
 }
 
+// DefaultSystemdPathsForTest/ResetDefaultSystemdPathsForTest and
+// DefaultSystemdPathsForTest are WI 5.1 seams: first-run mode-selection
+// tests need a temp config root without touching the real /etc/sssonector.
+// They overwrite the default-layout global for the duration of a test.
+
+// defaultSystemdPaths mirrors DefaultSystemdPaths but is mutable for tests.
+var defaultSystemdPaths = SystemdPaths{ConfigRoot: "/etc/sssonector"}
+
+// DefaultSystemdPathsForTest returns the current default config root
+// (tests call this after SetDefaultSystemdPathsForTest to learn the temp
+// root the fixture chose).
+func DefaultSystemdPathsForTest() string {
+	return defaultSystemdPaths.ConfigRoot
+}
+
+// SetDefaultSystemdPathsForTest overrides the default layout (tests only).
+func SetDefaultSystemdPathsForTest(p SystemdPaths) {
+	defaultSystemdPaths = p
+}
+
+// ResetDefaultSystemdPathsForTest restores the real host layout.
+func ResetDefaultSystemdPathsForTest() {
+	defaultSystemdPaths = SystemdPaths{ConfigRoot: "/etc/sssonector"}
+}
+
 // implicitInstance implements the exactly-one-config degradation rule.
 // Exactly one of: /etc/sssonector/config.yaml ("default"), or exactly one
 // /etc/sssonector/instances/<n>/config.yaml (<n>). Zero or 2+ => error.
