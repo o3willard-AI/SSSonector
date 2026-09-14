@@ -3,13 +3,13 @@ daemon: RUNNING (pid 8100)
 
 --- focused: client-a ---
 INSTANCES
-▸ client-a     sssonector@client-a  tun http://127.0.0.1:9443 peers 3    up —        ●
-  client-b     sssonector@client-b  tun http://127.0.0.1:9444 peers —    up —        ○
+▸ client-a     sssonector@client-a      port :9443  tun 10.77.0.1/24     peers 3    up —        ●
+  client-b     sssonector@client-b      port :9444  tun 10.77.0.2/24     peers —    up —        ○
 
 TUNNEL
   state    ● up
   peers    3
-  tun      http://127.0.0.1:9443
+  tun      10.77.0.1/24
   since    2h14m
 
 NAT

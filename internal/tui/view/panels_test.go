@@ -117,6 +117,11 @@ func railFixture() RailInput {
 			"client-b": "10.77.0.9/24",
 			"client-c": "10.77.1.1/24",
 		},
+		ListenPorts: map[string]int{
+			"client-a": 9443,
+			"client-b": 9444,
+			"client-c": 9445,
+		},
 		PeerCounts: map[string]int{"client-a": 2},
 		LastPeerChange: map[string]time.Time{
 			"client-a": fixedNow.Add(-2*time.Hour - 14*time.Minute),

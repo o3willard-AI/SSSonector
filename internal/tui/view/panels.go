@@ -29,6 +29,9 @@ type RailInput struct {
 	// PeerCounts maps instance name -> active connections (from metrics;
 	// missing entries render "—").
 	PeerCounts map[string]int
+	// ListenPorts maps instance name -> tunnel listen port (config-derived;
+	// missing entries render "—").
+	ListenPorts map[string]int
 	// LastPeerChange maps instance name -> last state-change time (for
 	// the age column; missing entries render "—").
 	LastPeerChange map[string]time.Time
@@ -53,6 +56,12 @@ func RenderRail(in RailInput, now time.Time) string {
 				tun = v
 			}
 		}
+		port := "—"
+		if in.ListenPorts != nil {
+			if v, ok := in.ListenPorts[st.Name]; ok {
+				port = fmt.Sprintf(":%d", v)
+			}
+		}
 		peers := "—"
 		if in.PeerCounts != nil {
 			if v, ok := in.PeerCounts[st.Name]; ok {
@@ -65,8 +74,8 @@ func RenderRail(in RailInput, now time.Time) string {
 				age = humanAge(now.Sub(t))
 			}
 		}
-		fmt.Fprintf(&b, "%s%-12s %s  tun %-16s peers %-4s up %-8s %s\n",
-			marker, st.Name, strings.TrimSuffix(st.Unit, ".service"), tun, peers, age, dot)
+		fmt.Fprintf(&b, "%s%-12s %-24s port %-6s tun %-16s peers %-4s up %-8s %s\n",
+			marker, st.Name, strings.TrimSuffix(st.Unit, ".service"), port, tun, peers, age, dot)
 	}
 	return b.String()
 }

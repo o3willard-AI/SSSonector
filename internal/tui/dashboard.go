@@ -242,6 +242,7 @@ func (m dashboardModel) View() string {
 func railInputFor(res collect.TickResult, focus string, now time.Time) view.RailInput {
 	in := view.RailInput{
 		TUNAddresses:   map[string]string{},
+		ListenPorts:    map[string]int{},
 		PeerCounts:     map[string]int{},
 		LastPeerChange: map[string]time.Time{},
 	}
@@ -255,8 +256,11 @@ func railInputFor(res collect.TickResult, focus string, now time.Time) view.Rail
 		if name == focus {
 			in.FocusIdx = i
 		}
-		if snap.PrometheusAddr != "" {
-			in.TUNAddresses[name] = snap.PrometheusAddr // placeholder until a TUN series exists
+		if snap.TunAddr != "" {
+			in.TUNAddresses[name] = snap.TunAddr
+		}
+		if snap.ListenPort > 0 {
+			in.ListenPorts[name] = snap.ListenPort
 		}
 		if m, ok := snap.Metrics.Get(); ok {
 			if v, ok2 := m.Connections.Active.Get(); ok2 {
@@ -276,11 +280,15 @@ func railInputSingle(snap *collect.InstanceSnapshot, now time.Time) view.RailInp
 			ActiveState: snap.ActiveState, SubState: snap.SubState, MainPID: snap.MainPID,
 		}},
 		TUNAddresses:   map[string]string{},
+		ListenPorts:    map[string]int{},
 		PeerCounts:     map[string]int{},
 		LastPeerChange: map[string]time.Time{},
 	}
-	if snap.PrometheusAddr != "" {
-		in.TUNAddresses[snap.Name] = snap.PrometheusAddr
+	if snap.TunAddr != "" {
+		in.TUNAddresses[snap.Name] = snap.TunAddr
+	}
+	if snap.ListenPort > 0 {
+		in.ListenPorts[snap.Name] = snap.ListenPort
 	}
 	if m, ok := snap.Metrics.Get(); ok {
 		if v, ok2 := m.Connections.Active.Get(); ok2 {
@@ -290,13 +298,12 @@ func railInputSingle(snap *collect.InstanceSnapshot, now time.Time) view.RailInp
 	return in
 }
 
-// tunAddrOf returns the instance's TUN address if carried on the snapshot
-// (via PrometheusAddr placeholder for now — no TUN series exists yet).
+// tunAddrOf returns the instance's TUN address from the snapshot.
 func tunAddrOf(snap *collect.InstanceSnapshot) string {
-	if snap == nil || snap.PrometheusAddr == "" {
+	if snap == nil {
 		return ""
 	}
-	return snap.PrometheusAddr
+	return snap.TunAddr
 }
 
 // stateSince derives the tunnel state age from uptime (uptime_seconds)
