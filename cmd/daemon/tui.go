@@ -11,6 +11,9 @@ import (
 	"os"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/o3willard-AI/SSSonector/internal/tui"
 	"github.com/o3willard-AI/SSSonector/internal/tui/collect"
 )
 
@@ -46,16 +49,40 @@ func parseTUIFlags(args []string) (*tuiFlags, error) {
 func runTUI(args []string) error {
 	f, err := parseTUIFlags(args)
 	if err != nil {
+		// -h/--help: flag package prints usage; exit cleanly.
+		if err == flag.ErrHelp {
+			return nil
+		}
 		return err
 	}
 	if !f.probe {
-		return fmt.Errorf("tui: nothing to do: pass --probe (interactive TUI lands in Phase 2)")
+		return runTUIDashboard()
 	}
 
 	out, fatal := runTUIProbe()
 	fmt.Print(out)
 	if fatal {
 		os.Exit(1)
+	}
+	return nil
+}
+
+// runTUIDashboard launches the interactive dashboard (WI 2.5): real
+// collectors, real Poller seam, tea.NewProgram with alt-screen. Runs
+// views+collect only — never the daemon service lifecycle.
+func runTUIDashboard() error {
+	poller := collect.NewPoller(
+		collect.SystemdCollector{Runner: collect.OSCommandRunner{}, Paths: collect.DefaultSystemdPaths()},
+		collect.DefaultConfigPaths(),
+		&http.Client{Timeout: 3 * time.Second},
+	)
+	poll := func(context.Context) collect.TickResult { return poller.PollOnce(context.Background()) }
+
+	model := tui.NewDashboard(poll, time.Now)
+	prog := tea.NewProgram(model, tea.WithAltScreen())
+	_, err := prog.Run()
+	if err != nil {
+		return fmt.Errorf("tui: %w", err)
 	}
 	return nil
 }

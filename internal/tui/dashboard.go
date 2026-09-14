@@ -37,11 +37,15 @@ const (
 	focusPanels
 )
 
+// defaultRefresh is the spec refresh interval (docs/tui.md §6: 1s).
+const defaultRefresh = time.Second
+
 // dashboardModel is the full-screen dashboard (WI 2.3 composition + WI 2.4
-// read-only navigation).
+// read-only navigation + WI 2.5 timed re-tick).
 type dashboardModel struct {
 	poll     PollFunc
 	now      func() time.Time // injectable clock (golden determinism)
+	refresh  time.Duration    // re-tick interval (default 1s via tea.Tick)
 	result   collect.TickResult
 	focus    string // focused instance name (whose panels render)
 	selected int    // highlighted rail row index
@@ -50,19 +54,33 @@ type dashboardModel struct {
 	lastNow  time.Time
 }
 
-// NewDashboard builds the dashboard model with the given poll seam.
+// NewDashboard builds the dashboard model with the given poll seam and the
+// default 1s refresh (docs/tui.md §6). Tests pass their own clock; the
+// refresh stays message-driven — tests drive tickMsg directly and never
+// depend on the timer firing.
 func NewDashboard(poll PollFunc, now func() time.Time) dashboardModel {
-	return dashboardModel{poll: poll, now: now}
+	return NewDashboardWithRefresh(poll, now, defaultRefresh)
+}
+
+// NewDashboardWithRefresh builds the dashboard with an explicit refresh
+// interval (the re-tick waits this long between polls).
+func NewDashboardWithRefresh(poll PollFunc, now func() time.Time, refresh time.Duration) dashboardModel {
+	if refresh <= 0 {
+		refresh = defaultRefresh
+	}
+	return dashboardModel{poll: poll, now: now, refresh: refresh}
 }
 
 // Init issues the first tick (message-driven).
 func (m dashboardModel) Init() tea.Cmd {
-	return tickNow()
+	return tickNow(m.refresh)
 }
 
-// tickNow returns the command that emits the next tick.
-func tickNow() tea.Cmd {
-	return func() tea.Msg { return tickMsg{} }
+// tickNow returns the command that emits the next tick after the model's
+// refresh interval (tea.Tick — no busy loop). The message type is unchanged
+// (tickMsg), so tests keep driving ticks directly without a timer.
+func tickNow(refresh time.Duration) tea.Cmd {
+	return tea.Tick(refresh, func(time.Time) tea.Msg { return tickMsg{} })
 }
 
 // Update handles ticks and read-only keys (WI 2.4 subset of spec §4:
@@ -80,7 +98,7 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.focus == "" && len(names) > 0 {
 			m.focus = names[0]
 		}
-		return m, tickNow() // re-issue next tick
+		return m, tickNow(m.refresh) // re-issue next tick (after refresh interval)
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	default:
