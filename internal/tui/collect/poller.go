@@ -97,6 +97,11 @@ type InstanceSnapshot struct {
 	// PrometheusAddr is the base URL metrics/healthz were fetched from,
 	// empty when prometheus is disabled or config resolution failed.
 	PrometheusAddr string
+	// TunAddr is config.network.address (TUN address/prefix) for the rail
+	// and TUNNEL panel.
+	TunAddr string
+	// ListenPort is config.tunnel.listen_port (server listener port).
+	ListenPort int
 
 	// Cert is the WI 1.4 seam (never populated by this WI).
 	Cert CertSource
@@ -167,6 +172,10 @@ func (p *Poller) pollInstance(ctx context.Context, snap *InstanceSnapshot) {
 		return
 	}
 
+	// TunAddr/ListenPort come from config, available on every path.
+	snap.TunAddr = ic.TunAddr
+	snap.ListenPort = ic.ListenPort
+
 	// Cert is read from local files (no HTTP) and is independent of the
 	// Prometheus endpoint.
 	snap.Cert = fetchCert(ic)
@@ -180,6 +189,9 @@ func (p *Poller) pollInstance(ctx context.Context, snap *InstanceSnapshot) {
 		snap.Healthz = errSource[Healthz](fmt.Errorf("prometheus disabled in config: no HTTP endpoint"))
 		return
 	}
+
+	snap.TunAddr = ic.TunAddr
+	snap.ListenPort = ic.ListenPort
 
 	addr := fmt.Sprintf("http://127.0.0.1:%d", ic.Prometheus.Port)
 	snap.PrometheusAddr = addr

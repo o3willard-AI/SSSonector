@@ -32,7 +32,9 @@ func fixtureTickResult(names []string) collect.TickResult {
 			ActiveState: "active", SubState: "running", MainPID: 8100 + i,
 			Healthz:        collect.SourceOK(h),
 			Metrics:        collect.SourceOK(fixtureScreenSnapshot()),
-			PrometheusAddr: fmt.Sprintf("http://127.0.0.1:%d", 9443+i),
+			PrometheusAddr: fmt.Sprintf("http://127.0.0.1:%d", 9090+i),
+			TunAddr:        fmt.Sprintf("10.77.0.%d/24", 1+i),
+			ListenPort:     9443 + i,
 		}
 		if i == 1 { // client-b down this tick: per-source error, never stale
 			snap.ActiveState = "inactive"

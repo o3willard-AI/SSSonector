@@ -1,6 +1,7 @@
 package collect
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -182,4 +183,106 @@ func TestResolveInstanceConfig_RealConfigFixtures(t *testing.T) {
 // loadDirect calls the daemon loader directly for the verbatim-error check.
 func loadDirect(path string) (*cfg.AppConfig, error) {
 	return cfg.LoadConfigFile(path)
+}
+
+func TestResolveInstanceConfig_TunAddrAndListenPort(t *testing.T) {
+	root := t.TempDir()
+	yaml := `metadata:
+  schema_version: "2.0.0"
+type: server
+config:
+  mode: server
+  network:
+    address: 10.77.0.1/24
+  tunnel:
+    listen_port: 9443
+  monitor:
+    enabled: true
+    prometheus:
+      enabled: true
+      port: 9090
+      path: /metrics
+`
+	writeFixture(t, root, "instances/client-a/config.yaml", yaml)
+
+	ic, err := ResolveInstanceConfig(ConfigPaths{ConfigRoot: root}, "client-a")
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if ic.TunAddr != "10.77.0.1/24" {
+		t.Errorf("TunAddr: %q", ic.TunAddr)
+	}
+	if ic.ListenPort != 9443 {
+		t.Errorf("ListenPort: %d", ic.ListenPort)
+	}
+	// Real repo fixture: server.yaml has network.address 10.0.0.1/24 and
+	// tunnel.listen_port 8443.
+	root2 := t.TempDir()
+	data, err := os.ReadFile(filepath.Join("..", "..", "..", "configs", "server.yaml"))
+	if err != nil {
+		t.Fatalf("read real fixture: %v", err)
+	}
+	writeFixture(t, root2, "instances/srv/config.yaml", string(data))
+	ic2, err := ResolveInstanceConfig(ConfigPaths{ConfigRoot: root2}, "srv")
+	if err != nil {
+		t.Fatalf("resolve real: %v", err)
+	}
+	if ic2.TunAddr != "10.0.0.1/24" || ic2.ListenPort != 8443 {
+		t.Errorf("real fixture: TunAddr=%q ListenPort=%d", ic2.TunAddr, ic2.ListenPort)
+	}
+}
+
+func TestPoller_SnapshotCarriesTunAddrAndListenPort(t *testing.T) {
+	// pollInstance must copy TunAddr/ListenPort onto the snapshot —
+	// including on the prometheus-disabled path.
+	d := newFixtureDaemon(t)
+	root := t.TempDir()
+	writeInstanceConfig(t, root, "client-a", d.port(t), true)
+	// Extend the fixture config with network/tunnel fields.
+	p := filepath.Join(root, "instances", "client-a", "config.yaml")
+	data, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated := strings.Replace(string(data), "  mode: server\n",
+		"  mode: server\n  network:\n    address: 10.77.0.7/24\n  tunnel:\n    listen_port: 9443\n", 1)
+	if err := os.WriteFile(p, []byte(updated), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	r := newFakeRunner()
+	r.outputs["systemctl list-units sssonector@* --all --plain --no-legend"] =
+		"sssonector@client-a.service loaded active running x\n"
+	r.outputs["systemctl show sssonector@client-a.service -p ActiveState -p SubState -p MainPID"] =
+		"ActiveState=active\nSubState=running\nMainPID=1\n"
+	r.outputs["systemctl show sssonector.service -p ActiveState -p SubState -p MainPID"] =
+		"ActiveState=not-found\nSubState=dead\nMainPID=0\n"
+	poller := NewPoller(SystemdCollector{Runner: r, Paths: DefaultSystemdPaths()},
+		ConfigPaths{ConfigRoot: root}, d.srv.Client())
+	res := poller.PollOnce(context.Background())
+	s := res.Instances["client-a"]
+	if s.TunAddr != "10.77.0.7/24" || s.ListenPort != 9443 {
+		t.Errorf("snapshot fields: TunAddr=%q ListenPort=%d", s.TunAddr, s.ListenPort)
+	}
+
+	// Prometheus-disabled path still carries them.
+	root2 := t.TempDir()
+	yaml := "metadata:\n  schema_version: \"2.0.0\"\ntype: server\nconfig:\n  mode: server\n" +
+		"  network:\n    address: 10.77.9.9/24\n  tunnel:\n    listen_port: 9444\n" +
+		"  monitor:\n    enabled: true\n    prometheus:\n      enabled: false\n      port: 1\n      path: /metrics\n"
+	writeFixture(t, root2, "instances/client-a/config.yaml", yaml)
+	r2 := newFakeRunner()
+	r2.outputs["systemctl list-units sssonector@* --all --plain --no-legend"] =
+		"sssonector@client-a.service loaded active running x\n"
+	r2.outputs["systemctl show sssonector@client-a.service -p ActiveState -p SubState -p MainPID"] =
+		"ActiveState=active\nSubState=running\nMainPID=1\n"
+	r2.outputs["systemctl show sssonector.service -p ActiveState -p SubState -p MainPID"] =
+		"ActiveState=not-found\nSubState=dead\nMainPID=0\n"
+	poller2 := NewPoller(SystemdCollector{Runner: r2, Paths: DefaultSystemdPaths()},
+		ConfigPaths{ConfigRoot: root2}, d.srv.Client())
+	res2 := poller2.PollOnce(context.Background())
+	s2 := res2.Instances["client-a"]
+	if s2.TunAddr != "10.77.9.9/24" || s2.ListenPort != 9444 {
+		t.Errorf("disabled-path fields: TunAddr=%q ListenPort=%d", s2.TunAddr, s2.ListenPort)
+	}
 }

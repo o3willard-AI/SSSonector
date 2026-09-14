@@ -38,6 +38,10 @@ type InstanceConfig struct {
 	// CertRotationInterval is config.auth.cert_rotation.interval; 0 means
 	// the reader applies its default (30 days, matching internal/cert).
 	CertRotationInterval time.Duration
+	// TunAddr is config.network.address (the TUN address/prefix).
+	TunAddr string
+	// ListenPort is config.tunnel.listen_port (the server listener port).
+	ListenPort int
 }
 
 // PrometheusEndpoint locates the instance's /metrics endpoint.
@@ -99,6 +103,8 @@ func ResolveInstanceConfig(paths ConfigPaths, name string) (InstanceConfig, erro
 			CAFile:   app.Config.Auth.CAFile,
 		},
 		CertRotationInterval: app.Config.Auth.CertRotation.Interval,
+		TunAddr:              app.Config.Network.Address,
+		ListenPort:           app.Config.Tunnel.ListenPort,
 	}
 	return ic, nil
 }
