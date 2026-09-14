@@ -73,7 +73,7 @@ func TestFormatProbe_Healthy(t *testing.T) {
 		"connections_active 3",
 		// a log line:
 		"tunnel rekeyed peer 192.168.100.51",
-		"[sssonector@client-a.service]",
+		"[client-a]",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("probe text missing %q:\n%s", want, out)

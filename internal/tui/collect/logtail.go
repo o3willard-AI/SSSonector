@@ -106,7 +106,7 @@ func (lt LogTail) fullRead(unit string, n int, reSeek bool) (LogRead, error) {
 	if err != nil {
 		return LogRead{}, fmt.Errorf("journalctl %s: %w", unit, err)
 	}
-	entries, cursor := parseJournalOutput(out, unit)
+	entries, cursor := parseJournalOutput(out, instanceName(unit))
 	return LogRead{Entries: entries, Cursor: cursor, ReSeeked: reSeek}, nil
 }
 
@@ -120,7 +120,7 @@ func (lt LogTail) incrementalRead(unit, cursor string, n int) (LogRead, error) {
 		// Cursor no longer seekable (rotated away): re-seek.
 		return lt.fullRead(unit, n, true)
 	}
-	entries, newCursor := parseJournalOutput(out, unit)
+	entries, newCursor := parseJournalOutput(out, instanceName(unit))
 	if newCursor == "" {
 		// No cursor line at all — treat as a stale-cursor signal and
 		// re-seek so the next read has a valid resume point. NEVER return
@@ -128,6 +128,16 @@ func (lt LogTail) incrementalRead(unit, cursor string, n int) (LogRead, error) {
 		return lt.fullRead(unit, n, true)
 	}
 	return LogRead{Entries: entries, Cursor: newCursor}, nil
+}
+
+// instanceName extracts the template instance (%i) from a unit name:
+// "sssonector@client-a.service" → "client-a"; non-template units pass
+// through unchanged (the legacy unit's tag is its own name).
+func instanceName(unit string) string {
+	if name, ok := instanceNameFromUnit(unit); ok {
+		return name
+	}
+	return unit
 }
 
 // parseJournalOutput splits journalctl --show-cursor output into entries
