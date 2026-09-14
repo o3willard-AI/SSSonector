@@ -56,6 +56,21 @@ type dashboardModel struct {
 	config   configModel
 	deps     ConfigDeps
 	lc       lifecycleState
+	logs     LogTailFunc // merged-log seam (WI 4.3)
+}
+
+// LogTailFunc is the merged-log seam: given the tick result and a bound,
+// return the merged [inst]-tagged stream. Production wires a LogTail over
+// the real CommandRunner; tests inject fixture entries.
+type LogTailFunc func(res collect.TickResult, n int) []collect.LogEntry
+
+// defaultLogTail is the production merge: one LogTail over the real
+// OSCommandRunner, merging every discovered instance's unit journal into
+// one [inst]-tagged time-ordered stream.
+var productionLogTail = collect.NewLogTail(collect.OSCommandRunner{})
+
+func defaultLogTail(res collect.TickResult, n int) []collect.LogEntry {
+	return allLogs(res, n)
 }
 
 // lifecycleState holds WI 4.1 lifecycle deps + confirm dialog + banner.
@@ -79,7 +94,7 @@ func NewDashboardWithRefresh(poll PollFunc, now func() time.Time, refresh time.D
 	if refresh <= 0 {
 		refresh = defaultRefresh
 	}
-	return dashboardModel{poll: poll, now: now, refresh: refresh}
+	return dashboardModel{poll: poll, now: now, refresh: refresh, logs: defaultLogTail}
 }
 
 // NewDashboardWithConfig builds the dashboard with the config-view
@@ -99,6 +114,16 @@ func NewDashboardWithConfig(poll PollFunc, now func() time.Time, refresh time.Du
 func NewDashboardWithLifecycle(poll PollFunc, now func() time.Time, refresh time.Duration, deps ConfigDeps, lc LifecycleDeps) dashboardModel {
 	m := NewDashboardWithConfig(poll, now, refresh, deps)
 	m.lc.deps = lc
+	return m
+}
+
+// WithLogTail overrides the merged-log seam (WI 4.3). Production passes
+// a LogTail over the real CommandRunner; tests inject fixture streams.
+// The zero value keeps defaultLogTail (the merge over allLogs).
+func (m dashboardModel) WithLogTail(f LogTailFunc) dashboardModel {
+	if f != nil {
+		m.logs = f
+	}
 	return m
 }
 
@@ -281,10 +306,11 @@ func (m dashboardModel) View() string {
 	b.WriteString(view.RenderRate(snap.Metrics))
 	b.WriteString("\n")
 
-	// Shared panels: cert from the focused instance, logs from all.
+	// Shared panels: cert from the focused instance, logs merged across
+	// ALL instances (WI 4.3).
 	b.WriteString(view.RenderCert(snap.Cert, now))
 	b.WriteString("\n")
-	b.WriteString(view.RenderLog(allLogs(m.result), 12))
+	b.WriteString(view.RenderLog(m.logs(m.result, 12), 12))
 
 	// Lifecycle outcome banner (WI 4.1), above the footer.
 	if line := m.renderLifecycleBanner(); line != "" {
@@ -383,11 +409,18 @@ func stateSince(snap *collect.InstanceSnapshot, now time.Time) time.Time {
 	return now.Add(-time.Duration(h.UptimeSeconds) * time.Second)
 }
 
-// allLogs merges nothing yet — the log panel is fed from LogTail reads in
-// WI 1.6's probe; for the screen the entries come with the tick result in
-// a later wiring. Until then the panel renders its empty state.
-func allLogs(res collect.TickResult) []collect.LogEntry {
-	return nil
+// allLogs merges every discovered instance's log tail into ONE
+// time-ordered, [inst]-tagged stream (WI 4.3). Each unit is read through
+// the LogTail runner seam (injectable — tests pass fakes); a unit that
+// fails contributes nothing. n bounds the merged stream.
+func allLogs(res collect.TickResult, n int) []collect.LogEntry {
+	var units []string
+	for _, name := range sortedInstanceNames(res) {
+		if u := res.Instances[name].Unit; u != "" {
+			units = append(units, u)
+		}
+	}
+	return collect.MergeLogs(productionLogTail, units, n)
 }
 
 // sortedInstanceNames returns instance names sorted for determinism.

@@ -28,6 +28,6 @@ CERTIFICATE
   expires   2026-11-14 (64d)
 
 LOG
-  (none this read)
+  [sssonector.service] -- No entries --
 
 footer: [s]top [r]estart [R]eload act on FOCUSED instance  [c]onfig  [q]uit
