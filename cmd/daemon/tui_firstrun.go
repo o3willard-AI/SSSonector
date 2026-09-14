@@ -68,53 +68,257 @@ func SelectTUIMode(f tuiFlags, detect DetectFunc) (TUIMode, error) {
 	return ModeDashboard, nil
 }
 
-// runWizardPlaceholder renders the minimal WI 5.1 placeholder screen for
-// a wizard mode: title + one help line + "press q to quit". The real
-// wizard UI is WI 5.2 (server) / 5.5 (client).
-func runWizardPlaceholder(mode TUIMode) error {
-	var title, help string
+// runWizard launches the wizard for the given mode. The server wizard is
+// the real form (WI 5.2); the client wizard stays a stub until WI 5.5.
+func runWizard(mode TUIMode) error {
 	switch mode {
 	case ModeServerWizard:
-		title = "SSSonector — first-run setup (server)"
-		help = "No configured instances found on this host. The setup wizard (WI 5.2) will create a server instance."
+		form := newWizardForm(
+			collect.ValidateDraft,
+			collect.NewSSPortProbe(collect.OSCommandRunner{}),
+			nil, // fresh host: no existing instances
+		)
+		prog := tea.NewProgram(serverWizardModel{form: form})
+		_, err := prog.Run()
+		if err != nil {
+			return fmt.Errorf("tui: %w", err)
+		}
+		return nil
 	case ModeClientWizard:
-		title = "SSSonector — client setup from bundle"
-		help = "Bundle: " + ModeBundlePath + " (loading arrives in WI 5.5)."
+		// Client wizard stub (WI 5.5): carry the bundle path; keep the
+		// minimal placeholder so routing stays demonstrable.
+		m := wizardStubModel{
+			title: "SSSonector — client setup from bundle",
+			help:  "Bundle: " + ModeBundlePath + " (loading arrives in WI 5.5).",
+		}
+		prog := tea.NewProgram(m)
+		_, err := prog.Run()
+		if err != nil {
+			return fmt.Errorf("tui: %w", err)
+		}
+		return nil
 	default:
 		return fmt.Errorf("tui: not a wizard mode: %v", mode)
 	}
-	body := strings.Join([]string{
-		"┌─ " + title + " ─┐",
-		"│ " + help,
-		"│",
-		"└─ press q to quit ─┘",
-	}, "\n")
-	// Placeholder: print and exit (the real wizard replaces tea Program).
-	fmt.Println(body)
-	return nil
 }
 
-// wizardPlaceholderModel is the minimal tea model so the routing is
-// demonstrable inside tea.NewProgram (q quits). WI 5.2/5.5 replace it.
-type wizardPlaceholderModel struct {
+// wizardStubModel is the WI 5.1 placeholder kept ONLY for the client
+// wizard (WI 5.5 replaces it).
+type wizardStubModel struct {
 	title string
 	help  string
 }
 
-func (m wizardPlaceholderModel) Init() tea.Cmd { return nil }
+func (m wizardStubModel) Init() tea.Cmd { return nil }
 
-func (m wizardPlaceholderModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m wizardStubModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if k, ok := msg.(tea.KeyMsg); ok && (k.String() == "q" || k.String() == "ctrl+c") {
 		return m, tea.Quit
 	}
 	return m, nil
 }
 
-func (m wizardPlaceholderModel) View() string {
+func (m wizardStubModel) View() string {
 	var b strings.Builder
 	b.WriteString("┌─ " + m.title + " ─┐\n")
 	b.WriteString("│ " + m.help + "\n")
 	b.WriteString("│\n")
 	b.WriteString("└─ press q to quit ─┘\n")
+	return b.String()
+}
+
+// serverWizardModel is the tea wrapper around wizardForm.
+type serverWizardModel struct {
+	form    wizardForm
+	lastErr string // verbatim loader error from the last create attempt
+}
+
+func (m serverWizardModel) Init() tea.Cmd { return nil }
+
+// Update implements the §3.3 keymap: Tab next field · ↑↓ edit ·
+// [Enter] create & start · [Esc] abort.
+func (m serverWizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	k, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m, nil
+	}
+	switch k.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		m.form.aborted = true
+		return m, tea.Quit
+	case "tab":
+		m.form.focus = (m.form.focus + 1) % wfCount
+		return m, nil
+	case "up":
+		if m.form.focus > 0 {
+			m.form.focus--
+		}
+		return m, nil
+	case "down":
+		if m.form.focus < wfCount-1 {
+			m.form.focus++
+		}
+		return m, nil
+	case "enter":
+		m.handleEnter()
+		return m, nil
+	case " ", "x":
+		m.handleToggle()
+		return m, nil
+	}
+	// Text entry always lands in the focused text field (no separate
+	// edit mode — per-keystroke validation sees every rune). The buffer
+	// RESETS when the field changes: applyBuf writes the whole buffer,
+	// so switching fields must not leak the previous field's text.
+	if isTextField(m.form.focus) {
+		if m.form.bufField != m.form.focus {
+			m.form.bufField = m.form.focus
+			m.form.buf = m.form.fieldValue(m.form.focus)
+		}
+		switch k.String() {
+		case "backspace":
+			if r := []rune(m.form.buf); len(r) > 0 {
+				m.form.buf = string(r[:len(r)-1])
+			}
+		default:
+			if len(k.Runes) > 0 {
+				m.form.buf += string(k.Runes)
+			}
+		}
+		m.applyBuf()
+	}
+	return m, nil
+}
+
+// fieldValue returns the current value of a text field (for buffer sync).
+func (f wizardForm) fieldValue(field wizardField) string {
+	switch field {
+	case wfInstance:
+		return f.instance
+	case wfPort:
+		return f.port
+	case wfTun:
+		return f.tun
+	}
+	return ""
+}
+
+// handleEnter commits the focused radio (mode: Server — the only wired
+// choice) or, when every field is ready, runs create (WI 5.3 no-op:
+// print the validated draft). NOT ready ⇒ create is a no-op (blocked).
+func (m *serverWizardModel) handleEnter() {
+	switch m.form.focus {
+	case wfMode:
+		m.form.modeChosen = true
+		m.form.modeClient = false
+	default:
+		if m.form.ready() && !m.form.done {
+			if _, err := m.form.draft(); err != nil {
+				m.lastErr = err.Error() // verbatim loader/validator error
+				return
+			}
+			m.form.done = true // WI 5.3 performs the real write; 5.2 prints
+		}
+	}
+}
+
+// handleToggle flips the checkbox/radio state of the focused field with
+// explicit keys (space/x). Nothing is ever pre-selected.
+func (m *serverWizardModel) handleToggle() {
+	switch m.form.focus {
+	case wfNat:
+		switch m.form.nat {
+		case natUnset, natDisabled:
+			m.form.nat = natEnabled
+		case natEnabled:
+			m.form.nat = natDisabled
+		}
+	case wfCerts:
+		switch m.form.cert {
+		case certNone, certGenerateNew:
+			m.form.cert = certReuseHost
+		case certReuseHost:
+			m.form.cert = certGenerateNew
+		}
+	}
+}
+
+// applyBuf copies the edit buffer into the focused field's value.
+func (m *serverWizardModel) applyBuf() {
+	switch m.form.focus {
+	case wfInstance:
+		m.form.instance = m.form.buf
+	case wfPort:
+		m.form.port = m.form.buf
+	case wfTun:
+		m.form.tun = m.form.buf
+	}
+}
+
+func isTextField(f wizardField) bool {
+	return f == wfInstance || f == wfPort || f == wfTun
+}
+
+// View renders the §3.3 form with the live per-keystroke validation line.
+func (m serverWizardModel) View() string {
+	f := m.form
+	var b strings.Builder
+	b.WriteString("┌─ SSSonector — first-run setup ─┐\n")
+	b.WriteString("│ No configured instances found on this host.\n")
+	b.WriteString("│\n")
+	b.WriteString("│ MODE        ")
+	if !f.modeChosen {
+		b.WriteString("[ ] Server   [ ] Client   (choose — never defaulted)")
+	} else if f.modeClient {
+		b.WriteString("[ ] Server   [x] Client   (stub — WI 5.5)")
+	} else {
+		b.WriteString("[x] Server   [ ] Client")
+	}
+	b.WriteString("\n")
+	b.WriteString("│ INSTANCE    " + f.instance + "\n")
+	b.WriteString("│ LISTEN PORT " + f.port + "\n")
+	b.WriteString("│ TUN ADDRESS " + f.tun + "\n")
+	switch f.nat {
+	case natEnabled:
+		b.WriteString("│ FORWARD NAT [x] enabled   (egress 192.168.100.0/24 — default-deny, edit ACL after setup)\n")
+	case natDisabled:
+		b.WriteString("│ FORWARD NAT [ ] enabled\n")
+	default:
+		b.WriteString("│ FORWARD NAT [ ] enabled   (unset — choose explicitly)\n")
+	}
+	switch f.cert {
+	case certReuseHost:
+		b.WriteString("│ CERTS       [x] reuse host CA & certs (/etc/sssonector/certs)\n")
+		b.WriteString("│             [ ] generate new instance CA + leaf now\n")
+	case certGenerateNew:
+		b.WriteString("│ CERTS       [ ] reuse host CA & certs (/etc/sssonector/certs)\n")
+		b.WriteString("│             [x] generate new instance CA + leaf now\n")
+	default:
+		b.WriteString("│ CERTS       [ ] reuse host CA & certs\n")
+		b.WriteString("│             [ ] generate new instance CA + leaf now   (fail-closed: choose one)\n")
+	}
+	b.WriteString("│\n")
+	if f.done {
+		b.WriteString("│ CREATE & START pressed (WI 5.3 will write + enable + start).\n")
+		b.WriteString("│ Validated draft:\n")
+		if d, err := f.draft(); err == nil {
+			for _, line := range strings.Split(strings.TrimRight(d, "\n"), "\n") {
+				b.WriteString("│   " + line + "\n")
+			}
+		}
+	} else if errs := f.fieldErrs(); len(errs) > 0 {
+		b.WriteString("│ validation: (create DISABLED)\n")
+		for _, e := range errs {
+			b.WriteString("│   ✗ " + e + "\n")
+		}
+	} else {
+		b.WriteString("│ validation: ✓ all fields valid — [Enter] create & start\n")
+	}
+	if m.lastErr != "" {
+		b.WriteString("│ " + m.lastErr + "\n")
+	}
+	b.WriteString("└─ Tab next field · ↑↓ move · space toggle · type to edit · Enter create · Esc abort ─┘\n")
 	return b.String()
 }
