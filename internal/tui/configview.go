@@ -16,6 +16,7 @@ type viewMode int
 const (
 	modeDashboard viewMode = iota
 	modeConfig
+	modeConfirm // WI 4.1: destructive-action confirm dialog
 )
 
 // bannerKind classifies the config-view banner.
@@ -29,6 +30,13 @@ const (
 	bannerApplyRejected
 	bannerApplyError
 	bannerInfo
+	// WI 4.1 lifecycle outcomes (continue the same iota family).
+	bannerLifecycleOK       // stop/restart command accepted
+	bannerLifecycleError    // systemctl command failed
+	bannerReloadOK          // SIGHUP reload accepted
+	bannerReloadRejected    // daemon rejected the reload
+	bannerReloadError       // signal/outcome-read failure
+	bannerLifecycleDisabled // action disabled (e.g. s on stopped instance)
 )
 
 // configModel is the config-view state (a sub-model of the dashboard).

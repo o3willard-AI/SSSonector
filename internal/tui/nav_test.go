@@ -227,13 +227,14 @@ func TestNav_FocusStableAcrossTicks(t *testing.T) {
 	}
 }
 
-func TestNav_FooterReadOnly(t *testing.T) {
+func TestNav_FooterLifecycle(t *testing.T) {
+	// WI 4.1: the footer now advertises the lifecycle keys.
 	m := navFixture(t)
 	out := m.View()
-	if strings.Contains(out, "[s]top") || strings.Contains(out, "[r]estart") || strings.Contains(out, "[R]eload") {
-		t.Errorf("footer must not show destructive actions in WI 2.4:\n%s", out)
+	if !strings.Contains(out, "[s]top [r]estart [R]eload act on FOCUSED instance") {
+		t.Errorf("footer must show lifecycle keys (WI 4.1):\n%s", out)
 	}
 	if !strings.Contains(out, "[c]onfig") || !strings.Contains(out, "[q]uit") {
-		t.Errorf("footer must show read-only keys:\n%s", out)
+		t.Errorf("footer must show config and quit keys:\n%s", out)
 	}
 }

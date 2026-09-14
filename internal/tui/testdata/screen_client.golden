@@ -30,4 +30,4 @@ CERTIFICATE
 LOG
   (none this read)
 
-footer: [c]onfig [q]uit (read-only)
+footer: [s]top [r]estart [R]eload act on FOCUSED instance  [c]onfig  [q]uit
