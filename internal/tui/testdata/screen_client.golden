@@ -30,4 +30,4 @@ CERTIFICATE
 LOG
   13:59:57 [default] listener :9443 ready
 
-footer: [s]top [r]estart [R]eload act on FOCUSED instance  [c]onfig  [q]uit
+footer: [s]top [r]estart [R]eload act on FOCUSED instance  [c]onfig  [g]enerate client bundle  [q]uit
