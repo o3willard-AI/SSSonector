@@ -42,6 +42,9 @@ type InstanceConfig struct {
 	TunAddr string
 	// ListenPort is config.tunnel.listen_port (the server listener port).
 	ListenPort int
+	// ListenAddress is config.tunnel.listen_address (the server bind
+	// address; wildcard binds are resolved to a real host for bundles).
+	ListenAddress string
 }
 
 // PrometheusEndpoint locates the instance's /metrics endpoint.
@@ -105,6 +108,7 @@ func ResolveInstanceConfig(paths ConfigPaths, name string) (InstanceConfig, erro
 		CertRotationInterval: app.Config.Auth.CertRotation.Interval,
 		TunAddr:              app.Config.Network.Address,
 		ListenPort:           app.Config.Tunnel.ListenPort,
+		ListenAddress:        app.Config.Tunnel.ListenAddress,
 	}
 	return ic, nil
 }

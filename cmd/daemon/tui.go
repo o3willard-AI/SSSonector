@@ -124,7 +124,9 @@ func runTUIDashboardFocused(focus string) error {
 		Read:   collect.LogReloadReader(collect.OSCommandRunner{}, unitForPid, 5*time.Second),
 	}
 
-	model := tui.NewDashboardWithLifecycle(poll, time.Now, 0, deps, lc).WithFocus(focus)
+	model := tui.NewDashboardWithLifecycle(poll, time.Now, 0, deps, lc).
+		WithFocus(focus).
+		WithBundleGen(collect.GenerateClientBundle)
 	prog := tea.NewProgram(model, tea.WithAltScreen())
 	_, err := prog.Run()
 	if err != nil {

@@ -37,6 +37,8 @@ const (
 	bannerReloadRejected    // daemon rejected the reload
 	bannerReloadError       // signal/outcome-read failure
 	bannerLifecycleDisabled // action disabled (e.g. s on stopped instance)
+	bannerBundleOK          // WI 5.4: client bundle generated
+	bannerBundleError       // WI 5.4: bundle generation failed
 )
 
 // configModel is the config-view state (a sub-model of the dashboard).

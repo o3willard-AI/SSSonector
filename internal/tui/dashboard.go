@@ -57,6 +57,7 @@ type dashboardModel struct {
 	deps     ConfigDeps
 	lc       lifecycleState
 	logs     LogTailFunc // merged-log seam (WI 4.3)
+	bundle   bundleState // WI 5.4 [g] client-bundle seam + banner
 }
 
 // LogTailFunc is the merged-log seam: given the tick result and a bound,
@@ -190,6 +191,10 @@ func (m dashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// WI 4.1 lifecycle keys first (s/r/R on the focused instance).
 		if next, handled := m.handleLifecycleKey(msg); handled {
+			return next, nil
+		}
+		// WI 5.4: [g] generates the client bundle for the focused instance.
+		if next, handled := m.handleBundleKey(msg); handled {
 			return next, nil
 		}
 		return m.handleKey(msg)
@@ -340,9 +345,13 @@ func (m dashboardModel) View() string {
 	if line := m.renderLifecycleBanner(); line != "" {
 		b.WriteString("\n" + line + "\n")
 	}
+	// Bundle outcome banner (WI 5.4), above the footer.
+	if line := m.renderBundleBanner(); line != "" {
+		b.WriteString("\n" + line + "\n")
+	}
 
-	// Footer (WI 4.1): lifecycle actions on the FOCUSED instance.
-	b.WriteString("\nfooter: [s]top [r]estart [R]eload act on FOCUSED instance  [c]onfig  [q]uit\n")
+	// Footer (WI 4.1 + 5.4): lifecycle actions on the FOCUSED instance.
+	b.WriteString("\nfooter: [s]top [r]estart [R]eload act on FOCUSED instance  [c]onfig  [g]enerate client bundle  [q]uit\n")
 	return b.String()
 }
 

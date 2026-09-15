@@ -33,4 +33,4 @@ LOG
   13:59:49 [client-a] tunnel rekeyed peer 192.168.100.51
   13:59:55 [client-b] listener :9444 conn refused x1
 
-footer: [s]top [r]estart [R]eload act on FOCUSED instance  [c]onfig  [q]uit
+footer: [s]top [r]estart [R]eload act on FOCUSED instance  [c]onfig  [g]enerate client bundle  [q]uit
