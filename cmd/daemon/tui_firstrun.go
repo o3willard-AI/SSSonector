@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -89,46 +90,21 @@ func runWizard(mode TUIMode) error {
 		}
 		return nil
 	case ModeClientWizard:
-		// Client wizard stub (WI 5.5): carry the bundle path; keep the
-		// minimal placeholder so routing stays demonstrable.
-		m := wizardStubModel{
-			title: "SSSonector — client setup from bundle",
-			help:  "Bundle: " + ModeBundlePath + " (loading arrives in WI 5.5).",
-		}
+		// WI 5.5: the real client wizard — bundle prefill + chain
+		// pre-flight + create through the WI 5.3 pipeline.
+		m := newClientWizard(ModeBundlePath, os.TempDir)
 		prog := tea.NewProgram(m)
-		_, err := prog.Run()
+		final, err := prog.Run()
 		if err != nil {
 			return fmt.Errorf("tui: %w", err)
+		}
+		if cm, ok := final.(clientWizardModel); ok && cm.done {
+			return runTUIDashboardFocused(cm.instance)
 		}
 		return nil
 	default:
 		return fmt.Errorf("tui: not a wizard mode: %v", mode)
 	}
-}
-
-// wizardStubModel is the WI 5.1 placeholder kept ONLY for the client
-// wizard (WI 5.5 replaces it).
-type wizardStubModel struct {
-	title string
-	help  string
-}
-
-func (m wizardStubModel) Init() tea.Cmd { return nil }
-
-func (m wizardStubModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if k, ok := msg.(tea.KeyMsg); ok && (k.String() == "q" || k.String() == "ctrl+c") {
-		return m, tea.Quit
-	}
-	return m, nil
-}
-
-func (m wizardStubModel) View() string {
-	var b strings.Builder
-	b.WriteString("┌─ " + m.title + " ─┐\n")
-	b.WriteString("│ " + m.help + "\n")
-	b.WriteString("│\n")
-	b.WriteString("└─ press q to quit ─┘\n")
-	return b.String()
 }
 
 // serverWizardModel is the tea wrapper around wizardForm.
