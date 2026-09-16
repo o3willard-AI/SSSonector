@@ -29,6 +29,9 @@ jobs:
           - os: linux
             arch: arm64
             runner: ubuntu-latest
+          - os: linux
+            arch: arm
+            runner: ubuntu-latest
           - os: darwin
             arch: amd64
             runner: macos-latest
@@ -37,6 +40,9 @@ jobs:
             runner: macos-latest
           - os: windows
             arch: amd64
+            runner: windows-latest
+          - os: windows
+            arch: arm64
             runner: windows-latest
     steps:
       - name: Checkout code
@@ -133,8 +139,14 @@ jobs:
           cd "$GITHUB_WORKSPACE"
           cyclonedx-gomod mod -licenses -json -output dist/release/sbom.cyclonedx.json
 
+          # Publish the installer scripts alongside the binaries so every
+          # release is self-contained; SHA256SUMS covers them too.
+          cp install.sh scripts/install.ps1 dist/release/
+
           cd dist/release
-          sha256sum sssonector-* sbom.cyclonedx.json > SHA256SUMS
+          # sssonector-* covers every binary asset including the windows .exe
+          # files (the .exe extension is part of the asset name).
+          sha256sum sssonector-* install.sh install.ps1 sbom.cyclonedx.json > SHA256SUMS
           ls -la
 
       - name: Get version
@@ -159,9 +171,11 @@ jobs:
           |----------|-------------|--------|
           | Linux | amd64 | sssonector-linux-amd64 |
           | Linux | arm64 | sssonector-linux-arm64 |
+          | Linux | arm (armv7l) | sssonector-linux-arm |
           | macOS | amd64 | sssonector-darwin-amd64 |
           | macOS | arm64 | sssonector-darwin-arm64 |
           | Windows | amd64 | sssonector-windows-amd64.exe |
+          | Windows | arm64 | sssonector-windows-arm64.exe |
 
           All binaries are published with a SHA256SUMS manifest. Verify before use:
 
@@ -169,11 +183,22 @@ jobs:
 
           ### Install
 
+          Installer scripts are attached to this release (`install.sh`, `install.ps1`).
+          The canonical install entrypoints are the raw URLs (always the main-branch version):
+
+          Linux:
+
           \`\`\`bash
           curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sudo bash
           \`\`\`
 
-          The installer verifies binary checksums against the published manifest.
+          Windows (run from an elevated PowerShell):
+
+          \`\`\`powershell
+          irm https://raw.githubusercontent.com/${{ github.repository }}/main/scripts/install.ps1 | iex
+          \`\`\`
+
+          The installers verify binary checksums against the published manifest.
 
           ### Verify
 
@@ -198,5 +223,7 @@ jobs:
             dist/release/sssonector-*
             dist/release/SHA256SUMS
             dist/release/sbom.cyclonedx.json
+            dist/release/install.sh
+            dist/release/install.ps1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

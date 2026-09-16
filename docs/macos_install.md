@@ -52,19 +52,19 @@ This installs the latest release binary, generates TLS certificates, creates an 
 1. Download the appropriate binary:
 ```bash
 # For Intel Macs
-curl -LO https://github.com/o3willard-AI/SSSonector/releases/download/v2.0.0/sssonector_2.0.0_darwin_amd64
+curl -LO https://github.com/o3willard-AI/SSSonector/releases/latest/download/sssonector-darwin-amd64
 
 # For Apple Silicon Macs
-curl -LO https://github.com/o3willard-AI/SSSonector/releases/download/v2.0.0/sssonector_2.0.0_darwin_arm64
+curl -LO https://github.com/o3willard-AI/SSSonector/releases/latest/download/sssonector-darwin-arm64
 ```
 
 2. Install the binary:
 ```bash
 # Make executable
-chmod +x sssonector_2.0.0_darwin_*
+chmod +x sssonector-darwin-*
 
 # Move to applications directory
-sudo mv sssonector_2.0.0_darwin_* /usr/local/bin/sssonector
+sudo mv sssonector-darwin-* /usr/local/bin/sssonector
 
 # Verify installation
 sssonector -version
