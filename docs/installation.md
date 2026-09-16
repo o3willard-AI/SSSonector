@@ -85,6 +85,9 @@ Download binaries from the [releases page](https://github.com/o3willard-AI/SSSon
 | macOS | amd64 | `sssonector-darwin-amd64` |
 | macOS | arm64 | `sssonector-darwin-arm64` |
 | Windows | amd64 | `sssonector-windows-amd64.exe` |
+| Windows | arm64 | `sssonector-windows-arm64.exe` |
+
+Every release also attaches the installer scripts (`install.sh`, `install.ps1`) and a `SHA256SUMS` manifest covering all binaries.
 
 ```bash
 curl -LO https://github.com/o3willard-AI/SSSonector/releases/latest/download/sssonector-linux-amd64

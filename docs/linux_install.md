@@ -57,17 +57,17 @@ sudo dnf install iproute net-tools
 1. Download the latest release:
 ```bash
 # For x86_64 systems
-wget https://github.com/o3willard-AI/SSSonector/releases/download/v2.0.0/sssonector_2.0.0_linux_amd64
-chmod +x sssonector_2.0.0_linux_amd64
+wget https://github.com/o3willard-AI/SSSonector/releases/latest/download/sssonector-linux-amd64
+chmod +x sssonector-linux-amd64
 
 # For ARM64 systems
-wget https://github.com/o3willard-AI/SSSonector/releases/download/v2.0.0/sssonector_2.0.0_linux_arm64
-chmod +x sssonector_2.0.0_linux_arm64
+wget https://github.com/o3willard-AI/SSSonector/releases/latest/download/sssonector-linux-arm64
+chmod +x sssonector-linux-arm64
 ```
 
 2. Install the binary:
 ```bash
-sudo mv sssonector_2.0.0_linux_* /usr/local/bin/sssonector
+sudo mv sssonector-linux-* /usr/local/bin/sssonector
 ```
 
 ### Method 2: Building from Source

@@ -36,7 +36,7 @@ Get-NetAdapter | Where-Object { $_.InterfaceDescription -like "*TAP-Windows*" }
 1. Download the latest release:
 ```powershell
 # Using PowerShell
-Invoke-WebRequest -Uri "https://github.com/o3willard-AI/SSSonector/releases/download/v2.0.0/sssonector_2.0.0_windows_amd64.exe" -OutFile "sssonector.exe"
+Invoke-WebRequest -Uri "https://github.com/o3willard-AI/SSSonector/releases/latest/download/sssonector-windows-amd64.exe" -OutFile "sssonector.exe"
 ```
 
 2. Install to Program Files:

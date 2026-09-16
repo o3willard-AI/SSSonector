@@ -29,11 +29,24 @@ jobs:
       - name: Build
         run: go build ./...
 
+      # Mirror the release matrix: every GOOS/GOARCH release.yml publishes
+      # must compile, or the release job fails after the tag is pushed.
+      - name: Cross-compile release targets
+        run: |
+          for target in windows/amd64 windows/arm64 linux/amd64 linux/arm64 linux/arm darwin/amd64 darwin/arm64; do
+            echo "::group::GOOS=${target%/*} GOARCH=${target#*/}"
+            CGO_ENABLED=0 GOOS=${target%/*} GOARCH=${target#*/} go build ./...
+            echo "::endgroup::"
+          done
+
       - name: Vet
         run: go vet ./...
 
       - name: Test
         run: go test -race -count=1 ./...
+
+      - name: Dry-run release asset list
+        run: scripts/verify-release-assets.sh
 
       - name: Diff coverage gate (>=80% of changed lines)
         if: github.event_name == 'pull_request'

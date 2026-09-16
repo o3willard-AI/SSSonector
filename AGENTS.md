@@ -94,6 +94,7 @@ release asset alongside `SHA256SUMS`. Version is injected via
 
 - **Windows builder** — produce:
   - `sssonector-windows-amd64.exe`
+  - `sssonector-windows-arm64.exe` (cross-compiled on the windows-latest runner)
   - Build on a Windows host (or the `windows-latest` runner):
     `CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath \
     -ldflags="-s -w -X main.Version=v<tag>" -o dist/sssonector-windows-amd64.exe ./cmd/daemon`
