@@ -471,15 +471,15 @@ prompt_input() {
 interactive_setup() {
     local template_dir=$1
     
-    echo
+    echo >&2
     log_step "SSSonector Setup"
-    echo
+    echo >&2
     
     if [ -z "$SSSONECTOR_MODE" ]; then
-        echo "Select mode:"
-        echo "  1) Server - Listen for incoming tunnel connections"
-        echo "  2) Client - Connect to a remote server"
-        echo
+        echo "Select mode:" >&2
+        echo "  1) Server - Listen for incoming tunnel connections" >&2
+        echo "  2) Client - Connect to a remote server" >&2
+        echo >&2
         read -p "Mode [1/2]: " mode_choice
         
         case "$mode_choice" in
@@ -534,18 +534,18 @@ interactive_setup() {
         fi
     fi
     
-    echo
-    echo "Configuration:"
-    echo "  Mode:          $SSSONECTOR_MODE"
-    echo "  Instance:      $instance_name"
-    echo "  TUN Interface: $tun_interface"
-    echo "  TUN Address:   $tun_address"
-    echo "  Port:          $port"
-    echo "  Prometheus:    $prom_port"
+    echo >&2
+    echo "Configuration:" >&2
+    echo "  Mode:          $SSSONECTOR_MODE" >&2
+    echo "  Instance:      $instance_name" >&2
+    echo "  TUN Interface: $tun_interface" >&2
+    echo "  TUN Address:   $tun_address" >&2
+    echo "  Port:          $port" >&2
+    echo "  Prometheus:    $prom_port" >&2
     if [ "$SSSONECTOR_MODE" = "client" ]; then
-        echo "  Server:        $server_addr:$port"
+        echo "  Server:        $server_addr:$port" >&2
     fi
-    echo
+    echo >&2
     
     read -p "Proceed with installation? [Y/n]: " confirm
     if [ "$confirm" = "n" ] || [ "$confirm" = "N" ]; then

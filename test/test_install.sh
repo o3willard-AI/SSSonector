@@ -108,9 +108,10 @@ setup_env() {
     export SSSONECTOR_INSTANCE_DIR="$tmpdir/etc/sssonector/instances"
     export SSSONECTOR_LOG_DIR="$tmpdir/var/log/sssonector"
 
-    # Clear any previous launchd/systemd dir overrides so we can set them per-test
+    # Clear any previous SSSONECTOR_LAUNCHD_DIR and SSSONECTOR_SYSTEMD_DIR overrides so we can set them per-test
     unset SSSONECTOR_LAUNCHD_DIR
     unset SSSONECTOR_SYSTEMD_DIR
+    unset SSSONECTOR_INSTANCE
 
     export PATH="$tmpdir/bin:$PATH"
 }
@@ -208,7 +209,7 @@ test_idempotency() {
 
     source_install
 
-    local plist_path="$SSSONCTOR_LAUNCHD_DIR/com.o3willard.sssonector.test-instance.plist"
+    local plist_path="$SSSONECTOR_LAUNCHD_DIR/com.o3willard.sssonector.test-instance.plist"
 
     # First run
     install_launchd_service "test-instance" 2>&1
@@ -426,6 +427,293 @@ test_darwin_early_exit_removed() {
     fi
 }
 
+
+# ===========================================================================
+# Test 7: interactive_setup stdout contains only the instance name
+# ===========================================================================
+test_interactive_setup_stdout() {
+    echo "=== Test 7: interactive_setup stdout is clean (only instance name) ==="
+
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    setup_env "$tmpdir"
+
+    # Create template files (interactive_setup needs these)
+    local template_dir="$tmpdir/templates"
+    mkdir -p "$template_dir"
+    cat > "$template_dir/server.yaml.template" << 'TEMPLATEOF'
+metadata:
+  schema_version: "2.0.0"
+type: server
+config:
+  mode: server
+  network:
+    name: {{TUN_INTERFACE}}
+    interface: {{TUN_INTERFACE}}
+    address: "{{TUN_ADDRESS}}"
+    mtu: 1500
+  tunnel:
+    listen_address: "0.0.0.0"
+    listen_port: {{LISTEN_PORT}}
+  monitor:
+    prometheus_enabled: true
+    prometheus_port: {{PROMETHEUS_PORT}}
+  throttle:
+    enabled: true
+    rate: {{RATE_LIMIT}}
+    burst: {{RATE_BURST}}
+TEMPLATEOF
+    cp "$template_dir/server.yaml.template" "$template_dir/client.yaml.template"
+
+    # Create dummy binary (openssl is needed for cert generation)
+    echo '#!/bin/bash' > "$tmpdir/bin/sssonector"
+    chmod +x "$tmpdir/bin/sssonector"
+
+    # Set env vars for non-interactive mode
+    export SSSONECTOR_MODE="server"
+    export SSSONECTOR_INSTANCE="test-inst"
+    export SSSONECTOR_ADDRESS="10.0.1.1/24"
+
+    source_install
+
+    # Call interactive_setup, capturing stdout and stderr separately
+    local stdout_file="$tmpdir/stdout.txt"
+    local stderr_file="$tmpdir/stderr.txt"
+
+    # Pipe "y" for the proceed prompt
+    echo "y" | interactive_setup "$template_dir" >"$stdout_file" 2>"$stderr_file"
+    local rc=$?
+
+    assert_eq "$rc" "0" "interactive_setup exits 0"
+
+    # stdout should contain ONLY the instance name
+    local stdout_content
+    stdout_content=$(cat "$stdout_file")
+    assert_eq "$stdout_content" "test-inst" "stdout contains only instance name (no Configuration summary)"
+
+    # stdout should NOT contain Configuration text
+    if grep -q "Configuration:" "$stdout_file" 2>/dev/null; then
+        bad "Configuration summary leaked to stdout"
+    else
+        ok "Configuration summary does not leak to stdout"
+    fi
+
+    # stderr should contain the Configuration summary
+    assert_contains "$stderr_file" "Configuration:" "Configuration summary goes to stderr"
+    assert_contains "$stderr_file" "Mode:" "Mode info goes to stderr"
+    assert_contains "$stderr_file" "Instance:" "Instance info goes to stderr"
+
+    rm -rf "$tmpdir"
+}
+
+# ===========================================================================
+# Test 8: Uninstall removes binary, config, logs, and service
+# ===========================================================================
+test_uninstall_removes_everything() {
+    echo "=== Test 8: Uninstall removes binary, config, logs, and service ==="
+
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    setup_env "$tmpdir"
+
+    # Linux-specific setup
+    export SSSONECTOR_SYSTEMD_DIR="$tmpdir/etc/systemd/system"
+    mkdir -p "$SSSONECTOR_SYSTEMD_DIR"
+
+    # Create fake binary
+    echo '#!/bin/bash' > "$tmpdir/bin/sssonector"
+    chmod +x "$tmpdir/bin/sssonector"
+
+    # Create config dir with instance
+    mkdir -p "$tmpdir/etc/sssonector/instances/test-inst/certs"
+    echo "schema_version: 2.0.0" > "$tmpdir/etc/sssonector/instances/test-inst/config.yaml"
+
+    # Create log dir
+    mkdir -p "$tmpdir/var/log/sssonector"
+    echo "log" > "$tmpdir/var/log/sssonector/sssonector.log"
+
+    # Create systemd service template
+    echo "[Unit]" > "$SSSONECTOR_SYSTEMD_DIR/sssonector@.service"
+    echo "Description=Test" >> "$SSSONECTOR_SYSTEMD_DIR/sssonector@.service"
+
+    # Create fake systemctl
+    local systemctl_log="$tmpdir/systemctl_calls.log"
+    : > "$systemctl_log"
+    create_fake_systemctl "$tmpdir/bin" "$systemctl_log"
+
+    # Source uninstall script (BASH_SOURCE guard prevents main from running)
+    source "$REPO_ROOT/scripts/uninstall.sh"
+    set +e +u
+
+    # Verify everything exists before uninstall
+    assert_file_exists "$tmpdir/bin/sssonector" "Binary exists before uninstall"
+    assert_file_exists "$tmpdir/etc/sssonector/instances/test-inst/config.yaml" "Config exists before uninstall"
+    assert_file_exists "$tmpdir/var/log/sssonector/sssonector.log" "Log exists before uninstall"
+    assert_file_exists "$SSSONECTOR_SYSTEMD_DIR/sssonector@.service" "Service file exists before uninstall"
+
+    # Run uninstall (Linux path)
+    remove_systemd_service
+    remove_binary
+    remove_config
+    remove_logs
+
+    # Verify everything is removed
+    if [ ! -f "$tmpdir/bin/sssonector" ]; then
+        ok "Binary removed by uninstall"
+    else
+        bad "Binary not removed by uninstall"
+    fi
+
+    if [ ! -d "$tmpdir/etc/sssonector" ]; then
+        ok "Config directory removed by uninstall"
+    else
+        bad "Config directory not removed by uninstall"
+    fi
+
+    if [ ! -d "$tmpdir/var/log/sssonector" ]; then
+        ok "Log directory removed by uninstall"
+    else
+        bad "Log directory not removed by uninstall"
+    fi
+
+    if [ ! -f "$SSSONECTOR_SYSTEMD_DIR/sssonector@.service" ]; then
+        ok "Service file removed by uninstall"
+    else
+        bad "Service file not removed by uninstall"
+    fi
+
+    # Verify systemctl was called
+    assert_contains "$systemctl_log" "stop" "systemctl stop called during uninstall"
+    assert_contains "$systemctl_log" "daemon-reload" "systemctl daemon-reload called during uninstall"
+
+    rm -rf "$tmpdir"
+}
+
+# ===========================================================================
+# Test 9: Uninstall macOS launchd path and target specific instance
+# ===========================================================================
+test_uninstall_macos_launchd() {
+    echo "=== Test 9: Uninstall removes launchd plist ==="
+
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    setup_env "$tmpdir"
+
+    export SSSONECTOR_LAUNCHD_DIR="$tmpdir/Library/LaunchDaemons"
+    mkdir -p "$SSSONECTOR_LAUNCHD_DIR"
+
+    # Create plists for two instances
+    local plist_a="$SSSONECTOR_LAUNCHD_DIR/com.o3willard.sssonector.tunnel-a.plist"
+    local plist_b="$SSSONECTOR_LAUNCHD_DIR/com.o3willard.sssonector.tunnel-b.plist"
+    echo "<plist>" > "$plist_a"; echo "</plist>" >> "$plist_a"
+    echo "<plist>" > "$plist_b"; echo "</plist>" >> "$plist_b"
+
+    # Create fake launchctl
+    local launchctl_log="$tmpdir/launchctl_calls.log"
+    : > "$launchctl_log"
+    create_fake_launchctl "$tmpdir/bin" "$launchctl_log"
+
+    # Create binary, config, logs
+    echo '#!/bin/bash' > "$tmpdir/bin/sssonector"
+    chmod +x "$tmpdir/bin/sssonector"
+    mkdir -p "$tmpdir/etc/sssonector/instances/tunnel-a"
+    mkdir -p "$tmpdir/var/log/sssonector"
+
+    export PATH="$tmpdir/bin:$PATH"
+
+    # Source uninstall script
+    source "$REPO_ROOT/scripts/uninstall.sh"
+    set +e +u
+
+    # Test: remove specific instance
+    export SSSONECTOR_INSTANCE="tunnel-a"
+
+    assert_file_exists "$plist_a" "Plist A exists before uninstall"
+
+    remove_launchd_service
+
+    if [ ! -f "$plist_a" ]; then
+        ok "Plist A removed by uninstall (specific instance)"
+    else
+        bad "Plist A not removed by uninstall"
+    fi
+
+    assert_contains "$launchctl_log" "unload" "launchctl unload called for specific instance"
+
+    # Plist B should still exist
+    assert_file_exists "$plist_b" "Plist B still exists (not targeted)"
+
+    # Test: remove ALL instances (unset SSSONECTOR_INSTANCE)
+    unset SSSONECTOR_INSTANCE
+
+    remove_launchd_service
+
+    if [ ! -f "$plist_b" ]; then
+        ok "Plist B removed by uninstall (all instances)"
+    else
+        bad "Plist B not removed by uninstall"
+    fi
+
+    rm -rf "$tmpdir"
+}
+
+# ===========================================================================
+# Test 10: Uninstall is idempotent (safe when nothing is installed)
+# ===========================================================================
+test_uninstall_idempotent() {
+    echo "=== Test 10: Uninstall is idempotent (safe when nothing installed) ==="
+
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    setup_env "$tmpdir"
+
+    export SSSONECTOR_SYSTEMD_DIR="$tmpdir/etc/systemd/system"
+    mkdir -p "$SSSONECTOR_SYSTEMD_DIR"
+
+    # Create fake systemctl
+    local systemctl_log="$tmpdir/systemctl_calls.log"
+    : > "$systemctl_log"
+    create_fake_systemctl "$tmpdir/bin" "$systemctl_log"
+
+    # Source uninstall script
+    source "$REPO_ROOT/scripts/uninstall.sh"
+    set +e +u
+
+    # Run uninstall on empty system - should not error
+    set +e
+    remove_systemd_service 2>&1
+    local rc1=$?
+    set -e
+    assert_eq "$rc1" "0" "remove_systemd_service exits 0 on empty system"
+
+    set +e
+    remove_binary 2>&1
+    local rc2=$?
+    set -e
+    assert_eq "$rc2" "0" "remove_binary exits 0 on empty system"
+
+    set +e
+    remove_config 2>&1
+    local rc3=$?
+    set -e
+    assert_eq "$rc3" "0" "remove_config exits 0 on empty system"
+
+    set +e
+    remove_logs 2>&1
+    local rc4=$?
+    set -e
+    assert_eq "$rc4" "0" "remove_logs exits 0 on empty system"
+
+    # Run again - should still be idempotent
+    set +e
+    remove_systemd_service 2>&1
+    local rc5=$?
+    set -e
+    assert_eq "$rc5" "0" "remove_systemd_service idempotent on re-run"
+
+    rm -rf "$tmpdir"
+}
+
 # ===========================================================================
 # Run all tests
 # ===========================================================================
@@ -451,6 +739,18 @@ test_function_exists
 echo ""
 
 test_darwin_early_exit_removed
+echo ""
+
+test_interactive_setup_stdout
+echo ""
+
+test_uninstall_removes_everything
+echo ""
+
+test_uninstall_macos_launchd
+echo ""
+
+test_uninstall_idempotent
 echo ""
 
 echo "============================================"
