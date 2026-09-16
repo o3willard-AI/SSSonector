@@ -103,9 +103,9 @@ func newTestPoller(t *testing.T, d *fixtureDaemon, root, instance string, port i
 	r := newFakeRunner()
 	r.outputs["systemctl list-units sssonector@* --all --plain --no-legend"] =
 		"sssonector@" + instance + ".service loaded active running SSSonector tunnel (" + instance + ")\n"
-	r.outputs["systemctl show sssonector@"+instance+".service -p ActiveState -p SubState -p MainPID"] =
+	r.outputs["systemctl show sssonector@"+instance+".service -p ActiveState -p SubState -p MainPID -p LoadState"] =
 		"ActiveState=active\nSubState=running\nMainPID=8123\n"
-	r.outputs["systemctl show sssonector.service -p ActiveState -p SubState -p MainPID"] =
+	r.outputs["systemctl show sssonector.service -p ActiveState -p SubState -p MainPID -p LoadState"] =
 		"ActiveState=not-found\nSubState=dead\nMainPID=0\n"
 	return NewPoller(SystemdCollector{Runner: r, Paths: DefaultSystemdPaths()},
 		ConfigPaths{ConfigRoot: root}, d.srv.Client())
@@ -277,9 +277,9 @@ func TestPoller_ConfigResolutionFailure_ErrorsSources(t *testing.T) {
 	r := newFakeRunner()
 	r.outputs["systemctl list-units sssonector@* --all --plain --no-legend"] =
 		"sssonector@ghost.service loaded active running x\n"
-	r.outputs["systemctl show sssonector@ghost.service -p ActiveState -p SubState -p MainPID"] =
+	r.outputs["systemctl show sssonector@ghost.service -p ActiveState -p SubState -p MainPID -p LoadState"] =
 		"ActiveState=active\nSubState=running\nMainPID=1\n"
-	r.outputs["systemctl show sssonector.service -p ActiveState -p SubState -p MainPID"] =
+	r.outputs["systemctl show sssonector.service -p ActiveState -p SubState -p MainPID -p LoadState"] =
 		"ActiveState=not-found\nSubState=dead\nMainPID=0\n"
 	p := NewPoller(SystemdCollector{Runner: r, Paths: DefaultSystemdPaths()},
 		ConfigPaths{ConfigRoot: root}, d.srv.Client())
@@ -329,9 +329,9 @@ func TestPoller_ConfigFailure_CertIsErrorNotOkEmpty(t *testing.T) {
 	r := newFakeRunner()
 	r.outputs["systemctl list-units sssonector@* --all --plain --no-legend"] =
 		"sssonector@ghost.service loaded active running x\n"
-	r.outputs["systemctl show sssonector@ghost.service -p ActiveState -p SubState -p MainPID"] =
+	r.outputs["systemctl show sssonector@ghost.service -p ActiveState -p SubState -p MainPID -p LoadState"] =
 		"ActiveState=active\nSubState=running\nMainPID=1\n"
-	r.outputs["systemctl show sssonector.service -p ActiveState -p SubState -p MainPID"] =
+	r.outputs["systemctl show sssonector.service -p ActiveState -p SubState -p MainPID -p LoadState"] =
 		"ActiveState=not-found\nSubState=dead\nMainPID=0\n"
 	p := NewPoller(SystemdCollector{Runner: r, Paths: DefaultSystemdPaths()},
 		ConfigPaths{ConfigRoot: root}, d.srv.Client())
@@ -373,9 +373,9 @@ func TestPoller_PrometheusDisabled_CertStillPopulated(t *testing.T) {
 	r := newFakeRunner()
 	r.outputs["systemctl list-units sssonector@* --all --plain --no-legend"] =
 		"sssonector@client-a.service loaded active running x\n"
-	r.outputs["systemctl show sssonector@client-a.service -p ActiveState -p SubState -p MainPID"] =
+	r.outputs["systemctl show sssonector@client-a.service -p ActiveState -p SubState -p MainPID -p LoadState"] =
 		"ActiveState=active\nSubState=running\nMainPID=1\n"
-	r.outputs["systemctl show sssonector.service -p ActiveState -p SubState -p MainPID"] =
+	r.outputs["systemctl show sssonector.service -p ActiveState -p SubState -p MainPID -p LoadState"] =
 		"ActiveState=not-found\nSubState=dead\nMainPID=0\n"
 	poller := NewPoller(SystemdCollector{Runner: r, Paths: DefaultSystemdPaths()},
 		ConfigPaths{ConfigRoot: root}, d.srv.Client())

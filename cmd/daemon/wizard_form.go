@@ -63,6 +63,7 @@ type wizardForm struct {
 	validate   collect.ValidateDraftFunc // real loader+validator
 	portFree   collect.PortProbeFunc     // ss -tlnp via injectable runner
 	create     collect.CreateFunc        // write+enable+start (WI 5.3)
+	genCerts   collect.CertGenFunc       // mint instance CA+leaf (CERTS=generate-new)
 	paths      collect.ConfigPaths       // config root for the write
 	runner     collect.CommandRunner     // systemctl enable/start runner
 	existing   []string                  // existing TUN subnets (from discovery)
@@ -83,6 +84,7 @@ func newWizardForm(validate collect.ValidateDraftFunc, portFree collect.PortProb
 		validate: validate,
 		portFree: portFree,
 		create:   collect.CreateAndStartInstance,
+		genCerts: collect.GenerateInstanceCerts,
 		paths:    collect.DefaultConfigPaths(),
 		runner:   collect.OSCommandRunner{},
 		existing: existing,
@@ -177,8 +179,28 @@ func (f wizardForm) draft() (string, error) {
 	b.WriteString("    tls:\n")
 	b.WriteString("      min_version: \"1.2\"\n")
 	b.WriteString("      max_version: \"1.3\"\n")
+	// CERTS: fail-closed — the draft only names TLS paths when a cert
+	// choice was made, and the paths are ABSOLUTE (the daemon resolves
+	// relative cert paths against both its config dir AND working dir —
+	// a relative `certs/...` doubles to instances/<n>/instances/<n>/certs
+	// on the rig, so relative paths are never written). generate-new uses
+	// the instance's own certs/ dir (minted by the create path);
+	// reuse-host points at the shared host store.
+	if f.paths.ConfigRoot == "" {
+		f.paths = collect.DefaultConfigPaths()
+	}
+	certBase := f.paths.ConfigRoot
 	b.WriteString("  auth:\n")
-	b.WriteString("    cert_file: certs/server.crt\n")
+	switch f.cert {
+	case certGenerateNew:
+		b.WriteString("    cert_file: " + certBase + "/instances/" + strings.TrimSpace(f.instance) + "/certs/server.crt\n")
+		b.WriteString("    key_file: " + certBase + "/instances/" + strings.TrimSpace(f.instance) + "/certs/server.key\n")
+		b.WriteString("    ca_file: " + certBase + "/instances/" + strings.TrimSpace(f.instance) + "/certs/ca.crt\n")
+	case certReuseHost:
+		b.WriteString("    cert_file: " + certBase + "/certs/server.crt\n")
+		b.WriteString("    key_file: " + certBase + "/certs/server.key\n")
+		b.WriteString("    ca_file: " + certBase + "/certs/ca.crt\n")
+	}
 	// NAT: enabling writes the DEFAULT-DENY forward-NAT config with an
 	// explicit egress CIDR; the ACL is edited post-setup (never loosened
 	// here). Disabling writes no NAT block (fail-closed absence).

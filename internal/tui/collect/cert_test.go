@@ -198,9 +198,9 @@ func TestPoller_CertSourcePopulated(t *testing.T) {
 	r := newFakeRunner()
 	r.outputs["systemctl list-units sssonector@* --all --plain --no-legend"] =
 		"sssonector@client-a.service loaded active running x\n"
-	r.outputs["systemctl show sssonector@client-a.service -p ActiveState -p SubState -p MainPID"] =
+	r.outputs["systemctl show sssonector@client-a.service -p ActiveState -p SubState -p MainPID -p LoadState"] =
 		"ActiveState=active\nSubState=running\nMainPID=1\n"
-	r.outputs["systemctl show sssonector.service -p ActiveState -p SubState -p MainPID"] =
+	r.outputs["systemctl show sssonector.service -p ActiveState -p SubState -p MainPID -p LoadState"] =
 		"ActiveState=not-found\nSubState=dead\nMainPID=0\n"
 
 	poller := NewPoller(SystemdCollector{Runner: r, Paths: DefaultSystemdPaths()},
