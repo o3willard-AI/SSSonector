@@ -167,9 +167,16 @@ sudo systemctl start sssonector@instance-name
 
 ### One-line Uninstall
 
+The unified installer includes an uninstall script that removes everything
+`install.sh` creates (service, binary, config, logs):
+
 ```bash
-# Remove binary and systemd service (preserves instances)
-curl -fsSL https://raw.githubusercontent.com/o3willard-AI/SSSonector/main/uninstall.sh | sudo bash
+# Remove everything (service + binary + config + logs)
+curl -fsSL https://raw.githubusercontent.com/o3willard-AI/SSSonector/main/scripts/uninstall.sh | sudo bash
+
+# Remove only a specific instance
+curl -fsSL https://raw.githubusercontent.com/o3willard-AI/SSSonector/main/scripts/uninstall.sh | \
+  sudo SSSONECTOR_INSTANCE=tunnel-a bash
 ```
 
 ### Uninstall Options
