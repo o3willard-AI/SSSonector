@@ -90,7 +90,8 @@ func TestWizard53_CreateErrorSurfaces(t *testing.T) {
 	rec := &wizCreateRecorder{failWith: "create: enable sssonector@client-a.service: boom (config file left written at /etc/...)"}
 	m := serverWizardModel{form: filledForm()}
 	m.form.create = rec.create
-	m.form.focus = wfInstance // Enter off the MODE radio → create path
+	m.form.paths = collect.ConfigPaths{ConfigRoot: t.TempDir()} // cert-mint + write land in a temp root, never /etc
+	m.form.focus = wfInstance                                    // Enter off the MODE radio → create path
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(serverWizardModel)
 

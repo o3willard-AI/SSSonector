@@ -3,6 +3,8 @@ package collect
 import (
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 
 	cfg "github.com/o3willard-AI/SSSonector/internal/config"
@@ -23,6 +25,18 @@ type PortProbeFunc func(port int) bool
 // CreateFunc is the WI 5.3 write-path seam: validate→write→enable→start.
 // Tests inject a recording fake; production wires CreateAndStartInstance.
 type CreateFunc func(paths ConfigPaths, instance, draft string, runner CommandRunner) (CreateAndStartResult, error)
+
+// CertGenFunc mints the instance CA + server leaf into a cert dir
+// (CERTS=generate-new). Production wraps internal/cert/generator; tests
+// inject a fake that records the dir (no real keys generated).
+type CertGenFunc func(certDir string, serverIPs ...string) error
+
+// GenerateInstanceCerts is the production CertGenFunc: generate a fresh
+// CA + server leaf (+ retirable client leaf) into certDir via the same
+// path `provision create` uses.
+func GenerateInstanceCerts(certDir string, serverIPs ...string) error {
+	return certGenCertificates(certDir, serverIPs...)
+}
 
 // NewSSPortProbe builds the production PortProbeFunc over the given
 // runner: parses `ss -tlnp` output for any LISTEN line bound to the port.
@@ -90,4 +104,24 @@ func OverlapWith(candidate string, existing []string) string {
 		}
 	}
 	return ""
+}
+
+// StageClientCerts copies the bundle's cert material (ca.crt + client.crt +
+// client.key) OUT of the volatile extraction dir and into the instance's
+// persistent certs/ dir, so the installed client survives reboot. Returns
+// the destination dir — the draft's cert paths must point here, never at
+// the temp staging dir.
+func StageClientCerts(stagingDir, instanceCertDir string) error {
+	for _, name := range bundleFiles {
+		src := filepath.Join(stagingDir, name)
+		data, err := os.ReadFile(src)
+		if err != nil {
+			return fmt.Errorf("client cert stage: read %s: %w", src, err)
+		}
+		// mkdir -p handled by the caller (holds the whole instance dir).
+		if err := atomicWrite(filepath.Join(instanceCertDir, name), data); err != nil {
+			return fmt.Errorf("client cert stage: write %s: %w", name, err)
+		}
+	}
+	return nil
 }

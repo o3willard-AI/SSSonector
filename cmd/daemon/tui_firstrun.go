@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -78,6 +79,9 @@ func runWizard(mode TUIMode) error {
 			collect.NewSSPortProbe(collect.OSCommandRunner{}),
 			nil, // fresh host: no existing instances
 		)
+		// enable/start need root: route through sudo -A when SUDO_ASKPASS
+		// is configured (askpass); otherwise the OS runner as before.
+		form.runner = sudoRunner{inner: collect.OSCommandRunner{}}
 		prog := tea.NewProgram(serverWizardModel{form: form})
 		final, err := prog.Run()
 		if err != nil {
@@ -199,6 +203,26 @@ func (m *serverWizardModel) handleEnter() {
 			if err != nil {
 				m.lastErr = err.Error() // verbatim loader/validator error
 				return
+			}
+			// WI 5.3/5.6: CERTS=generate-new must mint the instance CA +
+			// server leaf BEFORE enable/start — the daemon refuses to start
+			// without TLS. (reuse-host needs the shared store present; that
+			// is an operator pre-provision.)
+			if m.form.cert == certGenerateNew {
+				ins := strings.TrimSpace(m.form.instance)
+				certDir := filepath.Join(m.form.paths.ConfigRoot, "instances", ins, "certs")
+				if err := os.MkdirAll(certDir, 0o750); err != nil {
+					m.form.createErr = "create: mkdir certs: " + err.Error()
+					return
+				}
+				if m.form.genCerts == nil {
+					m.form.createErr = "create: no cert generator wired"
+					return
+				}
+				if err := m.form.genCerts(certDir); err != nil {
+					m.form.createErr = "create: generate certs: " + err.Error()
+					return
+				}
 			}
 			// WI 5.3: the REAL write path — atomic write the config,
 			// then enable+start, via the injectable runner (order

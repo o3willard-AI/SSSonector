@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -43,6 +44,7 @@ type clientWizardModel struct {
 	// seams
 	validate collect.ValidateDraftFunc
 	create   collect.CreateFunc
+	stage    func(string, string) error // cert-staging seam (collect.StageClientCerts)
 	paths    collect.ConfigPaths
 	runner   collect.CommandRunner
 	// chain pre-flight result ("" = ok/verified)
@@ -58,8 +60,9 @@ func newClientWizard(bundlePath string, tempDir func() string) clientWizardModel
 	m := clientWizardModel{
 		validate: collect.ValidateDraft,
 		create:   collect.CreateAndStartInstance,
+		stage:    collect.StageClientCerts,
 		paths:    collect.DefaultConfigPaths(),
-		runner:   collect.OSCommandRunner{},
+		runner:   sudoRunner{inner: collect.OSCommandRunner{}}, // enable/start need root (sudo -A when askpass)
 	}
 	if bundlePath != "" {
 		lb, err := collect.LoadBundle(bundlePath, tempDir)
@@ -216,7 +219,13 @@ func (m clientWizardModel) draft() (string, error) {
 	}
 	port := strings.TrimSpace(m.port)
 	tun := strings.TrimSpace(m.tun)
-	certDir := m.loaded.StagingDir
+	instance := strings.TrimSpace(m.instance)
+	// Cert paths point at the INSTANCE's persistent certs dir (staged
+	// from the bundle before create), never the volatile extraction dir.
+	if m.paths.ConfigRoot == "" {
+		m.paths = collect.DefaultConfigPaths()
+	}
+	certDir := filepath.Join(m.paths.ConfigRoot, "instances", instance, "certs")
 	var b strings.Builder
 	b.WriteString("metadata:\n")
 	b.WriteString("  schema_version: \"2.0.0\"\n")
@@ -269,7 +278,20 @@ func (m *clientWizardModel) handleEnter() {
 		m.createErr = err.Error()
 		return
 	}
-	res, cerr := m.create(m.paths, strings.TrimSpace(m.instance), draft, m.runner)
+	// Stage the bundle certs into the instance's PERSISTENT certs dir
+	// (never the volatile extraction dir) before enable/start. create
+	// mkdirs the instance dir; we mkdir -p the certs/ subdir here.
+	instance := strings.TrimSpace(m.instance)
+	certDir := filepath.Join(m.paths.ConfigRoot, "instances", instance, "certs")
+	if err := os.MkdirAll(certDir, 0o750); err != nil {
+		m.createErr = fmt.Errorf("client cert stage: mkdir %s: %w", certDir, err).Error()
+		return
+	}
+	if err := m.stage(m.loaded.StagingDir, certDir); err != nil {
+		m.createErr = err.Error()
+		return
+	}
+	res, cerr := m.create(m.paths, instance, draft, m.runner)
 	if cerr != nil {
 		m.createErr = cerr.Error()
 		return
