@@ -36,6 +36,10 @@ type InstanceState struct {
 	SubState string
 	// MainPID is the unit's main process PID, 0 when not running.
 	MainPID int
+	// LoadState is systemd's LoadState ("loaded", "not-found", ...) — the
+	// authority for "unit exists" (a not-found unit may still report
+	// ActiveState=inactive on some systemd versions).
+	LoadState string
 }
 
 // Running reports whether the unit's main process is up.
@@ -115,7 +119,7 @@ func (c SystemdCollector) Discover() ([]InstanceState, error) {
 // loaded; nil when absent.
 func (c SystemdCollector) discoverLegacy() (*InstanceState, error) {
 	out, err := c.Runner.Run("systemctl", "show", "sssonector.service",
-		"-p", "ActiveState", "-p", "SubState", "-p", "MainPID")
+		"-p", "ActiveState", "-p", "SubState", "-p", "MainPID", "-p", "LoadState")
 	if err != nil {
 		return nil, err
 	}
@@ -123,7 +127,11 @@ func (c SystemdCollector) discoverLegacy() (*InstanceState, error) {
 	if err != nil {
 		return nil, err
 	}
-	if st.ActiveState == "" || st.ActiveState == "not-found" {
+	// LoadState is the authority for "unit exists": a not-found unit may
+	// still report ActiveState=inactive (observed on Ubuntu 24.04), and
+	// treating that as a discovered instance fabricated a phantom
+	// "default" row on fresh hosts (blocked the WI 5.1 wizard route).
+	if st.LoadState == "not-found" || st.ActiveState == "" || st.ActiveState == "not-found" {
 		return nil, nil
 	}
 	st.Name = "default"
@@ -135,7 +143,7 @@ func (c SystemdCollector) discoverLegacy() (*InstanceState, error) {
 func (c SystemdCollector) fillStates(states []InstanceState) ([]InstanceState, error) {
 	for i := range states {
 		out, err := c.Runner.Run("systemctl", "show", states[i].Unit,
-			"-p", "ActiveState", "-p", "SubState", "-p", "MainPID")
+			"-p", "ActiveState", "-p", "SubState", "-p", "MainPID", "-p", "LoadState")
 		if err != nil {
 			return nil, fmt.Errorf("systemd: show %s: %w", states[i].Unit, err)
 		}
@@ -288,6 +296,8 @@ func parseShow(out string) (InstanceState, error) {
 			}
 			st.MainPID = pid
 			seen++
+		case "LoadState":
+			st.LoadState = v // optional extra key; not counted in `seen`
 		default:
 			// Other properties are ignored; systemctl may emit extras.
 		}

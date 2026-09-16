@@ -40,12 +40,12 @@ func TestSystemd_Discover(t *testing.T) {
 		r.outputs["systemctl list-units sssonector@* --all --plain --no-legend"] =
 			"sssonector@client-a.service loaded active running SSSonector tunnel (client-a)\n" +
 				"sssonector@client-b.service loaded active running SSSonector tunnel (client-b)\n"
-		r.outputs["systemctl show sssonector@client-a.service -p ActiveState -p SubState -p MainPID"] =
+		r.outputs["systemctl show sssonector@client-a.service -p ActiveState -p SubState -p MainPID -p LoadState"] =
 			"ActiveState=active\nSubState=running\nMainPID=8123\n"
-		r.outputs["systemctl show sssonector@client-b.service -p ActiveState -p SubState -p MainPID"] =
+		r.outputs["systemctl show sssonector@client-b.service -p ActiveState -p SubState -p MainPID -p LoadState"] =
 			"ActiveState=active\nSubState=running\nMainPID=8124\n"
-		r.outputs["systemctl show sssonector.service -p ActiveState -p SubState -p MainPID"] =
-			"ActiveState=not-found\nSubState=dead\nMainPID=0\n" // legacy absent
+		r.outputs["systemctl show sssonector.service -p ActiveState -p SubState -p MainPID -p LoadState"] =
+			"ActiveState=not-found\nSubState=dead\nMainPID=0\nLoadState=not-found\n" // legacy absent
 
 		c := SystemdCollector{Runner: r, Paths: DefaultSystemdPaths()}
 		got, err := c.Discover()
@@ -73,14 +73,14 @@ func TestSystemd_Discover(t *testing.T) {
 				"sssonector@client-b.service loaded inactive dead SSSonector tunnel (client-b)\n" +
 				"sssonector@client-c.service loaded failed failed SSSonector tunnel (client-c)\n"
 		for _, n := range []string{"client-a", "client-b", "client-c"} {
-			r.outputs["systemctl show sssonector@"+n+".service -p ActiveState -p SubState -p MainPID"] =
+			r.outputs["systemctl show sssonector@"+n+".service -p ActiveState -p SubState -p MainPID -p LoadState"] =
 				map[string]string{
 					"client-a": "ActiveState=active\nSubState=running\nMainPID=100\n",
 					"client-b": "ActiveState=inactive\nSubState=dead\nMainPID=0\n",
 					"client-c": "ActiveState=failed\nSubState=failed\nMainPID=0\n",
 				}[n]
 		}
-		r.outputs["systemctl show sssonector.service -p ActiveState -p SubState -p MainPID"] =
+		r.outputs["systemctl show sssonector.service -p ActiveState -p SubState -p MainPID -p LoadState"] =
 			"ActiveState=not-found\nSubState=dead\nMainPID=0\n"
 
 		c := SystemdCollector{Runner: r, Paths: DefaultSystemdPaths()}
@@ -112,8 +112,8 @@ func TestSystemd_Discover(t *testing.T) {
 	t.Run("legacy single-instance unit discovered as default", func(t *testing.T) {
 		r := newFakeRunner()
 		r.outputs["systemctl list-units sssonector@* --all --plain --no-legend"] = ""
-		r.outputs["systemctl show sssonector.service -p ActiveState -p SubState -p MainPID"] =
-			"ActiveState=active\nSubState=running\nMainPID=555\n"
+		r.outputs["systemctl show sssonector.service -p ActiveState -p SubState -p MainPID -p LoadState"] =
+			"ActiveState=active\nSubState=running\nMainPID=555\nLoadState=loaded\n"
 
 		c := SystemdCollector{Runner: r, Paths: DefaultSystemdPaths()}
 		got, err := c.Discover()
@@ -122,6 +122,26 @@ func TestSystemd_Discover(t *testing.T) {
 		}
 		if len(got) != 1 || got[0].Name != "default" || got[0].MainPID != 555 {
 			t.Fatalf("legacy discovery: %+v err=%v", got, err)
+		}
+	})
+
+	t.Run("legacy unit not-found is NOT discovered (LoadState authority)", func(t *testing.T) {
+		// Ubuntu 24.04 quirk: an unknown unit reports ActiveState=inactive
+		// (not not-found) — LoadState=not-found is the only reliable signal.
+		// Regression: a fresh host fabricated a phantom "default" instance,
+		// which blocked the WI 5.1 first-run wizard route.
+		r := newFakeRunner()
+		r.outputs["systemctl list-units sssonector@* --all --plain --no-legend"] = ""
+		r.outputs["systemctl show sssonector.service -p ActiveState -p SubState -p MainPID -p LoadState"] =
+			"MainPID=0\nActiveState=inactive\nSubState=dead\nLoadState=not-found\n"
+
+		c := SystemdCollector{Runner: r, Paths: DefaultSystemdPaths()}
+		got, err := c.Discover()
+		if err != nil {
+			t.Fatalf("Discover: %v", err)
+		}
+		if len(got) != 0 {
+			t.Fatalf("not-found legacy unit must not be discovered: %+v", got)
 		}
 	})
 }
@@ -229,7 +249,7 @@ func TestSystemd_MalformedOutput(t *testing.T) {
 		r := newFakeRunner()
 		r.outputs["systemctl list-units sssonector@* --all --plain --no-legend"] =
 			"sssonector@client-a.service loaded active running x\n"
-		r.outputs["systemctl show sssonector@client-a.service -p ActiveState -p SubState -p MainPID"] =
+		r.outputs["systemctl show sssonector@client-a.service -p ActiveState -p SubState -p MainPID -p LoadState"] =
 			"ActiveState=active\nSubState=running\nMainPID=not-a-pid\n"
 		c := SystemdCollector{Runner: r, Paths: DefaultSystemdPaths()}
 		_, err := c.Discover()
@@ -241,7 +261,7 @@ func TestSystemd_MalformedOutput(t *testing.T) {
 		r := newFakeRunner()
 		r.outputs["systemctl list-units sssonector@* --all --plain --no-legend"] =
 			"sssonector@client-a.service loaded active running x\n"
-		r.outputs["systemctl show sssonector@client-a.service -p ActiveState -p SubState -p MainPID"] =
+		r.outputs["systemctl show sssonector@client-a.service -p ActiveState -p SubState -p MainPID -p LoadState"] =
 			"ActiveState=active\n"
 		c := SystemdCollector{Runner: r, Paths: DefaultSystemdPaths()}
 		_, err := c.Discover()
