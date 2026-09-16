@@ -13,17 +13,22 @@
 #   SSSONECTOR_ADDRESS    - TUN interface address (interactive if not set)
 #   SSSONECTOR_SERVER     - Server address for client mode (interactive if not set)
 #   SSSONECTOR_PORT       - Listen/connect port (default: 8443)
-#   SSSONECTOR_NO_SERVICE - If set, don't install/enabled systemd service
+#   SSSONECTOR_NO_SERVICE  - If set, don't install/enable the service (systemd on Linux, launchd on macOS)
+#   SSSONECTOR_INSTALL_DIR  - Override binary install directory (default: /usr/local/bin)
+#   SSSONECTOR_CONFIG_DIR   - Override config directory (default: /etc/sssonector)
+#   SSSONECTOR_LOG_DIR      - Override log directory (default: /var/log/sssonector)
+#   SSSONECTOR_LAUNCHD_DIR  - Override launchd daemon directory on macOS (default: /Library/LaunchDaemons)
 #
 
 set -e
 
 REPO="o3willard-AI/SSSonector"
-INSTALL_DIR="/usr/local/bin"
-CONFIG_DIR="/etc/sssonector"
-INSTANCE_DIR="/etc/sssonector/instances"
-LOG_DIR="/var/log/sssonector"
-TEMPLATE_URL="https://raw.githubusercontent.com/${REPO}/main/templates"
+INSTALL_DIR="${SSSONECTOR_INSTALL_DIR:-/usr/local/bin}"
+CONFIG_DIR="${SSSONECTOR_CONFIG_DIR:-/etc/sssonector}"
+INSTANCE_DIR="${SSSONECTOR_INSTANCE_DIR:-/etc/sssonector/instances}"
+LOG_DIR="${SSSONECTOR_LOG_DIR:-/var/log/sssonector}"
+LAUNCHD_DIR="${SSSONECTOR_LAUNCHD_DIR:-/Library/LaunchDaemons}"
+TEMPLATE_URL="${SSSONECTOR_TEMPLATE_URL:-https://raw.githubusercontent.com/${REPO}/main/templates}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -321,7 +326,8 @@ create_client_config() {
 }
 
 install_systemd_service() {
-    local service_file="/etc/systemd/system/sssonector@.service"
+    local systemd_dir="${SSSONECTOR_SYSTEMD_DIR:-/etc/systemd/system}"
+    local service_file="${systemd_dir}/sssonector@.service"
     
     log_step "Installing systemd service template..."
     
@@ -362,6 +368,91 @@ EOF
     
     systemctl daemon-reload
     log_info "Systemd service template installed"
+}
+
+install_launchd_service() {
+    local instance_name=$1
+    local config_file="${INSTANCE_DIR}/${instance_name}/config.yaml"
+    local plist_label="com.o3willard.sssonector.${instance_name}"
+    local plist_name="${plist_label}.plist"
+
+    log_step "Installing launchd service for instance '${instance_name}'..."
+
+    # Determine launchd directory: system-wide if root, user domain otherwise
+    local launchd_dir="$LAUNCHD_DIR"
+    if [ "$EUID" -ne 0 ] && [ "$launchd_dir" = "/Library/LaunchDaemons" ]; then
+        launchd_dir="$HOME/Library/LaunchDaemons"
+        log_warn "Running as non-root; installing plist to user domain: $launchd_dir"
+    fi
+
+    mkdir -p "$launchd_dir"
+    local plist_path="${launchd_dir}/${plist_name}"
+
+    # Generate instance-specific launchd plist
+    cat > "$plist_path" << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>${plist_label}</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>${INSTALL_DIR}/sssonector</string>
+        <string>-config</string>
+        <string>${config_file}</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>${LOG_DIR}/sssonector.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>${LOG_DIR}/sssonector.err</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <key>Nice</key>
+    <integer>0</integer>
+
+    <key>SoftResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>65535</integer>
+    </dict>
+
+    <key>HardResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>65535</integer>
+    </dict>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+</dict>
+</plist>
+EOF
+
+    chmod 644 "$plist_path"
+    log_info "Plist installed: ${plist_path}"
+
+    # Idempotent: unload if already loaded (no error if not loaded)
+    launchctl unload "$plist_path" 2>/dev/null || true
+
+    # Load and enable the service
+    launchctl load "$plist_path"
+
+    log_info "Launchd service loaded: ${plist_label}"
+    log_info "  Start:   sudo launchctl start ${plist_label}"
+    log_info "  Stop:    sudo launchctl stop ${plist_label}"
+    log_info "  Status:  sudo launchctl list | grep ${plist_label}"
 }
 
 prompt_input() {
@@ -473,14 +564,21 @@ interactive_setup() {
 
 print_success() {
     local instance_name=$1
+    local os=$2
     
     echo
     log_info "Installation complete!"
     echo
     echo "Quick start:"
-    echo "  Start service:   systemctl start sssonector@${instance_name}"
-    echo "  Check status:    systemctl status sssonector@${instance_name}"
-    echo "  View logs:       journalctl -u sssonector@${instance_name} -f"
+    if [ "$os" = "darwin" ]; then
+        echo "  Start service:   sudo launchctl start com.o3willard.sssonector.${instance_name}"
+        echo "  Check status:    sudo launchctl list | grep ${instance_name}"
+        echo "  View logs:       tail -f ${LOG_DIR}/sssonector.log"
+    else
+        echo "  Start service:   systemctl start sssonector@${instance_name}"
+        echo "  Check status:    systemctl status ssonector@${instance_name}"
+        echo "  View logs:       journalctl -u sssonector@${instance_name} -f"
+    fi
     echo
     echo "Config file:    $INSTANCE_DIR/${instance_name}/config.yaml"
     echo "Certificates:   $INSTANCE_DIR/${instance_name}/certs/"
@@ -503,15 +601,10 @@ print_success() {
 main() {
     check_root
     
-    local os arch version
+    local arch version
     
     os=$(detect_os)
     arch=$(detect_arch)
-    
-    if [ "$os" = "darwin" ]; then
-        log_error "This install script is for Linux. For macOS, please use install_macos.sh"
-        exit 1
-    fi
     
     if [ -n "$SSSONECTOR_VERSION" ]; then
         version="$SSSONECTOR_VERSION"
@@ -519,7 +612,11 @@ main() {
         version=$(get_latest_version)
     fi
     
-    log_step "SSSonector ${version} Installer for Linux"
+    local os_display="Linux"
+    if [ "$os" = "darwin" ]; then
+        os_display="macOS"
+    fi
+    log_step "SSSonector ${version} Installer for ${os_display}"
     echo
     
     create_directories
@@ -537,17 +634,24 @@ main() {
     rm -rf "$template_dir"
     
     if [ -z "$SSSONECTOR_NO_SERVICE" ]; then
-        install_systemd_service
-        
-        read -p "Enable and start the service now? [Y/n]: " start_now
-        if [ "$start_now" != "n" ] && [ "$start_now" != "N" ]; then
-            systemctl enable "sssonector@${instance_name}"
-            systemctl start "sssonector@${instance_name}"
-            log_info "Service started"
+        if [ "$os" = "darwin" ]; then
+            install_launchd_service "$instance_name"
+        else
+            install_systemd_service
+            
+            read -p "Enable and start the service now? [Y/n]: " start_now
+            if [ "$start_now" != "n" ] && [ "$start_now" != "N" ]; then
+                systemctl enable "sssonector@${instance_name}"
+                systemctl start "sssonector@${instance_name}"
+                log_info "Service started"
+            fi
         fi
     fi
     
-    print_success "$instance_name"
+    print_success "$instance_name" "$os"
 }
 
-main "$@"
+# Only run main when executed directly, not when sourced (e.g. by tests)
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+    main "$@"
+fi

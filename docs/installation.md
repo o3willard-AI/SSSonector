@@ -35,11 +35,11 @@ curl -fsSL https://raw.githubusercontent.com/o3willard-AI/SSSonector/main/instal
 ```
 
 The installer will:
-1. Detect your OS and architecture
+1. Detect your OS and architecture (Linux or macOS)
 2. Download the latest release binary from GitHub
 3. Prompt for configuration (server/client mode, instance name, addresses)
 4. Generate TLS certificates
-5. Install systemd service template
+5. Install the service manager unit (systemd on Linux, launchd on macOS)
 
 ### Non-interactive Install
 
@@ -72,7 +72,7 @@ curl -fsSL https://raw.githubusercontent.com/o3willard-AI/SSSonector/main/instal
 | `SSSONECTOR_ADDRESS` | TUN interface address (CIDR) | interactive |
 | `SSSONECTOR_SERVER` | Server address (client mode) | interactive |
 | `SSSONECTOR_PORT` | Listen/connect port | auto-assigned |
-| `SSSONECTOR_NO_SERVICE` | Don't install systemd service | false |
+| `SSSONECTOR_NO_SERVICE` | Don't install service manager unit | false |
 
 ### Manual Download
 
