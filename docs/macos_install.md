@@ -41,7 +41,13 @@ brew install openssl
 
 ## Installation Methods
 
-### Method 1: Binary Installation (Recommended)
+### One-line Install (Recommended)
+```bash
+curl -fsSL https://raw.githubusercontent.com/o3willard-AI/SSSonector/main/install.sh | sudo bash
+```
+This installs the latest release binary, generates TLS certificates, creates an instance configuration, and sets up a launchd service — all in one step. See [installation.md](installation.md) for environment variable options (non-interactive mode).
+
+### Method 1: Binary Installation
 
 1. Download the appropriate binary:
 ```bash
