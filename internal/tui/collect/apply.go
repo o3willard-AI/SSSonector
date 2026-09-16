@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -31,8 +30,8 @@ func (o ReloadOutcome) String() string {
 }
 
 // SignalFunc sends SIGHUP to a PID. Injectable so tests fake the signal
-// (the real implementation is signalHUP below; never exercised in unit
-// tests).
+// (the real implementation lives in signal_unix.go / signal_windows.go;
+// never exercised in unit tests).
 type SignalFunc func(pid int) error
 
 // ReloadReader reads the reload outcome from the daemon after the signal
@@ -50,11 +49,9 @@ type ApplyResult struct {
 	Signaled bool
 }
 
-// SignalHUP is the production SignalFunc: syscall.Kill(pid, SIGHUP).
-// Unit tests never call it — they inject fakes.
-func SignalHUP(pid int) error {
-	return syscall.Kill(pid, syscall.SIGHUP)
-}
+// SignalHUP is the production SignalFunc. The POSIX implementation lives in
+// signal_unix.go; the windows stub in signal_windows.go keeps the windows
+// release binary compiling (syscall.Kill does not exist there).
 
 // LogReloadReader is the production ReloadReader: tails the daemon's
 // journal (via the LogTail runner) for the reload outcome after SIGHUP —
